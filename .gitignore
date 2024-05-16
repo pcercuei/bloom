@@ -1,0 +1,4 @@
+genmenu.elf
+romdisk.img
+build
+*.o
