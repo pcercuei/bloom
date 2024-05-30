@@ -1,0 +1,142 @@
+diff --git a/libpcsxcore/new_dynarec/new_dynarec.c b/libpcsxcore/new_dynarec/new_dynarec.c
+index 74f32ee3..4eec8a83 100644
+--- a/libpcsxcore/new_dynarec/new_dynarec.c
++++ b/libpcsxcore/new_dynarec/new_dynarec.c
+@@ -325,7 +325,7 @@ static struct compile_info
+   int new_dynarec_hacks_old;
+   int new_dynarec_did_compile;
+ 
+-  #define HACK_ENABLED(x) ((new_dynarec_hacks | new_dynarec_hacks_pergame) & (x))
++  #define HACK_ENABLED(x) ((NDHACK_NO_STALLS) & (x))
+ 
+   extern int cycle_count; // ... until end of the timeslice, counts -N -> 0 (CCREG)
+   extern int last_count;  // last absolute target, often = next_interupt
+@@ -603,6 +603,7 @@ static int cycle_multiplier_active;
+ 
+ static int CLOCK_ADJUST(int x)
+ {
++  return x * 2;
+   int m = cycle_multiplier_active;
+   int s = (x >> 31) | 1;
+   return (x * m + s * 50) / 100;
+@@ -808,6 +809,9 @@ static noinline u_int generate_exception(u_int pc)
+ // This is called from the recompiled JR/JALR instructions
+ static void noinline *get_addr(u_int vaddr, int can_compile)
+ {
++#ifdef DRC_DBG
++printf("get_addr %08x, pc=%08x\n", vaddr, psxRegs.pc);
++#endif
+   u_int start_page = get_page_prev(vaddr);
+   u_int i, page, end_page = get_page(vaddr);
+   void *found_clean = NULL;
+@@ -7213,7 +7217,7 @@ static noinline void pass2_unneeded_regs(int istart,int iend,int r)
+     // R0 is always unneeded
+     u|=1;
+     // Save it
+-    unneeded_reg[i]=u;
++    unneeded_reg[i]=1;//u;
+     gte_unneeded[i]=gte_u;
+     /*
+     printf("ur (%d,%d) %x: ",istart,iend,start+i*4);
+@@ -8355,6 +8359,7 @@ static noinline void pass5a_preallocate1(void)
+ static noinline void pass5b_preallocate2(void)
+ {
+   int i, hr;
++ return;
+   for(i=0;i<slen-1;i++)
+   {
+     if (!i || !dops[i-1].is_jump)
+@@ -9380,6 +9385,10 @@ static int new_recompile_block(u_int addr)
+ 
+ #ifdef ASSEM_PRINT
+   fflush(stdout);
++#endif
++#ifdef DRC_DBG
++printf("new_recompile_block done\n");
++fflush(stdout);
+ #endif
+   stat_inc(stat_bc_direct);
+   return 0;
+diff --git a/libpcsxcore/new_dynarec/pcsxmem.c b/libpcsxcore/new_dynarec/pcsxmem.c
+index f4b1d90e..d3975ceb 100644
+--- a/libpcsxcore/new_dynarec/pcsxmem.c
++++ b/libpcsxcore/new_dynarec/pcsxmem.c
+@@ -258,6 +258,8 @@ static void write_biu(u32 value)
+ 		return;
+ 	}
+ 
++extern u32 handler_cycle;
++handler_cycle = psxRegs.cycle;
+ 	memprintf("write_biu %08x @%08x %u\n", value, psxRegs.pc, psxRegs.cycle);
+ 	psxRegs.biuReg = value;
+ }
+diff --git a/libpcsxcore/psxcounters.c b/libpcsxcore/psxcounters.c
+index d0d45ec5..4ed03c40 100644
+--- a/libpcsxcore/psxcounters.c
++++ b/libpcsxcore/psxcounters.c
+@@ -428,9 +428,12 @@ void psxRcntUpdate()
+ 
+ /******************************************************************************/
+ 
++extern u32 handler_cycle;
++
+ void psxRcntWcount( u32 index, u32 value )
+ {
+     verboseLog( 2, "[RCNT %i] wcount: %x\n", index, value );
++handler_cycle = psxRegs.cycle;
+ 
+     _psxRcntWcount( index, value );
+     psxRcntSet();
+@@ -439,6 +442,7 @@ void psxRcntWcount( u32 index, u32 value )
+ void psxRcntWmode( u32 index, u32 value )
+ {
+     verboseLog( 1, "[RCNT %i] wmode: %x\n", index, value );
++handler_cycle = psxRegs.cycle;
+ 
+     _psxRcntWmode( index, value );
+     _psxRcntWcount( index, 0 );
+@@ -450,6 +454,7 @@ void psxRcntWmode( u32 index, u32 value )
+ void psxRcntWtarget( u32 index, u32 value )
+ {
+     verboseLog( 1, "[RCNT %i] wtarget: %x\n", index, value );
++handler_cycle = psxRegs.cycle;
+ 
+     rcnts[index].target = value;
+ 
+@@ -463,6 +468,7 @@ u32 psxRcntRcount0()
+ {
+     u32 index = 0;
+     u32 count;
++handler_cycle = psxRegs.cycle;
+ 
+     if ((rcnts[0].mode & 7) == (RcSyncModeEnable | Rc01UnblankReset) ||
+         (rcnts[0].mode & 7) == (RcSyncModeEnable | Rc01UnblankReset2))
+diff --git a/libpcsxcore/psxinterpreter.c b/libpcsxcore/psxinterpreter.c
+index f6ff2e8b..2f7147c3 100644
+--- a/libpcsxcore/psxinterpreter.c
++++ b/libpcsxcore/psxinterpreter.c
+@@ -245,7 +245,7 @@ static inline void addCycle(psxRegisters *regs)
+ {
+ 	assert(regs->subCycleStep >= 0x10000);
+ 	regs->subCycle += regs->subCycleStep;
+-	regs->cycle += regs->subCycle >> 16;
++	regs->cycle += 2; //regs->subCycle >> 16;
+ 	regs->subCycle &= 0xffff;
+ }
+ 
+@@ -1348,8 +1348,15 @@ static void intShutdown() {
+ // single step (may do several ops in case of a branch or load delay)
+ // called by asm/dynarec
+ void execI(psxRegisters *regs) {
++ extern int last_count;
++ extern u32 next_interupt;
++ void do_insn_cmp(void);
++ printf("execI %08x c %u, ni %u\n", regs->pc, regs->cycle, next_interupt);
++ last_count = 0;
+ 	do {
+ 		execIbp(psxMemRLUT, regs);
++		if (regs->dloadReg[0] || regs->dloadReg[1])
++			do_insn_cmp();
+ 	} while (regs->dloadReg[0] || regs->dloadReg[1]);
+ }
+ 

@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/git-commands/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/pcercuei/gnu_lightning.git
+	branch = pcsx_rearmed
+	commit = de026794c71386983034461bce2df3c63ccd5827
+	parent = fb67ea334b0f3984a114a6e306806a56347a83ba
+	method = merge
+	cmdver = 0.4.6
