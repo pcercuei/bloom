@@ -23,6 +23,8 @@
 #include "emu.h"
 #include "vmu.h"
 
+#define BIT(x) (1 << (x))
+
 #define MAX_LAG_FRAMES 3
 
 #define tvdiff(tv, tv_old) \
@@ -363,37 +365,37 @@ long PAD1__readPort1(PadDataS *pad) {
 
 	state = (cont_state_t *)maple_dev_status(dev);
 	if (state->buttons & CONT_Z)
-		buttons |= DKEY_SELECT;
+		buttons |= BIT(DKEY_SELECT);
 	if (state->buttons & CONT_DPAD2_LEFT)
-		buttons |= DKEY_L3;
+		buttons |= BIT(DKEY_L3);
 	if (state->buttons & CONT_DPAD2_DOWN)
-		buttons |= DKEY_R3;
+		buttons |= BIT(DKEY_R3);
 	if (state->buttons & CONT_START)
-		buttons |= DKEY_START;
+		buttons |= BIT(DKEY_START);
 	if (state->buttons & CONT_DPAD_UP)
-		buttons |= DKEY_UP;
+		buttons |= BIT(DKEY_UP);
 	if (state->buttons & CONT_DPAD_RIGHT)
-		buttons |= DKEY_RIGHT;
+		buttons |= BIT(DKEY_RIGHT);
 	if (state->buttons & CONT_DPAD_DOWN)
-		buttons |= DKEY_DOWN;
+		buttons |= BIT(DKEY_DOWN);
 	if (state->buttons & CONT_DPAD_LEFT)
-		buttons |= DKEY_LEFT;
+		buttons |= BIT(DKEY_LEFT);
 	if (state->buttons & CONT_C)
-		buttons |= DKEY_L2;
+		buttons |= BIT(DKEY_L2);
 	if (state->buttons & CONT_D)
-		buttons |= DKEY_R2;
+		buttons |= BIT(DKEY_R2);
 	if (state->ltrig > 128)
-		buttons |= DKEY_L1;
+		buttons |= BIT(DKEY_L1);
 	if (state->rtrig > 128)
-		buttons |= DKEY_R1;
+		buttons |= BIT(DKEY_R1);
 	if (state->buttons & CONT_A)
-		buttons |= DKEY_CROSS;
+		buttons |= BIT(DKEY_CROSS);
 	if (state->buttons & CONT_B)
-		buttons |= DKEY_CIRCLE;
+		buttons |= BIT(DKEY_CIRCLE);
 	if (state->buttons & CONT_X)
-		buttons |= DKEY_SQUARE;
+		buttons |= BIT(DKEY_SQUARE);
 	if (state->buttons & CONT_Y)
-		buttons |= DKEY_TRIANGLE;
+		buttons |= BIT(DKEY_TRIANGLE);
 
 	pad->buttonStatus = ~buttons;
 
