@@ -85,7 +85,19 @@ bool emu_check_cd(const char *path)
 {
 	SetIsoFile(path);
 
-	return CheckCdrom() == 0;
+	ReloadCdromPlugin();
+
+	if (OpenPlugins() < 0) {
+		fprintf(stderr, "Could not open plugins\n");
+		return false;
+	}
+
+	if (CheckCdrom() != 0) {
+		ClosePlugins();
+		return false;
+	}
+
+	return true;
 }
 
 int main(int argc, char **argv)
@@ -106,15 +118,11 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	if (OpenPlugins() < 0) {
-		fprintf(stderr, "Could not open plugins\n");
-		return 1;
-	}
-
 	plugin_call_rearmed_cbs();
 
 	runMenu();
 	EmuReset();
+	LoadCdrom();
 
 	cont_btn_callback(0, CONT_RESET_BUTTONS, emu_exit);
 
