@@ -9,6 +9,12 @@
 #include <dc/cdrom.h>
 #include <libpcsxcore/plugins.h>
 
+#ifdef DEBUG
+#  define cdr_printf(...) printf(__VA_ARGS__)
+#else
+#  define cdr_printf(...)
+#endif
+
 static CDROM_TOC cdrom_toc;
 
 static unsigned char sector[2352];
@@ -66,7 +72,7 @@ long DC_getTN(unsigned char *tn)
 	tn[0] = TOC_TRACK(cdrom_toc.first);
 	tn[1] = TOC_TRACK(cdrom_toc.last);
 
-	printf("First track: %hhu last track: %hhu\n", tn[0], tn[1]);
+	cdr_printf("First track: %hhu last track: %hhu\n", tn[0], tn[1]);
 
 	return 0;
 }
@@ -80,7 +86,7 @@ long DC_getTD(unsigned char track, unsigned char *rt)
 	else
 		lba = TOC_LBA(cdrom_toc.entry[track - 1]);
 
-	printf("LBA for track %hhu: 0x%x\n", track, lba);
+	cdr_printf("LBA for track %hhu: 0x%x\n", track, lba);
 
 	lba_to_msf(lba + 150, &rt[2], &rt[1], &rt[0]);
 
@@ -99,7 +105,7 @@ _Bool DC_readTrack(unsigned char *time)
 	unsigned char f = from_bcd(time[2]);
 	unsigned int lba = msf_to_lba(m, s, f);
 
-	printf("Read track for MSF: %hhu:%hhu:%hhu, LBA: 0x%x\n", m, s, f, lba);
+	cdr_printf("Read track for MSF: %hhu:%hhu:%hhu, LBA: 0x%x\n", m, s, f, lba);
 
 	/* TODO: Use CDROM_READ_DMA */
 	return !cdrom_read_sectors_ex(sector, lba, 1, CDROM_READ_PIO);
