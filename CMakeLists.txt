@@ -137,7 +137,6 @@ add_library(libpcsxcore STATIC
 	deps/pcsx_rearmed/libpcsxcore/lightrec/plugin.c
 )
 target_include_directories(libpcsxcore PUBLIC
-	deps/pcsx_rearmed/libpcsxcore
 	deps/pcsx_rearmed/include
 	deps/pcsx_rearmed
 )
