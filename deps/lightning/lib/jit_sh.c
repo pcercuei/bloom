@@ -1192,22 +1192,21 @@ _emit_code(jit_state_t *_jit)
 	}
 
 	if (_jitc->consts.length &&
-	    (_jit->pc.uc - _jitc->consts.data >= 450 ||
-	     (jit_uword_t)_jit->pc.uc -
-	     (jit_uword_t)_jitc->consts.patches[0] >= 450)) {
-	    /* longest sequence should be 64 bytes, but preventively
-	     * do not let it go past 128 remaining bytes before a flush */
-	    if (node->next &&
-		node->next->code != jit_code_jmpi &&
-		node->next->code != jit_code_jmpr &&
-		node->next->code != jit_code_epilog) {
-		/* insert a jump, flush constants and continue */
-		word = _jit->pc.w;
-		BRA(0);
-		NOP();
-		flush_consts(1);
-		patch_at(word, _jit->pc.w);
-	    }
+		(jit_uword_t)_jit->pc.uc - (jit_uword_t)_jitc->consts.patches[0] >= 950) {
+		/* Maximum displacement for mov.l is +1020 bytes. If we're already +950 bytes
+		 * since the first mov.l, force a flush. */
+
+		if (node->next &&
+			node->next->code != jit_code_jmpi &&
+			node->next->code != jit_code_jmpr &&
+			node->next->code != jit_code_epilog) {
+			/* insert a jump, flush constants and continue */
+			word = _jit->pc.w;
+			BRA(0);
+			NOP();
+			flush_consts(1);
+			patch_at(word, _jit->pc.w);
+		}
 	}
     }
 #undef case_brw
