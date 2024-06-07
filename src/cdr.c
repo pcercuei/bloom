@@ -18,6 +18,8 @@
 static CDROM_TOC cdrom_toc;
 
 static unsigned char sector[2352];
+static unsigned int curr_lba;
+static struct SubQ subq;
 
 static inline void lba_to_msf(unsigned int lba, unsigned char *min,
 			      unsigned char *sec, unsigned char *frame)
@@ -107,6 +109,8 @@ _Bool DC_readTrack(unsigned char *time)
 
 	cdr_printf("Read track for MSF: %hhu:%hhu:%hhu, LBA: 0x%x\n", m, s, f, lba);
 
+	curr_lba = lba;
+
 	/* TODO: Use CDROM_READ_DMA */
 	return !cdrom_read_sectors_ex(sector, lba, 1, CDROM_READ_PIO);
 }
@@ -116,9 +120,37 @@ unsigned char * DC_getBuffer(void)
 	return sector + 12;
 }
 
-unsigned char * DC_getBufferSub(int sector)
+unsigned char * DC_getBufferSub(int sec)
 {
-	return NULL;
+	unsigned char val = 0, *ptr = &subq.ControlAndADR;
+	unsigned char dummy_sector[2352];
+	unsigned char subq_buf[100];
+	unsigned int i, j;
+	int ret;
+
+	if (sec + 150 != curr_lba) {
+		/* We need to read the sector to be able to get the subchannel data... */
+		cdrom_read_sectors(dummy_sector, sec + 150, 1);
+
+		curr_lba = sec + 150;
+	}
+
+	ret = cdrom_get_subcode(subq_buf, sizeof(subq_buf), CD_SUB_Q_ALL);
+	if (ret) {
+		printf("Unable to read Q subchannel: %d\n", ret);
+		return NULL;
+	}
+
+	/* The 96 bits of Q subchannel data are located on bit 6 of each of the
+	 * 96 bytes that follow the 4-byte header. */
+	for (i = 0; i < 12; i++) {
+		for (j = 0; j < 8; j++)
+			val = (val << 1) |  !!(subq_buf[4 + i * 8 + j] & (1 << 6));
+
+		ptr[i] = val;
+	}
+
+	return (unsigned char *)&subq;
 }
 
 long DC_configure(void)
