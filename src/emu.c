@@ -19,6 +19,7 @@
 
 #include <sys/stat.h>
 
+#include "bloom-config.h"
 #include "emu.h"
 
 #define ROOT "/cd"
@@ -102,7 +103,8 @@ bool emu_check_cd(const char *path)
 
 int main(int argc, char **argv)
 {
-	g1_ata_init();
+	if (WITH_IDE)
+		ide_init();
 
 	vid_set_mode(DM_640x480, PM_RGB565);
 	pvr_init_defaults();
@@ -133,6 +135,9 @@ int main(int argc, char **argv)
 	ClosePlugins();
 	EmuShutdown();
 	ReleasePlugins();
+
+	if (WITH_IDE)
+		ide_shutdown();
 
 	return 0;
 }

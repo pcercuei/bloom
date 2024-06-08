@@ -184,6 +184,24 @@ target_link_libraries(bloom PUBLIC libpcsxcore gpu spu tsunami
 	#${ZLIB_LIBRARIES} tsunami parallax
 )
 
+option(WITH_IDE "Enable IDE (hard drive) support" OFF)
+if (WITH_IDE)
+	find_library(KOSFAT_LIBRARIES kosfat REQUIRED
+		HINTS ${KOS_BASE}/addons/lib/dreamcast
+	)
+	add_library(kosfat STATIC IMPORTED)
+	set_target_properties(kosfat PROPERTIES
+		IMPORTED_LOCATION ${KOSFAT_LIBRARIES}
+	)
+
+	target_include_directories(kosfat INTERFACE
+		${KOS_BASE}/addons/lib/dreamcast
+	)
+	target_link_libraries(bloom PUBLIC kosfat)
+
+	target_sources(bloom PRIVATE src/ide.c)
+endif(WITH_IDE)
+
 option(WITH_CHD "Enable CHD support" OFF)
 if (WITH_CHD)
 	set(LZMA_VERSION 24.05)

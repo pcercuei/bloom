@@ -8,4 +8,6 @@
 #ifndef BLOOM_CONFIG_H
 #define BLOOM_CONFIG_H
 
+#cmakedefine01 WITH_IDE
+
 #endif /* BLOOM_CONFIG_H */

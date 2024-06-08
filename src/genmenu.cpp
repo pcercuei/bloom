@@ -232,6 +232,7 @@ void MyMenu::populate(fs::path path, bool back)
 
 			if (name != "cd"
 			    && name != "pc"
+			    && name != "ide"
 			    && name != "sd") {
 				continue;
 			}

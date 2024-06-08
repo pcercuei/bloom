@@ -17,5 +17,8 @@ void plugin_call_rearmed_cbs(void);
 
 _Bool emu_check_cd(const char *path);
 
+void ide_init(void);
+void ide_shutdown(void);
+
 __END_DECLS
 #endif /* __BLOOM_EMU_H */
