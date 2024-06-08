@@ -1,0 +1,11 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * CMake-generated configuration file
+ *
+ * Copyright (C) 2024 Paul Cercueil <paul@crapouillou.net>
+ */
+
+#ifndef BLOOM_CONFIG_H
+#define BLOOM_CONFIG_H
+
+#endif /* BLOOM_CONFIG_H */

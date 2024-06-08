@@ -5,6 +5,8 @@ project(bloom VERSION 0.1 LANGUAGES C CXX ASM)
 
 include(dreamcast)
 
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+
 if (NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Type of build" FORCE)
 	set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
@@ -286,3 +288,5 @@ execute_process(
 )
 
 kos_add_romdisk(bloom ${CMAKE_BINARY_DIR}/romdisk)
+
+configure_file(src/bloom-config.h.cmakein bloom-config.h @ONLY)
