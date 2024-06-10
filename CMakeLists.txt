@@ -172,8 +172,6 @@ if (GPU_PLUGIN STREQUAL Unai)
 	target_compile_definitions(gpu PRIVATE
 		_SDL
 		USE_GPULIB
-		GPU_UNAI_USE_FLOATMATH
-		GPU_UNAI_USE_FLOAT_DIV_MULTINV
 	)
 endif()
 
