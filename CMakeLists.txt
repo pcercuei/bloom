@@ -69,43 +69,19 @@ target_compile_definitions(lightning PRIVATE HAVE_MMAP=0 SH_HAS_FPU=0)
 target_compile_options(lightning PRIVATE -Wno-unused-function -Wno-unused-variable -Wno-parentheses -Wno-format)
 set_target_properties(lightning PROPERTIES LINKER_LANGUAGE C)
 
-add_library(lightrec STATIC
-	deps/pcsx_rearmed/deps/lightrec/blockcache.c
-	deps/pcsx_rearmed/deps/lightrec/constprop.c
-	deps/pcsx_rearmed/deps/lightrec/disassembler.c
-	deps/pcsx_rearmed/deps/lightrec/emitter.c
-	deps/pcsx_rearmed/deps/lightrec/interpreter.c
-	deps/pcsx_rearmed/deps/lightrec/lightrec.c
-	deps/pcsx_rearmed/deps/lightrec/memmanager.c
-	deps/pcsx_rearmed/deps/lightrec/optimizer.c
-	deps/pcsx_rearmed/deps/lightrec/regcache.c
-	deps/pcsx_rearmed/deps/lightrec/tlsf/tlsf.c
-)
-target_include_directories(lightrec PRIVATE
-	deps/pcsx_rearmed/include/lightrec
-	include/lightning
-	deps/lightning/include
-)
-target_include_directories(lightrec PUBLIC
-	deps/pcsx_rearmed/deps/lightrec
-)
-set_target_properties(lightrec PROPERTIES LINKER_LANGUAGE C)
-target_link_libraries(lightrec PUBLIC lightning)
+# Disable the threaded compiler by default
+option(ENABLE_THREADED_COMPILER "Enable threaded compiler" OFF)
 
-option(WITH_LIGHTREC_THREADED_COMPILER "Enabled Lightrec's threaded compiler" OFF)
-if (WITH_LIGHTREC_THREADED_COMPILER)
-	target_sources(lightrec PRIVATE
-		deps/pcsx_rearmed/deps/lightrec/reaper.c
-		deps/pcsx_rearmed/deps/lightrec/recompiler.c
-	)
+# Force these two options to get Bloom to build and work properly
+set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE)
+set(ENABLE_CODE_BUFFER ON CACHE INTERNAL "" FORCE)
 
-	target_compile_definitions(lightrec PRIVATE LIGHTREC_ENABLE_THREADED_COMPILER)
+# Point Lightrec to Lightning's lib and include directories
+set(LIBLIGHTNING lightning)
+set(LIBLIGHTNING_INCLUDE_DIR $<TARGET_PROPERTY:lightning,INTERFACE_INCLUDE_DIRECTORIES>)
 
-	find_package(Threads REQUIRED)
-	target_link_libraries(lightrec PUBLIC Threads::Threads)
-else()
-	target_compile_definitions(lightrec PRIVATE LIGHTREC_ENABLE_THREADED_COMPILER=0)
-endif()
+# Include Lightrec's own CMake file
+add_subdirectory(deps/pcsx_rearmed/deps/lightrec)
 
 add_library(libpcsxcore STATIC
 	deps/pcsx_rearmed/libpcsxcore/cdriso.c
@@ -268,9 +244,7 @@ if (WITH_CHD)
 	target_link_libraries(libpcsxcore PUBLIC libchdr)
 endif(WITH_CHD)
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-	target_compile_definitions(lightrec PRIVATE LOG_LEVEL=DEBUG_L)
-
+if (LOG_LEVEL STREQUAL "Debug")
 	find_library(OPCODES_LIBRARIES opcodes REQUIRED)
 	find_library(BFD_LIBRARIES bfd REQUIRED)
 	find_library(SFRAME_LIBRARIES sframe REQUIRED)
