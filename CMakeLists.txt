@@ -126,6 +126,7 @@ target_compile_definitions(libpcsxcore PUBLIC
 	NO_SOCKET
 	DISABLE_MEM_LUTS
 	CODE_BUFFER_SIZE=0x300000
+	LIGHTREC_PROG_NAME="/rd/dummy.elf"
 )
 target_compile_options(libpcsxcore PRIVATE -Wno-format)
 set_target_properties(libpcsxcore PROPERTIES LINKER_LANGUAGE C)
@@ -266,4 +267,22 @@ if (LOG_LEVEL STREQUAL "Debug")
 	)
 endif()
 
-kos_add_romdisk(bloom romdisk)
+# This custom code will copy the romdisk to the build folder, then
+# generate an empty dummy.c file, which will be compiled with sh-elf-gcc
+# and stripped. The point of this is to include a SH-4 ELF into the
+# romdisk, which can then be passed to libbfd for Lightning's
+# disassembler to work.
+# Note that we compile using the sh-elf-gcc compiler directly as kos-cc
+# would generate a bigger file. We also need this file to be present at
+# configuration time, hence the execute_process() calls.
+file(COPY romdisk DESTINATION ${CMAKE_BINARY_DIR})
+file(WRITE ${CMAKE_BINARY_DIR}/dummy.c "")
+execute_process(
+	COMMAND $ENV{KOS_CC} ${CMAKE_BINARY_DIR}/dummy.c -c
+		-o ${CMAKE_BINARY_DIR}/romdisk/dummy.elf
+)
+execute_process(
+	COMMAND $ENV{KOS_STRIP} ${CMAKE_BINARY_DIR}/romdisk/dummy.elf
+)
+
+kos_add_romdisk(bloom ${CMAKE_BINARY_DIR}/romdisk)
