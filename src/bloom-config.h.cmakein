@@ -8,6 +8,7 @@
 #ifndef BLOOM_CONFIG_H
 #define BLOOM_CONFIG_H
 
+#cmakedefine01 WITH_CHD
 #cmakedefine01 WITH_IDE
 #cmakedefine01 WITH_SDCARD
 

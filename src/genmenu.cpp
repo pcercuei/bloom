@@ -23,6 +23,7 @@ extern "C" {
 
 #include "emu.h"
 #include "genmenu.h"
+#include "bloom-config.h"
 
 #define MENU_OFF_X 200
 #define MENU_OFF_Y 200
@@ -225,7 +226,7 @@ void MyMenu::populate(fs::path path, bool back)
 			    && ext != ".cue"
 			    && ext != ".ccd"
 			    && ext != ".mds"
-			    && ext != ".chd"
+			    && (!WITH_CHD || ext != ".chd")
 			    && ext != ".pbp") {
 				continue;
 			}
