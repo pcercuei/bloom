@@ -325,28 +325,6 @@ long PAD__close(void) {
 	return PSE_PAD_ERR_SUCCESS;
 }
 
-typedef union {
-	u16 All;
-	struct {
-		unsigned SQUARE_BUTTON    : 1;
-		unsigned CROSS_BUTTON     : 1;
-		unsigned CIRCLE_BUTTON    : 1;
-		unsigned TRIANGLE_BUTTON  : 1;
-		unsigned R1_BUTTON        : 1;
-		unsigned L1_BUTTON        : 1;
-		unsigned R2_BUTTON        : 1;
-		unsigned L2_BUTTON        : 1;
-		unsigned L_DPAD           : 1;
-		unsigned D_DPAD           : 1;
-		unsigned R_DPAD           : 1;
-		unsigned U_DPAD           : 1;
-		unsigned START_BUTTON     : 1;
-		unsigned L3_BUTTON        : 1;
-		unsigned R3_BUTTON        : 1;
-		unsigned SELECT_BUTTON    : 1;
-	};
-} psx_buttons_t;
-
 long PAD1__readPort1(PadDataS *pad) {
         maple_device_t *dev;
 	cont_state_t *state;
