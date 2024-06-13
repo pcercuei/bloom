@@ -75,8 +75,8 @@ static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 	screen_h = raw_h;
 	screen_bpp = bpp;
 
-	screen_fw = 320.0f / (float)raw_w;
-	screen_fh = 240.0f / (float)raw_h;
+	screen_fw = 640.0f / (float)raw_w;
+	screen_fh = 480.0f / (float)raw_h;
 
 	if (bpp == 15)
 		vid_set_mode(DM_640x480, PM_RGB555);
@@ -183,11 +183,10 @@ static void dc_vout_flip(const void *vram, int stride, int bgr24,
 	else
 		copy15(vram, stride, w, h);
 
-	ymin = 240.0f - (float)(y + h) * screen_fh;
-	ymax = 480.0f - ymin;
-
-	xmin = 320.0f - (float)(x + w) * screen_fw;
-	xmax = 640.0f - xmin;
+	ymin = (float)y * (float)screen_fh;
+	ymax = (float)(y + h) * (float)screen_fh;
+	xmin = (float)x * (float)screen_fw;
+	xmax = (float)(x + w) * (float)screen_fw;
 
 	pvr_wait_ready();
 	pvr_scene_begin();
