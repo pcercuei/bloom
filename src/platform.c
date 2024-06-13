@@ -172,16 +172,22 @@ static void dc_vout_flip(const void *vram, int stride, int bgr24,
 	pvr_poly_hdr_t hdr;
 	pvr_vertex_t vert;
 	float ymin, ymax, xmin, xmax;
+	int copy_w;
 
 	if (!vram)
 		return;
 
 	assert(!((unsigned int)vram & 0x3));
 
+	/* We transfer 16 pixels at a time, so align width to 32 bytes.
+	 * We are just transferring the texture so it does not matter if
+	 * we're reading too far. */
+	copy_w = (w + 31) & ~31;
+
 	if (bgr24)
-		copy24(vram, stride, w, h);
+		copy24(vram, stride, copy_w, h);
 	else
-		copy15(vram, stride, w, h);
+		copy15(vram, stride, copy_w, h);
 
 	ymin = (float)y * (float)screen_fh;
 	ymax = (float)(y + h) * (float)screen_fh;
