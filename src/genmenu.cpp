@@ -223,6 +223,8 @@ void MyMenu::populate(fs::path path, bool back)
 
 			if (ext != ".iso"
 			    && ext != ".cue"
+			    && ext != ".ccd"
+			    && ext != ".mds"
 			    && ext != ".chd"
 			    && ext != ".pbp") {
 				continue;
