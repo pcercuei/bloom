@@ -184,8 +184,17 @@ target_link_libraries(bloom PUBLIC libpcsxcore gpu spu tsunami
 	#${ZLIB_LIBRARIES} tsunami parallax
 )
 
+option(WITH_SDCARD "Enable SD cards support" OFF)
+if (WITH_SDCARD)
+	target_sources(bloom PRIVATE src/sdcard.c)
+endif(WITH_SDCARD)
+
 option(WITH_IDE "Enable IDE (hard drive) support" OFF)
 if (WITH_IDE)
+	target_sources(bloom PRIVATE src/ide.c)
+endif(WITH_IDE)
+
+if (WITH_IDE OR WITH_SDCARD)
 	find_library(KOSFAT_LIBRARIES kosfat REQUIRED
 		HINTS ${KOS_BASE}/addons/lib/dreamcast
 	)
@@ -198,9 +207,7 @@ if (WITH_IDE)
 		${KOS_BASE}/addons/lib/dreamcast
 	)
 	target_link_libraries(bloom PUBLIC kosfat)
-
-	target_sources(bloom PRIVATE src/ide.c)
-endif(WITH_IDE)
+endif(WITH_IDE OR WITH_SDCARD)
 
 option(WITH_CHD "Enable CHD support" OFF)
 if (WITH_CHD)

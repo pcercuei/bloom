@@ -105,6 +105,8 @@ int main(int argc, char **argv)
 {
 	if (WITH_IDE)
 		ide_init();
+	if (WITH_SDCARD)
+		sdcard_init();
 
 	vid_set_mode(DM_640x480, PM_RGB565);
 	pvr_init_defaults();
@@ -136,6 +138,8 @@ int main(int argc, char **argv)
 	EmuShutdown();
 	ReleasePlugins();
 
+	if (WITH_SDCARD)
+		sdcard_shutdown();
 	if (WITH_IDE)
 		ide_shutdown();
 

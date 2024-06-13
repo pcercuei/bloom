@@ -20,5 +20,8 @@ _Bool emu_check_cd(const char *path);
 void ide_init(void);
 void ide_shutdown(void);
 
+void sdcard_init(void);
+void sdcard_shutdown(void);
+
 __END_DECLS
 #endif /* __BLOOM_EMU_H */
