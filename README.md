@@ -55,3 +55,28 @@ This will build Bloom with the default settings.
 
 To configure Bloom you can use `kos-ccmake` instead, which will open a
 (curses-based) user interface with all the options for the project.
+
+Building with debug support
+---------------------------
+
+Bloom can be built with full debug output, including the log of the
+optimizer, the PSX code disassembly, and the SH4 code disassembly.
+
+It is however necesary to first build and install Binutils into the KOS
+toolchain. To make it easier, there is a script that will automatically
+download, build and install Binutils:
+
+```
+cd /path/to/bloom
+deps/binutils/build.sh
+```
+
+Then, to build Bloom with debug support:
+
+```
+cd /path/to/bloom
+mkdir build
+cd build
+kos-cmake -DCMAKE_BUILD_TYPE=Debug -DLOG_LEVEL=Debug ..
+make
+```
