@@ -155,9 +155,9 @@ if (GPU_PLUGIN STREQUAL Unai)
 endif()
 
 if (NOT SPU_PLUGIN)
-	set(SPU_PLUGIN Null CACHE STRING "SPU plugin" FORCE)
+	set(SPU_PLUGIN AICA CACHE STRING "SPU plugin" FORCE)
 	set_property(CACHE SPU_PLUGIN PROPERTY
-		STRINGS Null
+		STRINGS Null AICA
 	)
 endif()
 
@@ -165,6 +165,9 @@ if (SPU_PLUGIN STREQUAL Null)
 	add_library(spu STATIC
 		deps/pcsx_rearmed/plugins/spunull/spunull.c
 	)
+	set_target_properties(spu PROPERTIES LINKER_LANGUAGE C)
+elseif(SPU_PLUGIN STREQUAL AICA)
+	add_library(spu STATIC src/aica.c)
 	set_target_properties(spu PROPERTIES LINKER_LANGUAGE C)
 endif()
 
