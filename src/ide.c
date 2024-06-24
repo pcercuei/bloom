@@ -13,9 +13,10 @@
 /* Currently not working with my CF adapter */
 #define IDE_USE_DMA 0
 
+static kos_blockdev_t rv;
+
 void ide_init(void)
 {
-	kos_blockdev_t rv;
 	uint8_t type;
 	int err;
 

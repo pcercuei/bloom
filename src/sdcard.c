@@ -10,9 +10,10 @@
 #include <stdint.h>
 #include <stdio.h>
 
+static kos_blockdev_t rv;
+
 void sdcard_init(void)
 {
-	kos_blockdev_t rv;
 	uint8_t type;
 	int err;
 
