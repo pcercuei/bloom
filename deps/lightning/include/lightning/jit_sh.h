@@ -28,7 +28,7 @@ typedef enum {
 #define jit_r_num()		3
 #define jit_v(i)		(JIT_V0 + (i))
 #define jit_v_num()		6
-#define jit_f(i)		(JIT_F7 - (i) * 2)
+#define jit_f(i)		(JIT_F0 - (i) * 2)
 #ifdef __SH_FPU_ANY__
 #    define jit_f_num()		8
 #else
@@ -61,14 +61,14 @@ typedef enum {
 	_GBR,
 
 	/* floating-point registers */
-#define JIT_F0			_F0
-#define JIT_F1			_F2
-#define JIT_F2			_F4
-#define JIT_F3			_F6
-#define JIT_F4			_F8
-#define JIT_F5			_F10
-#define JIT_F6			_F12
-#define JIT_F7			_F14
+#define JIT_F0			_F14
+#define JIT_F1			_F12
+#define JIT_F2			_F10
+#define JIT_F3			_F8
+#define JIT_F4			_F6
+#define JIT_F5			_F4
+#define JIT_F6			_F2
+#define JIT_F7			_F0
 	_F0,	_F1,	_F2,	_F3,	_F4,	_F5,	_F6,	_F7,
 	_F8,	_F9,	_F10,	_F11,	_F12,	_F13,	_F14,	_F15,
 

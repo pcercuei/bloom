@@ -765,6 +765,7 @@ struct jit_compiler {
 #  endif
     jit_bool_t mode_d;
     jit_bool_t no_flag;
+    jit_bool_t uses_fpu;
     struct {
 	jit_uint8_t	 *data;		/* pointer to code */
 	jit_word_t	  size;		/* size data */

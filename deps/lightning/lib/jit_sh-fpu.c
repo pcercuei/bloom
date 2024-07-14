@@ -447,6 +447,8 @@ _stxbi_d(jit_state_t*,jit_word_t,jit_int16_t,jit_int16_t);
 #  define stxbi_d(i0,r0,r1)		_stxbi_d(_jit,i0,r0,r1)
 #  define stxai_f(i0,r0,r1)		generic_stxai_f(i0,r0,r1)
 #  define stxai_d(i0,r0,r1)		generic_stxai_d(i0,r0,r1)
+static void _vaarg_d(jit_state_t*,jit_int32_t,jit_int32_t);
+#  define vaarg_d(r0, r1)		_vaarg_d(_jit, r0, r1)
 #endif /* PROTO */
 
 #if CODE
@@ -454,7 +456,7 @@ static void set_fmode_mask(jit_state_t *_jit, jit_uint32_t mask, jit_bool_t no_r
 {
 	jit_uint16_t reg, reg2;
 
-	if (SH_HAS_FPU) {
+	if (SH_HAS_FPU && _jitc->uses_fpu) {
 		if (no_r0) {
 			reg = jit_get_reg(jit_class_gpr);
 			reg2 = jit_get_reg(jit_class_gpr);
@@ -478,7 +480,7 @@ static void set_fmode_mask(jit_state_t *_jit, jit_uint32_t mask, jit_bool_t no_r
 
 static void set_fmode(jit_state_t *_jit, jit_bool_t is_double)
 {
-	if (SH_HAS_FPU && !SH_SINGLE_ONLY && _jitc->mode_d != is_double) {
+	if (SH_HAS_FPU && !SH_SINGLE_ONLY && _jitc->uses_fpu && _jitc->mode_d != is_double) {
 		set_fmode_mask(_jit, PR_FLAG, 0);
 		_jitc->mode_d = is_double;
 	}
@@ -486,7 +488,7 @@ static void set_fmode(jit_state_t *_jit, jit_bool_t is_double)
 
 static void reset_fpu(jit_state_t *_jit, jit_bool_t no_r0)
 {
-	if (SH_HAS_FPU) {
+	if (SH_HAS_FPU && _jitc->uses_fpu) {
 		if (_jitc->mode_d != SH_DEFAULT_FPU_MODE)
 			set_fmode_mask(_jit, PR_FLAG | FR_FLAG, no_r0);
 		else if (SH_DEFAULT_FPU_MODE)
@@ -500,7 +502,7 @@ static void reset_fpu(jit_state_t *_jit, jit_bool_t no_r0)
 
 static void set_fmode_no_r0(jit_state_t *_jit, jit_bool_t is_double)
 {
-	if (SH_HAS_FPU && !SH_SINGLE_ONLY && _jitc->mode_d != is_double) {
+	if (SH_HAS_FPU && _jitc->uses_fpu && !SH_SINGLE_ONLY && _jitc->mode_d != is_double) {
 		set_fmode_mask(_jit, PR_FLAG, 1);
 		_jitc->mode_d = is_double;
 	}
@@ -2349,6 +2351,44 @@ static void _movi_ww_d(jit_state_t *_jit, jit_int16_t r0, jit_word_t i0, jit_wor
 	/* TODO: single-only */
 	movi_w_f(r0, i1);
 	movi_w_f(r0 + 1, i0);
+}
+
+static void
+_vaarg_d(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1)
+{
+    jit_int32_t rg0, rg1;
+    jit_word_t ge_code;
+
+    assert(_jitc->function->self.call & jit_call_varargs);
+
+    rg0 = jit_get_reg(jit_class_gpr);
+    rg1 = jit_get_reg(jit_class_gpr);
+
+    /* Load begin/end gpr pointers */
+    ldxi(rn(rg1), r1, offsetof(jit_va_list_t, efpr));
+    movi(_R0, offsetof(jit_va_list_t, bfpr));
+    ldxr(rn(rg0), r1, _R0);
+
+    /* Check that we didn't reach the end gpr pointer. */
+    CMPHS(rn(rg0), rn(rg1));
+
+    ge_code = _jit->pc.w;
+    BF(0);
+
+    /* If we did, load the stack pointer instead. */
+    movi(_R0, offsetof(jit_va_list_t, over));
+    ldxr(rn(rg0), r1, _R0);
+
+    patch_at(ge_code, _jit->pc.w);
+
+    /* All good, we can now load the actual value */
+    ldxai_d(r0, rn(rg0), sizeof(jit_float64_t));
+
+    /* Update the pointer (gpr or stack) to the next word */
+    stxr(_R0, r1, rn(rg0));
+
+    jit_unget_reg(rg0);
+    jit_unget_reg(rg1);
 }
 
 #endif /* CODE */

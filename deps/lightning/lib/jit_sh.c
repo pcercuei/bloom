@@ -87,18 +87,18 @@ jit_register_t _rvs[] = {
     { 0x1,				"$f1" },
     { rc(fpr) | 0x2,			"$f2" },
     { 0x3,				"$f3" },
-    { rc(arg) | rc(fpr) | 0x4,		"$f4" },
+    { rc(fpr) | 0x4,			"$f4" },
     { 0x5,				"$f5" },
-    { rc(arg) | rc(fpr) | 0x6,		"$f6" },
+    { rc(fpr) | 0x6,			"$f6" },
     { 0x7,				"$f7" },
-    { rc(arg) | rc(fpr) | 0x8,		"$f8" },
+    { rc(fpr) | 0x8,			"$f8" },
     { 0x9,				"$f9" },
-    { rc(arg) | rc(fpr) | 0xa,		"$f10" },
+    { rc(fpr) | 0xa,			"$f10" },
     { 0xb,				"$f11" },
-    { rc(sav) | rc(fpr) | 0xc,		"$f12" },
-    { rc(sav) | 0xd,			"$f13" },
-    { rc(sav) | rc(fpr) | 0xe,		"$f14" },
-    { rc(sav) | 0xf,			"$f15" },
+    { rc(fpr) | 0xc,			"$f12" },
+    { 0xd,				"$f13" },
+    { rc(fpr) | 0xe,			"$f14" },
+    { 0xf,				"$f15" },
 
     { _XF0,				"$xf0" },
     { _XF1,				"$xf1" },
@@ -117,6 +117,254 @@ jit_register_t _rvs[] = {
     { rc(sav) | _XF14,			"$xf14" },
     { rc(sav) | _XF15,			"$xf15" },
 };
+
+typedef struct jit_va_list {
+    jit_pointer_t	bgpr;
+    jit_pointer_t	egpr;
+    jit_pointer_t	bfpr;
+    jit_pointer_t	efpr;
+    jit_pointer_t	over;
+} jit_va_list_t;
+
+static jit_bool_t jit_uses_fpu(jit_code_t code)
+{
+	switch (code) {
+	case jit_code_retr_f:
+	case jit_code_retr_d:
+	case jit_code_pushargr_f:
+	case jit_code_pushargr_d:
+	case jit_code_reti_f:
+	case jit_code_pushargi_f:
+	case jit_code_reti_d:
+	case jit_code_pushargi_d:
+	case jit_code_arg_f:
+	case jit_code_arg_d:
+	case jit_code_retval_f:
+	case jit_code_retval_d:
+	case jit_code_getarg_f:
+	case jit_code_getarg_d:
+	case jit_code_putargr_f:
+	case jit_code_putargr_d:
+	case jit_code_putargi_f:
+	case jit_code_putargi_d:
+	case jit_code_ldi_f:
+	case jit_code_ldi_d:
+	case jit_code_movi_w_f:
+	case jit_code_movi_w_d:
+	case jit_code_movi_ww_d:
+	case jit_code_movi_f:
+	case jit_code_movi_f_w:
+	case jit_code_negi_f:
+	case jit_code_absi_f:
+	case jit_code_sqrti_f:
+	case jit_code_movi_d:
+	case jit_code_movi_d_w:
+	case jit_code_negi_d:
+	case jit_code_absi_d:
+	case jit_code_sqrti_d:
+	case jit_code_truncr_f_i:
+	case jit_code_truncr_f_l:
+	case jit_code_truncr_d_i:
+	case jit_code_truncr_d_l:
+	case jit_code_negr_f:
+	case jit_code_absr_f:
+	case jit_code_sqrtr_f:
+	case jit_code_movr_f:
+	case jit_code_extr_f:
+	case jit_code_extr_d_f:
+	case jit_code_ldr_f:
+	case jit_code_negr_d:
+	case jit_code_absr_d:
+	case jit_code_sqrtr_d:
+	case jit_code_movr_d:
+	case jit_code_extr_d:
+	case jit_code_extr_f_d:
+	case jit_code_ldr_d:
+	case jit_code_movr_w_f:
+	case jit_code_movr_f_w:
+	case jit_code_movr_w_d:
+	case jit_code_movr_d_w:
+	case jit_code_va_arg_d:
+	case jit_code_ldxi_f:
+	case jit_code_ldxi_d:
+	case jit_code_addi_f:
+	case jit_code_subi_f:
+	case jit_code_rsbi_f:
+	case jit_code_muli_f:
+	case jit_code_divi_f:
+	case jit_code_lti_f:
+	case jit_code_lei_f:
+	case jit_code_eqi_f:
+	case jit_code_gei_f:
+	case jit_code_gti_f:
+	case jit_code_nei_f:
+	case jit_code_unlti_f:
+	case jit_code_unlei_f:
+	case jit_code_uneqi_f:
+	case jit_code_ungei_f:
+	case jit_code_ungti_f:
+	case jit_code_ltgti_f:
+	case jit_code_ordi_f:
+	case jit_code_unordi_f:
+	case jit_code_addi_d:
+	case jit_code_subi_d:
+	case jit_code_rsbi_d:
+	case jit_code_muli_d:
+	case jit_code_divi_d:
+	case jit_code_lti_d:
+	case jit_code_lei_d:
+	case jit_code_eqi_d:
+	case jit_code_gei_d:
+	case jit_code_gti_d:
+	case jit_code_nei_d:
+	case jit_code_unlti_d:
+	case jit_code_unlei_d:
+	case jit_code_uneqi_d:
+	case jit_code_ungei_d:
+	case jit_code_ungti_d:
+	case jit_code_ltgti_d:
+	case jit_code_ordi_d:
+	case jit_code_unordi_d:
+	case jit_code_addr_f:
+	case jit_code_subr_f:
+	case jit_code_mulr_f:
+	case jit_code_divr_f:
+	case jit_code_ltr_f:
+	case jit_code_ler_f:
+	case jit_code_eqr_f:
+	case jit_code_ger_f:
+	case jit_code_gtr_f:
+	case jit_code_ner_f:
+	case jit_code_unltr_f:
+	case jit_code_unler_f:
+	case jit_code_uneqr_f:
+	case jit_code_unger_f:
+	case jit_code_ungtr_f:
+	case jit_code_ltgtr_f:
+	case jit_code_ordr_f:
+	case jit_code_unordr_f:
+	case jit_code_ldxr_f:
+	case jit_code_addr_d:
+	case jit_code_subr_d:
+	case jit_code_mulr_d:
+	case jit_code_divr_d:
+	case jit_code_ltr_d:
+	case jit_code_ler_d:
+	case jit_code_eqr_d:
+	case jit_code_ger_d:
+	case jit_code_gtr_d:
+	case jit_code_ner_d:
+	case jit_code_unltr_d:
+	case jit_code_unler_d:
+	case jit_code_uneqr_d:
+	case jit_code_unger_d:
+	case jit_code_ungtr_d:
+	case jit_code_ltgtr_d:
+	case jit_code_ordr_d:
+	case jit_code_unordr_d:
+	case jit_code_ldxr_d:
+	case jit_code_movr_ww_d:
+	case jit_code_sti_f:
+	case jit_code_sti_d:
+	case jit_code_blti_f:
+	case jit_code_blei_f:
+	case jit_code_beqi_f:
+	case jit_code_bgei_f:
+	case jit_code_bgti_f:
+	case jit_code_bnei_f:
+	case jit_code_bunlti_f:
+	case jit_code_bunlei_f:
+	case jit_code_buneqi_f:
+	case jit_code_bungei_f:
+	case jit_code_bungti_f:
+	case jit_code_bltgti_f:
+	case jit_code_bordi_f:
+	case jit_code_bunordi_f:
+	case jit_code_blti_d:
+	case jit_code_blei_d:
+	case jit_code_beqi_d:
+	case jit_code_bgei_d:
+	case jit_code_bgti_d:
+	case jit_code_bnei_d:
+	case jit_code_bunlti_d:
+	case jit_code_bunlei_d:
+	case jit_code_buneqi_d:
+	case jit_code_bungei_d:
+	case jit_code_bungti_d:
+	case jit_code_bltgti_d:
+	case jit_code_bordi_d:
+	case jit_code_bunordi_d:
+	case jit_code_str_f:
+	case jit_code_str_d:
+	case jit_code_stxi_f:
+	case jit_code_stxi_d:
+	case jit_code_bltr_f:
+	case jit_code_bler_f:
+	case jit_code_beqr_f:
+	case jit_code_bger_f:
+	case jit_code_bgtr_f:
+	case jit_code_bner_f:
+	case jit_code_bunltr_f:
+	case jit_code_bunler_f:
+	case jit_code_buneqr_f:
+	case jit_code_bunger_f:
+	case jit_code_bungtr_f:
+	case jit_code_bltgtr_f:
+	case jit_code_bordr_f:
+	case jit_code_bunordr_f:
+	case jit_code_bltr_d:
+	case jit_code_bler_d:
+	case jit_code_beqr_d:
+	case jit_code_bger_d:
+	case jit_code_bgtr_d:
+	case jit_code_bner_d:
+	case jit_code_bunltr_d:
+	case jit_code_bunler_d:
+	case jit_code_buneqr_d:
+	case jit_code_bunger_d:
+	case jit_code_bungtr_d:
+	case jit_code_bltgtr_d:
+	case jit_code_bordr_d:
+	case jit_code_bunordr_d:
+	case jit_code_stxr_f:
+	case jit_code_stxr_d:
+	case jit_code_fmar_f:
+	case jit_code_fmar_d:
+	case jit_code_fmsr_f:
+	case jit_code_fmsr_d:
+	case jit_code_fnmar_f:
+	case jit_code_fnmar_d:
+	case jit_code_fnmsr_f:
+	case jit_code_fnmsr_d:
+	case jit_code_fmai_f:
+	case jit_code_fmsi_f:
+	case jit_code_fnmai_f:
+	case jit_code_fnmsi_f:
+	case jit_code_fmai_d:
+	case jit_code_fmsi_d:
+	case jit_code_fnmai_d:
+	case jit_code_fnmsi_d:
+	case jit_code_ldxbi_f:
+	case jit_code_ldxai_f:
+	case jit_code_ldxbi_d:
+	case jit_code_ldxai_d:
+	case jit_code_ldxbr_f:
+	case jit_code_ldxar_f:
+	case jit_code_ldxbr_d:
+	case jit_code_ldxar_d:
+	case jit_code_stxbi_f:
+	case jit_code_stxai_f:
+	case jit_code_stxbi_d:
+	case jit_code_stxai_d:
+	case jit_code_stxbr_f:
+	case jit_code_stxar_f:
+	case jit_code_stxbr_d:
+	case jit_code_stxar_d:
+		return 1;
+	default:
+		return 0;
+	}
+}
 
 void
 jit_get_cpu(void)
@@ -334,6 +582,7 @@ _emit_code(jit_state_t *_jit)
     _jitc->function = NULL;
     _jitc->no_flag = 0;
     _jitc->mode_d = SH_DEFAULT_FPU_MODE;
+    _jitc->uses_fpu = 0;
 
     jit_reglive_setup();
 
@@ -489,6 +738,11 @@ _emit_code(jit_state_t *_jit)
 #if DEVEL_DISASSEMBLER
     prevw = _jit->pc.w;
 #endif
+    if (SH_HAS_FPU) {
+	    for (node = _jitc->head; node && !_jitc->uses_fpu; node = node->next)
+		    _jitc->uses_fpu = jit_uses_fpu(node->code);
+    }
+
     for (node = _jitc->head; node; node = node->next) {
 	if (_jit->pc.uc >= _jitc->code.end)
 	    return (NULL);
@@ -515,6 +769,8 @@ _emit_code(jit_state_t *_jit)
 	    case jit_code_label:
 		/* remember label is defined */
 		node->flag |= jit_flag_patch;
+		/* Reset FPU mode */
+		set_fmode_no_r0(_jit, SH_DEFAULT_FPU_MODE);
 		node->u.w = _jit->pc.w;
 		break;
 		case_rrr(add,);
@@ -1056,7 +1312,6 @@ _emit_code(jit_state_t *_jit)
 	    case jit_code_movi_ww_d:
 		movi_ww_d(rn(node->u.w), node->v.w, node->w.w);
 		break;
-#if 0
 	    case jit_code_va_start:
 		vastart(rn(node->u.w));
 		break;
@@ -1066,7 +1321,6 @@ _emit_code(jit_state_t *_jit)
 	    case jit_code_va_arg_d:
 		vaarg_d(rn(node->u.w), rn(node->v.w));
 		break;
-#endif
 	    case jit_code_live:			case jit_code_ellipsis:
 	    case jit_code_va_push:
 	    case jit_code_allocai:		case jit_code_allocar:
@@ -1186,14 +1440,9 @@ _emit_code(jit_state_t *_jit)
 
         _jitc->no_flag = !(node->flag & jit_flag_patch);
 
-	if (!_jitc->no_flag) {
-		/* We have a patch flag - reset FPU mode */
-		set_fmode_no_r0(_jit, SH_DEFAULT_FPU_MODE);
-	}
-
 	if (_jitc->consts.length &&
-		(jit_uword_t)_jit->pc.uc - (jit_uword_t)_jitc->consts.patches[0] >= 950) {
-		/* Maximum displacement for mov.l is +1020 bytes. If we're already +950 bytes
+		(jit_uword_t)_jit->pc.uc - (jit_uword_t)_jitc->consts.patches[0] >= 900) {
+		/* Maximum displacement for mov.l is +1020 bytes. If we're already +900 bytes
 		 * since the first mov.l, force a flush. */
 
 		if (node->next &&
@@ -1461,8 +1710,6 @@ _jit_make_arg_f(jit_state_t *_jit, jit_node_t *node)
 
     if (jit_arg_f_reg_p(_jitc->function->self.argf)) {
 	offset = _jitc->function->self.argf++;
-	if (_jitc->function->self.call & jit_call_varargs)
-	    offset += 8;
     }
     else {
 	offset = _jitc->function->self.size;
@@ -1485,8 +1732,6 @@ _jit_make_arg_d(jit_state_t *_jit, jit_node_t *node)
     if (jit_arg_f_reg_p(_jitc->function->self.argf)) {
 	offset = (_jitc->function->self.argf + 1) & ~1;
 	_jitc->function->self.argf = offset + 2;
-	if (_jitc->function->self.call & jit_call_varargs)
-	    offset += 8;
     }
     else {
 	offset = _jitc->function->self.size;
@@ -1688,6 +1933,10 @@ _jit_ellipsis(jit_state_t *_jit)
 	assert(!(_jitc->function->self.call & jit_call_varargs));
 	_jitc->function->self.call |= jit_call_varargs;
 	_jitc->function->vagp = _jitc->function->self.argi;
+	_jitc->function->vafp = _jitc->function->self.argf;
+	_jitc->function->vaoff = jit_allocai(sizeof(jit_va_list_t)
+					     /* +1 to ensure 8-byte alignment */
+					     + (NUM_WORD_ARGS + NUM_FLOAT_ARGS + 1) * 4);
     }
     jit_dec_synth();
 }
@@ -1695,9 +1944,21 @@ _jit_ellipsis(jit_state_t *_jit)
 void
 _jit_va_push(jit_state_t *_jit, jit_int32_t u)
 {
-    jit_inc_synth_w(va_push, u);
-    jit_pushargr(u);
-    jit_dec_synth();
+	jit_int32_t i, reg;
+	jit_inc_synth_w(va_push, u);
+
+	reg = jit_get_reg(jit_class_gpr);
+
+	for (i = 0; i < 5; i++) {
+		jit_ldxi(reg, u, i * 4);
+		jit_stxi(_jitc->function->call.size + i * 4, JIT_SP, reg);
+	}
+
+	jit_unget_reg(reg);
+
+	_jitc->function->call.size += 5 * 4;
+
+	jit_dec_synth();
 }
 
 jit_bool_t

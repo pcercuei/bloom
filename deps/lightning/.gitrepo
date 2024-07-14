@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/pcercuei/gnu_lightning
 	branch = sh4
-	commit = d1fa2d3db608b22056cbde58ce69d43339b73fe7
-	parent = 5e2f769cc1dede589dff224c707e85d1f390c553
+	commit = 62d6565638cd339f699bbefa911615f7feffddac
+	parent = 905fa62ccd7035049bee40a33156c07ccd4e4bec
 	method = merge
 	cmdver = 0.4.6

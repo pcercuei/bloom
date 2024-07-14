@@ -709,6 +709,10 @@ static void _prolog(jit_state_t*,jit_node_t*);
 #  define prolog(node)			_prolog(_jit,node)
 static void _epilog(jit_state_t*,jit_node_t*);
 #  define epilog(node)			_epilog(_jit,node)
+static void _vastart(jit_state_t*, jit_int32_t);
+#  define vastart(r0)			_vastart(_jit, r0)
+static void _vaarg(jit_state_t*, jit_int32_t, jit_int32_t);
+#  define vaarg(r0, r1)			_vaarg(_jit, r0, r1)
 
 #    define ldr(r0,r1)			ldr_i(r0,r1)
 #    define ldi(r0,i0)			ldi_i(r0,i0)
@@ -852,6 +856,12 @@ _movi(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 
 	if (i0 >= -128 && i0 < 128) {
 		MOVI(r0, i0);
+	} else if (!(i0 & 0x1) && i0 >= -256 && i0 < 256) {
+		MOVI(r0, i0 >> 1);
+		SHLL(r0);
+	} else if (!(i0 & 0x3) && i0 >= -512 && i0 < 512) {
+		MOVI(r0, i0 >> 2);
+		SHLL2(r0);
 	} else if (i0 >= w && i0 <= w + 0x3ff && !((i0 - w) & 0x3)) {
 		MOVA((i0 - w) >> 2);
 		movr(r0, _R0);
@@ -2260,7 +2270,7 @@ _ldxi_i(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 			movr(r0, _R0);
 		} else {
 			movr(r0, r1);
-			ldxi_s(r0, r0, i0);
+			ldxi_i(r0, r0, i0);
 		}
 	} else if (i0 >= 0 && i0 <= 0x3f && !(i0 & 0x3)) {
 		LDDL(r0, r1, i0 >> 2);
@@ -2961,6 +2971,85 @@ _calli_p(jit_state_t *_jit, jit_word_t i0)
 }
 
 static void
+_vastart(jit_state_t *_jit, jit_int32_t r0)
+{
+	jit_int32_t reg;
+
+	assert(_jitc->function->self.call & jit_call_varargs);
+
+	/* Return jit_va_list_t in the register argument */
+	addi(r0, JIT_FP, _jitc->function->vaoff);
+	reg = jit_get_reg(jit_class_gpr);
+
+	/* Align pointer to 8 bytes with +4 bytes offset (so that the
+	 * double values are aligned to 8 bytes */
+	andi(r0, r0, -8);
+	addi(r0, r0, 4);
+
+	/* Initialize the gpr begin/end pointers */
+	addi(rn(reg), r0, sizeof(jit_va_list_t)
+	     + _jitc->function->vagp * sizeof(jit_uint32_t));
+	stxi(offsetof(jit_va_list_t, bgpr), r0, rn(reg));
+
+	addi(rn(reg), rn(reg), NUM_WORD_ARGS * sizeof(jit_word_t)
+	     - _jitc->function->vagp * sizeof(jit_uint32_t));
+	stxi(offsetof(jit_va_list_t, egpr), r0, rn(reg));
+
+	/* Initialize the fpr begin/end pointers */
+	if (_jitc->function->vafp)
+		addi(rn(reg), rn(reg), _jitc->function->vafp * sizeof(jit_float32_t));
+
+	stxi(offsetof(jit_va_list_t, bfpr), r0, rn(reg));
+	addi(rn(reg), rn(reg), NUM_FLOAT_ARGS * sizeof(jit_float32_t)
+	     - _jitc->function->vafp * sizeof(jit_float32_t));
+	stxi(offsetof(jit_va_list_t, efpr), r0, rn(reg));
+
+	/* Initialize the stack pointer to the first stack argument */
+	addi(rn(reg), JIT_FP, _jitc->function->self.size);
+	stxi(offsetof(jit_va_list_t, over), r0, rn(reg));
+
+	jit_unget_reg(reg);
+}
+
+static void
+_vaarg(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1)
+{
+    jit_int32_t rg0, rg1;
+    jit_word_t ge_code;
+
+    assert(_jitc->function->self.call & jit_call_varargs);
+
+    rg0 = jit_get_reg(jit_class_gpr);
+    rg1 = jit_get_reg(jit_class_gpr);
+
+    /* Load begin/end gpr pointers */
+    ldxi(rn(rg1), r1, offsetof(jit_va_list_t, egpr));
+    movi(_R0, offsetof(jit_va_list_t, bgpr));
+    ldxr(rn(rg0), r1, _R0);
+
+    /* Check that we didn't reach the end gpr pointer. */
+    CMPHS(rn(rg0), rn(rg1));
+
+    ge_code = _jit->pc.w;
+    BF(0);
+
+    /* If we did, load the stack pointer instead. */
+    movi(_R0, offsetof(jit_va_list_t, over));
+    ldxr(rn(rg0), r1, _R0);
+
+    patch_at(ge_code, _jit->pc.w);
+
+    /* All good, we can now load the actual value */
+    ldxai_i(r0, rn(rg0), sizeof(jit_uint32_t));
+
+    /* Update the pointer (gpr or stack) to the next word */
+    stxr(_R0, r1, rn(rg0));
+
+    jit_unget_reg(rg0);
+    jit_unget_reg(rg1);
+}
+
+static void
 _patch_abs(jit_state_t *_jit, jit_word_t instr, jit_word_t label)
 {
 	jit_instr_t *ptr = (jit_instr_t *)instr;
@@ -3032,7 +3121,7 @@ _patch_at(jit_state_t *_jit, jit_word_t instr, jit_word_t label)
 static void
 _prolog(jit_state_t *_jit, jit_node_t *node)
 {
-	unsigned int i;
+	jit_uint16_t reg, regno, offs;
 
 	if (_jitc->function->define_frame || _jitc->function->assume_frame) {
 		jit_int32_t	frame = -_jitc->function->frame;
@@ -3054,14 +3143,42 @@ _prolog(jit_state_t *_jit, jit_node_t *node)
 	STSPR(_R0);
 	STDL(JIT_SP, _R0, JIT_V_NUM);
 
-	for (i = 0; i < JIT_V_NUM; i++)
-		if (jit_regset_tstbit(&_jitc->function->regset, JIT_V(i)))
-			STDL(JIT_SP, JIT_V(i), i);
+	for (regno = 0; regno < JIT_V_NUM; regno++)
+		if (jit_regset_tstbit(&_jitc->function->regset, JIT_V(regno)))
+			STDL(JIT_SP, JIT_V(regno), regno);
 
 	movr(JIT_FP, JIT_SP);
 
 	if (_jitc->function->stack)
 		subi(JIT_SP, JIT_SP, _jitc->function->stack);
+	if (_jitc->function->allocar) {
+		reg = jit_get_reg(jit_class_gpr);
+		movi(rn(reg), _jitc->function->self.aoff);
+		stxi_i(_jitc->function->aoffoff, JIT_FP, rn(reg));
+		jit_unget_reg(reg);
+	}
+
+	if (_jitc->function->self.call & jit_call_varargs) {
+		/* Align to 8 bytes with +4 bytes offset (so that the double
+		 * values are aligned to 8 bytes */
+		andi(JIT_R0, JIT_FP, -8);
+		addi(JIT_R0, JIT_R0, 4);
+
+		for (regno = _jitc->function->vagp; jit_arg_reg_p(regno); regno++) {
+			stxi(_jitc->function->vaoff
+			     + sizeof(jit_va_list_t)
+			     + regno * sizeof(jit_word_t),
+			     JIT_R0, rn(_R4 + regno));
+		}
+
+		for (regno = _jitc->function->vafp; jit_arg_f_reg_p(regno); regno++) {
+			stxi_f(_jitc->function->vaoff
+			       + sizeof(jit_va_list_t)
+			       + NUM_WORD_ARGS * sizeof(jit_word_t)
+			       + regno * sizeof(jit_float32_t),
+			       JIT_R0, rn(_F4 + (regno ^ fpr_args_inverted())));
+		}
+	}
 
 	reset_fpu(_jit, 0);
 }
