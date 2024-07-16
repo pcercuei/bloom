@@ -31,6 +31,12 @@ find_library(ZLIB_LIBRARIES z REQUIRED)
 find_path(ZLIB_INCLUDE_DIR zlib.h REQUIRED
 	HINTS ${KOS_PORTS}/include/zlib
 )
+add_library(zlib STATIC IMPORTED)
+set_target_properties(zlib PROPERTIES
+	IMPORTED_LOCATION ${ZLIB_LIBRARIES}
+	INCLUDE_DIRECTORIES ${ZLIB_INCLUDE_DIR}
+	INTERFACE_INCLUDE_DIRECTORIES ${ZLIB_INCLUDE_DIR}
+)
 
 option(WITH_FASTMEM "Enable fastmem support" OFF)
 if (WITH_FASTMEM)
@@ -119,7 +125,6 @@ target_include_directories(libpcsxcore PUBLIC
 	deps/pcsx_rearmed
 )
 target_include_directories(libpcsxcore PRIVATE deps/pcsx_rearmed/deps/lightrec)
-target_include_directories(libpcsxcore PUBLIC ${ZLIB_INCLUDE_DIR})
 target_include_directories(libpcsxcore INTERFACE deps/pcsx_rearmed)
 target_compile_definitions(libpcsxcore PUBLIC
 	LIGHTREC
@@ -132,7 +137,7 @@ target_compile_definitions(libpcsxcore PUBLIC
 )
 target_compile_options(libpcsxcore PRIVATE -Wno-format)
 set_target_properties(libpcsxcore PROPERTIES LINKER_LANGUAGE C)
-target_link_libraries(libpcsxcore PUBLIC lightrec ${ZLIB_LIBRARIES})
+target_link_libraries(libpcsxcore PUBLIC lightrec zlib)
 
 if (NOT GPU_PLUGIN)
 	set(GPU_PLUGIN Unai CACHE STRING "GPU plugin" FORCE)
@@ -268,9 +273,8 @@ if (WITH_CHD)
 		deps/pcsx_rearmed/deps/libchdr/include
 		deps/pcsx_rearmed/deps/libchdr/include/libchdr
 	)
-	target_include_directories(libchdr PRIVATE ${ZLIB_INCLUDE_DIR})
 	target_compile_definitions(libchdr INTERFACE HAVE_CHD)
-	target_link_libraries(libchdr PUBLIC lzma zstd)
+	target_link_libraries(libchdr PUBLIC lzma zstd zlib)
 
 	target_link_libraries(libpcsxcore PUBLIC libchdr)
 endif(WITH_CHD)
@@ -293,7 +297,7 @@ if (LOG_LEVEL STREQUAL "Debug")
 		${BFD_LIBRARIES}
 		${SFRAME_LIBRARIES}
 		${IBERTY_LIBRARIES}
-		${ZLIB_LIBRARIES}
+		zlib
 	)
 endif()
 
