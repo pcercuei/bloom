@@ -40,6 +40,7 @@
 #include "../libpcsxcore/cdrom.h"
 #include "../libpcsxcore/cdriso.h"
 #include "../libpcsxcore/cheat.h"
+#include "../libpcsxcore/ppf.h"
 #include "../libpcsxcore/new_dynarec/new_dynarec.h"
 #include "../plugins/dfsound/spu_config.h"
 #include "psemu_plugin_defs.h"
@@ -92,6 +93,7 @@ typedef enum
 	MA_OPT_SCANLINES,
 	MA_OPT_SCANLINE_LEVEL,
 	MA_OPT_CENTERING,
+	MA_OPT_OVERSCAN,
 } menu_id;
 
 static int last_vout_w, last_vout_h, last_vout_bpp;
@@ -466,6 +468,7 @@ static const struct {
 	CE_INTVAL_P(screen_centering_type),
 	CE_INTVAL_P(screen_centering_x),
 	CE_INTVAL_P(screen_centering_y),
+	CE_INTVAL_P(show_overscan),
 	CE_INTVAL(spu_config.iUseReverb),
 	CE_INTVAL(spu_config.iXAPitch),
 	CE_INTVAL(spu_config.iUseInterpolation),
@@ -740,7 +743,7 @@ static const char *filter_exts[] = {
 	#ifdef HAVE_CHD
 	"chd",
 	#endif
-	"bz",  "znx", "pbp", "cbn", NULL
+	"bz",  "znx", "pbp", "cbn", "ppf", NULL
 };
 
 // rrrr rggg gggb bbbb
@@ -1279,6 +1282,7 @@ static const char *men_soft_filter[] = { "None",
 	NULL };
 static const char *men_dummy[] = { NULL };
 static const char *men_centering[] = { "Auto", "Ingame", "Borderless", "Force", NULL };
+static const char *men_overscan[] = { "OFF", "Auto", "Hack", NULL };
 static const char h_scaler[]    = "int. 2x  - scales w. or h. 2x if it fits on screen\n"
 				  "int. 4:3 - uses integer if possible, else fractional";
 static const char h_cscaler[]   = "Displays the scaler layer, you can resize it\n"
@@ -1375,6 +1379,7 @@ static int menu_loop_cscaler(int id, int keys)
 static menu_entry e_menu_gfx_options[] =
 {
 	mee_enum      ("Screen centering",         MA_OPT_CENTERING, pl_rearmed_cbs.screen_centering_type, men_centering),
+	mee_enum      ("Show overscan",            MA_OPT_OVERSCAN, pl_rearmed_cbs.show_overscan, men_overscan),
 	mee_enum_h    ("Scaler",                   MA_OPT_VARSCALER, g_scaler, men_scaler, h_scaler),
 	mee_enum      ("Video output mode",        MA_OPT_VOUT_MODE, plat_target.vout_method, men_dummy),
 	mee_onoff     ("Software Scaling",         MA_OPT_SCALER2, soft_scaling, 1),
@@ -2157,6 +2162,18 @@ static int run_exe(void)
 static int run_cd_image(const char *fname)
 {
 	int autoload_state = g_autostateld_opt;
+	size_t fname_len = strlen(fname);
+	const char *ppfname = NULL;
+	char fname2[256];
+
+	// simle ppf handling, like game.chd.ppf
+	if (4 < fname_len && fname_len < sizeof(fname2)
+	    && strcasecmp(fname + fname_len - 4, ".ppf") == 0) {
+		memcpy(fname2, fname, fname_len - 4);
+		fname2[fname_len - 4] = 0;
+		ppfname = fname;
+		fname = fname2;
+	}
 
 	ready_to_go = 0;
 	reload_plugins(fname);
@@ -2170,6 +2187,8 @@ static int run_cd_image(const char *fname)
 		menu_update_msg("unsupported/invalid CD image");
 		return -1;
 	}
+	if (ppfname)
+		BuildPPFCache(ppfname);
 
 	SysReset();
 
@@ -2185,7 +2204,7 @@ static int run_cd_image(const char *fname)
 
 	if (autoload_state) {
 		unsigned int newest = 0;
-		int time, slot, newest_slot = -1;
+		int time = 0, slot, newest_slot = -1;
 
 		for (slot = 0; slot < 10; slot++) {
 			if (emu_check_save_file(slot, &time)) {
