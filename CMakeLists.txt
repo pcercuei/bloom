@@ -77,9 +77,6 @@ target_compile_definitions(lightning PRIVATE HAVE_MMAP=0 SH_HAS_FPU=0)
 target_compile_options(lightning PRIVATE -Wno-unused-function -Wno-unused-variable -Wno-parentheses -Wno-format)
 set_target_properties(lightning PROPERTIES LINKER_LANGUAGE C)
 
-# Disable the threaded compiler by default
-option(ENABLE_THREADED_COMPILER "Enable threaded compiler" OFF)
-
 # Force these two options to get Bloom to build and work properly
 set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE)
 set(ENABLE_CODE_BUFFER ON CACHE INTERNAL "" FORCE)
