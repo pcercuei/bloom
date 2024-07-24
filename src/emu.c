@@ -22,8 +22,6 @@
 #include "bloom-config.h"
 #include "emu.h"
 
-#define ROOT "/cd"
-
 extern int stop;
 
 void SysPrintf(const char *fmt, ...) {
@@ -128,7 +126,11 @@ int main(int argc, char **argv)
 
 	plugin_call_rearmed_cbs();
 
-	runMenu();
+	if (WITH_GAME_PATH[0])
+		emu_check_cd(WITH_GAME_PATH);
+	else
+		runMenu();
+
 	EmuReset();
 	LoadCdrom();
 

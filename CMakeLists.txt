@@ -277,6 +277,7 @@ if (WITH_CHD)
 endif(WITH_CHD)
 
 set(WITH_BIOS_PATH "" CACHE PATH "Runtime path to the (optional) BIOS file")
+set(WITH_GAME_PATH "" CACHE PATH "If set, auto-boot the CD image at the given path")
 
 if (LOG_LEVEL STREQUAL "Debug")
 	find_library(OPCODES_LIBRARIES opcodes REQUIRED)

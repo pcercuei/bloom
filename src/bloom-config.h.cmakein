@@ -9,6 +9,7 @@
 #define BLOOM_CONFIG_H
 
 #define WITH_BIOS_PATH "@WITH_BIOS_PATH@"
+#define WITH_GAME_PATH "@WITH_GAME_PATH@"
 
 #cmakedefine01 WITH_CHD
 #cmakedefine01 WITH_IDE
