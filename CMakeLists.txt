@@ -276,6 +276,8 @@ if (WITH_CHD)
 	target_link_libraries(libpcsxcore PUBLIC libchdr)
 endif(WITH_CHD)
 
+set(WITH_BIOS_PATH "" CACHE PATH "Runtime path to the (optional) BIOS file")
+
 if (LOG_LEVEL STREQUAL "Debug")
 	find_library(OPCODES_LIBRARIES opcodes REQUIRED)
 	find_library(BFD_LIBRARIES bfd REQUIRED)

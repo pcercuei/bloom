@@ -8,6 +8,8 @@
 #ifndef BLOOM_CONFIG_H
 #define BLOOM_CONFIG_H
 
+#define WITH_BIOS_PATH "@WITH_BIOS_PATH@"
+
 #cmakedefine01 WITH_CHD
 #cmakedefine01 WITH_IDE
 #cmakedefine01 WITH_SDCARD

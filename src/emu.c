@@ -51,6 +51,8 @@ void SysMessage(const char *fmt, ...) {
 
 static void init_config(void)
 {
+	struct stat stat_buf;
+
 	memset(&Config, 0, sizeof(Config));
 
 	Config.PsxAuto = 1;
@@ -58,12 +60,14 @@ static void init_config(void)
 	Config.GpuListWalking = -1;
 	Config.FractionalFramerate = -1;
 
-	/* TODO: Load BIOS if found
-	Config.SlowBoot = 1;
-	strcpy(Config.BiosDir, ROOT "/bios");
-	strcpy(Config.Bios, "scph1001.bin");
-	*/
-	strcpy(Config.Bios, "HLE");
+	if (sizeof(WITH_BIOS_PATH) > 1
+	    && !fs_stat(WITH_BIOS_PATH, &stat_buf, 0)) {
+		Config.SlowBoot = 1;
+		strcpy(Config.BiosDir, "");
+		strcpy(Config.Bios, WITH_BIOS_PATH);
+	} else {
+		strcpy(Config.Bios, "HLE");
+	}
 
 	strcpy(Config.Mcd1, "/ram/mcd1.mcd");
 	strcpy(Config.Mcd2, "/ram/mcd2.mcd");
