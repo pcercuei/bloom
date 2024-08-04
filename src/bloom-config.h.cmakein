@@ -14,5 +14,6 @@
 #cmakedefine01 WITH_CHD
 #cmakedefine01 WITH_IDE
 #cmakedefine01 WITH_SDCARD
+#cmakedefine01 HARDWARE_ACCELERATED
 
 #endif /* BLOOM_CONFIG_H */

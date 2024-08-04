@@ -22,6 +22,7 @@
 
 #include "emu.h"
 #include "vmu.h"
+#include "bloom-config.h"
 
 #define BIT(x) (1 << (x))
 
@@ -177,69 +178,71 @@ static void dc_vout_flip(const void *vram, int stride, int bgr24,
 	if (!vram)
 		return;
 
-	assert(!((unsigned int)vram & 0x3));
+	if (!HARDWARE_ACCELERATED) {
+		assert(!((unsigned int)vram & 0x3));
 
-	/* We transfer 16 pixels at a time, so align width to 32 bytes.
-	 * We are just transferring the texture so it does not matter if
-	 * we're reading too far. */
-	copy_w = (w + 31) & ~31;
+		/* We transfer 16 pixels at a time, so align width to 32 bytes.
+		 * We are just transferring the texture so it does not matter if
+		 * we're reading too far. */
+		copy_w = (w + 31) & ~31;
 
-	if (bgr24)
-		copy24(vram, stride, copy_w, h);
-	else
-		copy15(vram, stride, copy_w, h);
+		if (bgr24)
+			copy24(vram, stride, copy_w, h);
+		else
+			copy15(vram, stride, copy_w, h);
 
-	ymin = (float)y * (float)screen_fh;
-	ymax = (float)(y + h) * (float)screen_fh;
-	xmin = (float)x * (float)screen_fw;
-	xmax = (float)(x + w) * (float)screen_fw;
+		ymin = (float)y * (float)screen_fh;
+		ymax = (float)(y + h) * (float)screen_fh;
+		xmin = (float)x * (float)screen_fw;
+		xmax = (float)(x + w) * (float)screen_fw;
 
-	pvr_wait_ready();
-	pvr_scene_begin();
-	pvr_list_begin(PVR_LIST_OP_POLY);
+		pvr_wait_ready();
+		pvr_scene_begin();
+		pvr_list_begin(PVR_LIST_OP_POLY);
 
-	pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY,
-			 PVR_TXRFMT_NONTWIDDLED | (bgr24 ? PVR_TXRFMT_RGB565 : PVR_TXRFMT_ARGB1555),
-			 TEX_WIDTH, TEX_HEIGHT, pvram, PVR_FILTER_NONE);
+		pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY,
+				 PVR_TXRFMT_NONTWIDDLED | (bgr24 ? PVR_TXRFMT_RGB565 : PVR_TXRFMT_ARGB1555),
+				 TEX_WIDTH, TEX_HEIGHT, pvram, PVR_FILTER_NONE);
 
-	pvr_poly_compile(&hdr, &cxt);
-	pvr_prim(&hdr, sizeof(hdr));
+		pvr_poly_compile(&hdr, &cxt);
+		pvr_prim(&hdr, sizeof(hdr));
 
-	vert.argb = PVR_PACK_COLOR(1.0f, 1.0f, 1.0f, 1.0f);
-	vert.oargb = 0;
-	vert.flags = PVR_CMD_VERTEX;
+		vert.argb = PVR_PACK_COLOR(1.0f, 1.0f, 1.0f, 1.0f);
+		vert.oargb = 0;
+		vert.flags = PVR_CMD_VERTEX;
 
-	vert.x = xmin;
-	vert.y = ymin;
-	vert.z = 1.0f;
-	vert.u = 0.0f;
-	vert.v = 0.0f;
-	pvr_prim(&vert, sizeof(vert));
+		vert.x = xmin;
+		vert.y = ymin;
+		vert.z = 1.0f;
+		vert.u = 0.0f;
+		vert.v = 0.0f;
+		pvr_prim(&vert, sizeof(vert));
 
-	vert.x = xmax;
-	vert.y = ymin;
-	vert.z = 1.0f;
-	vert.u = (float)w / (float)TEX_WIDTH;
-	vert.v = 0.0f;
-	pvr_prim(&vert, sizeof(vert));
+		vert.x = xmax;
+		vert.y = ymin;
+		vert.z = 1.0f;
+		vert.u = (float)w / (float)TEX_WIDTH;
+		vert.v = 0.0f;
+		pvr_prim(&vert, sizeof(vert));
 
-	vert.x = xmin;
-	vert.y = ymax;
-	vert.z = 1.0f;
-	vert.u = 0.0f;
-	vert.v = (float)h / (float)TEX_HEIGHT;
-	pvr_prim(&vert, sizeof(vert));
+		vert.x = xmin;
+		vert.y = ymax;
+		vert.z = 1.0f;
+		vert.u = 0.0f;
+		vert.v = (float)h / (float)TEX_HEIGHT;
+		pvr_prim(&vert, sizeof(vert));
 
-	vert.x = xmax;
-	vert.y = ymax;
-	vert.z = 1.0f;
-	vert.u = (float)w / (float)TEX_WIDTH;
-	vert.v = (float)h / (float)TEX_HEIGHT;
-	vert.flags = PVR_CMD_VERTEX_EOL;
-	pvr_prim(&vert, sizeof(vert));
+		vert.x = xmax;
+		vert.y = ymax;
+		vert.z = 1.0f;
+		vert.u = (float)w / (float)TEX_WIDTH;
+		vert.v = (float)h / (float)TEX_HEIGHT;
+		vert.flags = PVR_CMD_VERTEX_EOL;
+		pvr_prim(&vert, sizeof(vert));
 
-	pvr_list_finish();
-	pvr_scene_finish();
+		pvr_list_finish();
+		pvr_scene_finish();
+	}
 
 	new_timer = timer_ms_gettime64();
 
