@@ -14,6 +14,7 @@
 #cmakedefine01 WITH_CHD
 #cmakedefine01 WITH_IDE
 #cmakedefine01 WITH_SDCARD
+#cmakedefine01 HARDWARE_ACCELERATED
 
 #cmakedefine01 WITH_FSAA
 #cmakedefine01 WITH_24BPP

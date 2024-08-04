@@ -139,7 +139,7 @@ target_link_libraries(libpcsxcore PUBLIC lightrec zlib)
 if (NOT GPU_PLUGIN)
 	set(GPU_PLUGIN Unai CACHE STRING "GPU plugin" FORCE)
 	set_property(CACHE GPU_PLUGIN PROPERTY
-		STRINGS Unai
+		STRINGS Unai PVR
 	)
 endif()
 
@@ -154,6 +154,16 @@ if (GPU_PLUGIN STREQUAL Unai)
 		_SDL
 		USE_GPULIB
 	)
+	set(HARDWARE_ACCELERATED OFF)
+elseif(GPU_PLUGIN STREQUAL PVR)
+	add_library(gpu STATIC
+		src/pvr/gpulib_if.c
+		deps/pcsx_rearmed/plugins/gpulib/gpu.c
+		deps/pcsx_rearmed/plugins/gpulib/vout_pl.c
+	)
+	set_target_properties(gpu PROPERTIES LINKER_LANGUAGE C)
+	target_include_directories(gpu PRIVATE deps/pcsx_rearmed/plugins)
+	set(HARDWARE_ACCELERATED ON)
 endif()
 
 option(WITH_FSAA "Enable horizontal anti-aliasing" OFF)
