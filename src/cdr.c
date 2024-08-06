@@ -51,11 +51,11 @@ long DC_open(void)
 {
 	int ret;
 
-	ret = cdrom_read_toc(&cdrom_toc, 0);
+	ret = cdrom_reinit_ex(CDROM_READ_WHOLE_SECTOR, -1, 2352);
 	if (ret)
 		return ret;
 
-	ret = cdrom_change_datatype(CDROM_READ_WHOLE_SECTOR, -1, 2352);
+	ret = cdrom_read_toc(&cdrom_toc, 0);
 	if (ret)
 		return ret;
 
