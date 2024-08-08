@@ -22,6 +22,8 @@
 #include "bloom-config.h"
 #include "emu.h"
 
+static bool is_exe;
+
 extern int stop;
 
 void SysPrintf(const char *fmt, ...) {
@@ -95,7 +97,10 @@ bool emu_check_cd(const char *path)
 		return false;
 	}
 
-	if (CheckCdrom() != 0) {
+	if (strstr(path, ".exe"))
+		is_exe = true;
+
+	if (!is_exe && CheckCdrom() != 0) {
 		ClosePlugins();
 		return false;
 	}
@@ -132,7 +137,10 @@ int main(int argc, char **argv)
 		runMenu();
 
 	EmuReset();
-	LoadCdrom();
+	if (is_exe)
+		Load(GetIsoFile());
+	else
+		LoadCdrom();
 
 	cont_btn_callback(0, CONT_RESET_BUTTONS, emu_exit);
 
