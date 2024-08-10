@@ -356,7 +356,10 @@ int do_cmd_list(uint32_t *list, int list_len,
 			pvr_printf("Render line (0x%x)\n", cmd);
 			break;
 
-		case 0x60: {
+		case 0x60:
+		case 0x68:
+		case 0x70:
+		case 0x78: {
 			/* Monochrome rectangle */
 			pvr_poly_cxt_t cxt;
 			pvr_poly_hdr_t *hdr;
@@ -364,6 +367,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			int16_t x[2], y[2];
 			unsigned int i;
 			uint32_t color;
+			uint16_t w, h;
 
 			pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);
 
@@ -379,8 +383,23 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			x[0] = (int16_t)pbuffer.U4[1];
 			y[0] = (int16_t)(pbuffer.U4[1] >> 16);
-			x[1] = x[0] + (int16_t)pbuffer.U4[2];
-			y[1] = y[0] + (int16_t)(pbuffer.U4[2] >> 16);
+
+			if ((cmd & 0x18) == 0x18) {
+				w = 16;
+				h = 16;
+			} else if (cmd & 0x10) {
+				w = 8;
+				h = 8;
+			} else if (cmd & 0x08) {
+				w = 1;
+				h = 1;
+			} else {
+				w = (int16_t)pbuffer.U4[2];
+				h = (int16_t)(pbuffer.U4[2] >> 16);
+			}
+
+			x[1] = x[0] + w;
+			y[1] = y[0] + h;
 
 			for (i = 0; i < 4; i++) {
 				v = pvr_dr_get();
@@ -398,7 +417,10 @@ int do_cmd_list(uint32_t *list, int list_len,
 			break;
 		}
 
-		case 0x61 ... 0x7f:
+		case 0x61 ... 0x67:
+		case 0x69 ... 0x6f:
+		case 0x71 ... 0x77:
+		case 0x79 ... 0x7f:
 			pvr_printf("Render rectangle (0x%x)\n", cmd);
 			break;
 
