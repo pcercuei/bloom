@@ -123,8 +123,13 @@ int main(int argc, char **argv)
 	if (WITH_SDCARD)
 		sdcard_init();
 
-	vid_set_mode(DM_640x480, PM_RGB565);
+	if (WITH_24BPP)
+		vid_set_mode(DM_640x480, PM_RGB888P); /* 24-bit */
+	else
+		vid_set_mode(DM_640x480, PM_RGB565); /* 16-bit */
+
 	pvr_init_defaults();
+
 	init_config();
 
 	if (EmuInit() == -1) {

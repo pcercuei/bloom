@@ -157,6 +157,7 @@ if (GPU_PLUGIN STREQUAL Unai)
 endif()
 
 option(WITH_FSAA "Enable horizontal anti-aliasing" OFF)
+option(WITH_24BPP "Enable 24-bit framebuffer (no dithering)" OFF)
 
 if (NOT SPU_PLUGIN)
 	set(SPU_PLUGIN AICA CACHE STRING "SPU plugin" FORCE)

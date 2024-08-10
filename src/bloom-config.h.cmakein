@@ -16,5 +16,6 @@
 #cmakedefine01 WITH_SDCARD
 
 #cmakedefine01 WITH_FSAA
+#cmakedefine01 WITH_24BPP
 
 #endif /* BLOOM_CONFIG_H */
