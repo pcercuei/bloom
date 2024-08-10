@@ -15,4 +15,6 @@
 #cmakedefine01 WITH_IDE
 #cmakedefine01 WITH_SDCARD
 
+#cmakedefine01 WITH_FSAA
+
 #endif /* BLOOM_CONFIG_H */

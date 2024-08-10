@@ -110,6 +110,12 @@ bool emu_check_cd(const char *path)
 	return true;
 }
 
+/* Copy of the default params, but with FSAA enabled */
+static pvr_init_params_t pvr_init_params_fsaa = {
+	{ PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_0 },
+        512 * 1024, 0, 1, 0, 3,
+};
+
 int main(int argc, char **argv)
 {
 	if (WITH_IDE)
@@ -139,6 +145,12 @@ int main(int argc, char **argv)
 		runMenu();
 
 	ClosePlugins();
+
+	if (WITH_FSAA) {
+		pvr_shutdown();
+		pvr_init(&pvr_init_params_fsaa);
+	}
+
 	started = true;
 	OpenPlugins();
 

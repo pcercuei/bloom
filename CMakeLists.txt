@@ -156,6 +156,8 @@ if (GPU_PLUGIN STREQUAL Unai)
 	)
 endif()
 
+option(WITH_FSAA "Enable horizontal anti-aliasing" OFF)
+
 if (NOT SPU_PLUGIN)
 	set(SPU_PLUGIN AICA CACHE STRING "SPU plugin" FORCE)
 	set_property(CACHE SPU_PLUGIN PROPERTY
