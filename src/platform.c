@@ -77,11 +77,6 @@ static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 
 	screen_fw = 640.0f / (float)raw_w;
 	screen_fh = 480.0f / (float)raw_h;
-
-	if (bpp == 15)
-		vid_set_mode(DM_640x480, PM_RGB555);
-	else
-		vid_set_mode(DM_640x480, PM_RGB565);
 }
 
 static inline void copy15(const uint16_t *vram, int stride, int w, int h)
