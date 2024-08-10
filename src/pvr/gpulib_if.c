@@ -25,6 +25,7 @@
 #endif
 
 extern float screen_fw, screen_fh;
+extern uint32_t pvr_dr_state;
 
 union PacketBuffer {
 	uint32_t U4[16];
@@ -116,6 +117,28 @@ static void cmd_clear_image(union PacketBuffer *pbuffer)
 	 * caches that are covered by this rectangle */
 }
 
+static void * pvr_dr_get(void)
+{
+	sq_lock((void *)PVR_TA_INPUT);
+	return pvr_dr_target(pvr_dr_state);
+}
+
+static void pvr_dr_put(void *addr)
+{
+	pvr_dr_commit(addr);
+	sq_unlock();
+}
+
+static inline float x_to_pvr(int16_t x)
+{
+	return (float)(x + pvr.draw_dx - pvr.draw_x1) * screen_fw;
+}
+
+static inline float y_to_pvr(int16_t y)
+{
+	return (float)(y + pvr.draw_dy - pvr.draw_y1) * screen_fh;
+}
+
 int do_cmd_list(uint32_t *list, int list_len,
 		int *cycles_sum_out, int *cycles_last, int *last_cmd)
 {
@@ -204,7 +227,49 @@ int do_cmd_list(uint32_t *list, int list_len,
 			pvr_printf("Render line (0x%x)\n", cmd);
 			break;
 
-		case 0x60 ... 0x7f:
+		case 0x60: {
+			/* Monochrome rectangle */
+			pvr_poly_cxt_t cxt;
+			pvr_poly_hdr_t *hdr;
+			pvr_vertex_t *v;
+			int16_t x[2], y[2];
+			unsigned int i;
+			uint32_t color;
+
+			pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);
+
+			cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
+			cxt.gen.culling = PVR_CULLING_NONE;
+
+			hdr = pvr_dr_get();
+			pvr_poly_compile(hdr, &cxt);
+			pvr_dr_put(hdr);
+
+			/* BGR->RGB swap */
+			color = __builtin_bswap32(pbuffer.U4[0]) >> 8;
+
+			x[0] = (int16_t)pbuffer.U4[1];
+			y[0] = (int16_t)(pbuffer.U4[1] >> 16);
+			x[1] = x[0] + (int16_t)pbuffer.U4[2];
+			y[1] = y[0] + (int16_t)(pbuffer.U4[2] >> 16);
+
+			for (i = 0; i < 4; i++) {
+				v = pvr_dr_get();
+
+				*v = (pvr_vertex_t){
+					.flags = (i == 3) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
+					.argb = color,
+					.x = x_to_pvr(x[!!(i & 0x1)]),
+					.y = y_to_pvr(y[!!(i & 0x2)]),
+					.z = 1.0f,
+				};
+
+				pvr_dr_put(v);
+			}
+			break;
+		}
+
+		case 0x61 ... 0x7f:
 			pvr_printf("Render rectangle (0x%x)\n", cmd);
 			break;
 

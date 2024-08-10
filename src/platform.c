@@ -47,6 +47,8 @@ static unsigned int screen_w, screen_h, screen_bpp;
 
 unsigned short in_keystate[8];
 
+uint32_t pvr_dr_state;
+
 int in_type[8] = {
    PSE_PAD_TYPE_NONE, PSE_PAD_TYPE_NONE,
    PSE_PAD_TYPE_NONE, PSE_PAD_TYPE_NONE,
@@ -59,10 +61,19 @@ static void hw_render_start(void)
 	pvr_wait_ready();
 	pvr_scene_begin();
 	pvr_list_begin(PVR_LIST_OP_POLY);
+
+	pvr_dr_init(&pvr_dr_state);
+
+	/* Unlock the SQ that's locked in pvr_dr_init, because we do need to
+	 * use the MMU and we can't use it with the SQs locked. */
+	sq_unlock();
 }
 
 static void hw_render_stop(void)
 {
+	/* Re-lock the SQ, because it will be unlocked in pvr_scene_finish() */
+	sq_lock((void *)PVR_TA_INPUT);
+
 	pvr_list_finish();
 	pvr_scene_finish();
 }
