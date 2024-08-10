@@ -139,6 +139,33 @@ static inline float y_to_pvr(int16_t y)
 	return (float)(y + pvr.draw_dy - pvr.draw_y1) * screen_fh;
 }
 
+static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
+		      int16_t x1, int16_t y1, uint32_t color1)
+{
+	unsigned int i, up = y1 < y0;
+	int16_t xcoords[6] = {
+		x0, x0, x0 + 1, x1, x1 + 1, x1 + 1,
+	};
+	int16_t ycoords[6] = {
+		y0 + up, y0 + !up, y0 + up, y1 + !up, y1 + up, y1 + !up,
+	};
+	pvr_vertex_t *v;
+
+	for (i = 0; i < 6; i++) {
+		v = pvr_dr_get();
+
+		*v = (pvr_vertex_t){
+			.flags = (i == 5) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
+			.argb = (i < 3) ? color0 : color1,
+			.x = x_to_pvr(xcoords[i]),
+			.y = y_to_pvr(ycoords[i]),
+			.z = 1.0f,
+		};
+
+		pvr_dr_put(v);
+	}
+}
+
 int do_cmd_list(uint32_t *list, int list_len,
 		int *cycles_sum_out, int *cycles_last, int *last_cmd)
 {
@@ -277,7 +304,55 @@ int do_cmd_list(uint32_t *list, int list_len,
 			pvr_printf("Render polygon (0x%x)\n", cmd);
 			break;
 
-		case 0x40 ... 0x5a:
+		case 0x40:
+		case 0x50:
+			/* Monochrome/shaded line */
+			pvr_poly_cxt_t cxt;
+			pvr_poly_hdr_t *hdr;
+			bool multicolor = cmd & 0x10;
+			uint32_t val, *buf = pbuffer.U4;
+			unsigned int i, nb = 2;
+			uint32_t oldcolor, color;
+			int16_t x, y, oldx, oldy;
+
+			pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);
+
+			cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
+			cxt.gen.culling = PVR_CULLING_NONE;
+
+			hdr = pvr_dr_get();
+			pvr_poly_compile(hdr, &cxt);
+			pvr_dr_put(hdr);
+
+			/* BGR->RGB swap */
+			color = __builtin_bswap32(*buf++) >> 8;
+			oldcolor = color;
+
+			val = *buf++;
+			oldx = (int16_t)val;
+			oldy = (int16_t)(val >> 16);
+
+			for (i = 0; i < nb - 1; i++) {
+				if (multicolor)
+					color = __builtin_bswap32(*buf++) >> 8;
+
+				val = *buf++;
+				x = (int16_t)val;
+				y = (int16_t)(val >> 16);
+
+				if (oldx > x)
+					draw_line(x, y, color, oldx, oldy, oldcolor);
+				else
+					draw_line(oldx, oldy, oldcolor, x, y, color);
+
+				oldx = x;
+				oldy = y;
+				oldcolor = color;
+			}
+			break;
+
+		case 0x41 ... 0x4f:
+		case 0x51 ... 0x5a:
 			pvr_printf("Render line (0x%x)\n", cmd);
 			break;
 
