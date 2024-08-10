@@ -11,6 +11,8 @@
 #include <sys/cdefs.h>
 __BEGIN_DECLS
 
+extern _Bool started;
+
 void runMenu(void);
 
 void plugin_call_rearmed_cbs(void);

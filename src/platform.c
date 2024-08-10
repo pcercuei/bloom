@@ -54,6 +54,9 @@ int in_type[8] = {
 
 static int dc_vout_open(void)
 {
+	if (!started)
+		return 0;
+
 	pvram = pvr_mem_malloc(TEX_WIDTH * TEX_HEIGHT * 2);
 
 	assert(!!pvram);
@@ -66,11 +69,17 @@ static int dc_vout_open(void)
 
 static void dc_vout_close(void)
 {
+	if (!started)
+		return;
+
 	pvr_mem_free(pvram);
 }
 
 static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 {
+	if (!started)
+		return;
+
 	screen_w = raw_w;
 	screen_h = raw_h;
 	screen_bpp = bpp;
@@ -169,7 +178,7 @@ static void dc_vout_flip(const void *vram, int stride, int bgr24,
 	float ymin, ymax, xmin, xmax;
 	int copy_w;
 
-	if (!vram)
+	if (!started || !vram)
 		return;
 
 	assert(!((unsigned int)vram & 0x3));

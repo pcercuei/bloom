@@ -26,6 +26,8 @@ static bool is_exe;
 
 extern int stop;
 
+bool started;
+
 void SysPrintf(const char *fmt, ...) {
 	va_list list;
 
@@ -135,6 +137,10 @@ int main(int argc, char **argv)
 		emu_check_cd(WITH_GAME_PATH);
 	else
 		runMenu();
+
+	ClosePlugins();
+	started = true;
+	OpenPlugins();
 
 	EmuReset();
 	if (is_exe)
