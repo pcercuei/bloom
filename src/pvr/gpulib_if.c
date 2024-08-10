@@ -219,7 +219,61 @@ int do_cmd_list(uint32_t *list, int list_len,
 			/* NOP */
 			break;
 
-		case 0x20 ... 0x3f:
+		case 0x20:
+		case 0x28:
+		case 0x30:
+		case 0x38: {
+			/* Monochrome/shaded non-textured polygon */
+			pvr_poly_cxt_t cxt;
+			pvr_poly_hdr_t *hdr;
+			pvr_vertex_t *v;
+			bool multicolor = cmd & 0x10;
+			bool poly4 = cmd & 0x8;
+			uint32_t val, *buf = pbuffer.U4;
+			unsigned int i, nb = 3 + !!poly4;
+			uint32_t color = 0;
+			int16_t x, y;
+
+			pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);
+
+			cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
+			cxt.gen.culling = PVR_CULLING_NONE;
+
+			hdr = pvr_dr_get();
+			pvr_poly_compile(hdr, &cxt);
+			pvr_dr_put(hdr);
+
+			for (i = 0; i < nb; i++) {
+				if (i == 0 || multicolor) {
+					/* BGR->RGB swap */
+					color = __builtin_bswap32(*buf++) >> 8;
+					pvr_printf("Render polygon color 0x%x\n", color);
+				}
+
+				val = *buf++;
+				x = (int16_t)val;
+				y = (int16_t)(val >> 16);
+
+				v = pvr_dr_get();
+
+				*v = (pvr_vertex_t){
+					.flags = (i == nb - 1) ?
+						PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
+					.argb = color,
+					.x = x_to_pvr(x),
+					.y = y_to_pvr(y),
+					.z = 1.0f,
+				};
+
+				pvr_dr_put(v);
+			}
+			break;
+		}
+
+		case 0x21 ... 0x27:
+		case 0x29 ... 0x2f:
+		case 0x31 ... 0x37:
+		case 0x39 ... 0x3f:
 			pvr_printf("Render polygon (0x%x)\n", cmd);
 			break;
 
