@@ -60,7 +60,7 @@ static void hw_render_start(void)
 {
 	pvr_wait_ready();
 	pvr_scene_begin();
-	pvr_list_begin(PVR_LIST_OP_POLY);
+	pvr_list_begin(PVR_LIST_TR_POLY);
 
 	pvr_dr_init(&pvr_dr_state);
 

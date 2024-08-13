@@ -8,6 +8,8 @@
 #include <dc/pvr.h>
 #include <gpulib/gpu.h>
 #include <gpulib/gpu_timing.h>
+
+#include <alloca.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,7 +50,20 @@ struct pvr_renderer {
 	uint32_t check_mask :1;
 };
 
+enum blending_mode {
+	BLENDING_MODE_HALF,
+	BLENDING_MODE_ADD,
+	BLENDING_MODE_SUB,
+	BLENDING_MODE_QUARTER,
+	BLENDING_MODE_NONE,
+};
+
 static struct pvr_renderer pvr;
+
+static enum blending_mode pvr_get_blending_mode(void)
+{
+	return (enum blending_mode)((pvr.gp1 >> 5) & 0x3);
+}
 
 int renderer_init(void)
 {
@@ -173,12 +188,172 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 		      const uint32_t *colors, unsigned int nb,
 		      bool semi_trans)
 {
+	enum blending_mode blending_mode;
+	bool textured = false;
+	uint32_t *colors_alt;
 	pvr_poly_cxt_t cxt;
+	unsigned int i;
 
-	pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);
+	pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
 
 	cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
 	cxt.gen.culling = PVR_CULLING_NONE;
+
+	if (semi_trans)
+		blending_mode = pvr_get_blending_mode();
+	else
+		blending_mode = BLENDING_MODE_NONE;
+
+	switch (blending_mode) {
+	case BLENDING_MODE_NONE:
+		/* Alpha blending is used to emulate the mask bit feature of the
+		 * PSX GPU. In the accumulation buffer, a pixel's alpha value of
+		 * 0 corresponds to the mask bit set, a value of 255 corresponds
+		 * to the mask bit cleared. */
+		if (pvr.check_mask) {
+			cxt.blend.dst = PVR_BLEND_INVDESTALPHA;
+			cxt.blend.src = PVR_BLEND_DESTALPHA;
+		} else {
+			cxt.blend.src = PVR_BLEND_ONE;
+			cxt.blend.dst = PVR_BLEND_ZERO;
+		}
+		break;
+
+	case BLENDING_MODE_QUARTER:
+		/* B + F/4 blending.
+		 * This is a regular additive blending with the foreground color
+		 * values divided by 4. */
+		if (textured) {
+			/* TODO: use modulation */
+		} else {
+			/* If non-textured, we just need to divide the source
+			 * colors by 4. */
+			colors_alt = alloca(sizeof(*colors_alt) * nb);
+
+			for (i = 0; i < nb; i++)
+				colors_alt[i] = (colors[i] & 0x00fcfcfc) >> 2;
+
+			colors = colors_alt;
+		}
+
+		/* fall-through */
+	case BLENDING_MODE_ADD:
+		/* B + F blending. */
+		if (pvr.check_mask)
+			cxt.blend.src = PVR_BLEND_DESTALPHA;
+		else
+			cxt.blend.src = PVR_BLEND_ONE;
+
+		cxt.blend.dst = PVR_BLEND_ONE;
+		break;
+
+	case BLENDING_MODE_SUB:
+		/* B - F blending.
+		 * B - F is equivalent to ~(~B + F).
+		 * So basically, we flip all bits of the background, then do
+		 * regular additive blending, then flip the bits once again.
+		 * Bit-flipping can be done by rendering a white polygon
+		 * with the given parameters:
+		 * - src blend coeff: inverse destination color
+		 * - dst blend coeff: 0 */
+		colors_alt = alloca(sizeof(*colors_alt) * nb);
+
+		for (i = 0; i < nb; i++)
+			colors_alt[i] = 0xffffffff;
+
+		cxt.blend.src = PVR_BLEND_INVDESTCOLOR;
+		cxt.blend.dst = PVR_BLEND_ZERO;
+
+		send_hdr(&cxt);
+		draw_prim(xcoords, ycoords, colors_alt, nb);
+
+		if (pvr.check_mask)
+			cxt.blend.src = PVR_BLEND_INVDESTALPHA;
+		else
+			cxt.blend.src = PVR_BLEND_ONE;
+
+		cxt.blend.dst = PVR_BLEND_ONE;
+
+		send_hdr(&cxt);
+		draw_prim(xcoords, ycoords, colors, nb);
+
+		cxt.blend.src = PVR_BLEND_INVDESTCOLOR;
+		cxt.blend.dst = PVR_BLEND_ZERO;
+
+		colors = colors_alt;
+		break;
+
+	case BLENDING_MODE_HALF:
+		/* B/2 + F/2 blending.
+		 * The F/2 part is done by using color modulation when drawing
+		 * a textured poly, or by dividing the input color values
+		 * when non-textured.
+		 * B/2 has to be done conditionally based on the destination
+		 * alpha value. This is done in three steps, described below. */
+		if (textured) {
+			/* TODO: use modulation */
+		} else {
+			colors_alt = alloca(sizeof(*colors_alt) * nb);
+
+			for (i = 0; i < nb; i++) {
+				colors_alt[i] = (colors[i] & 0x00fefefe) >> 1;
+			}
+
+			colors = colors_alt;
+		}
+
+		/* Step 1: render a solid grey polygon (color #FF808080 and use
+		 * the following blending settings:
+		 * - src blend coeff: destination color
+		 * - dst blend coeff: 0
+		 * This will unconditionally divide all of the background colors
+		 * by 2, except for the alpha. */
+		colors_alt = alloca(sizeof(*colors_alt) * nb);
+
+		for (i = 0; i < nb; i++)
+			colors_alt[i] = 0xff808080;
+
+		cxt.blend.src = PVR_BLEND_DESTCOLOR;
+		cxt.blend.dst = PVR_BLEND_ZERO;
+
+		send_hdr(&cxt);
+		draw_prim(xcoords, ycoords, colors_alt, nb);
+
+		/* Step 2: Add B/2 back to itself, conditionally (if we need to
+		 * check for the mask), so that only non-masked pixels will
+		 * be at B/2, while the masked pixels will be reset to their
+		 * original value - or close to their original value, as halving
+		 * the color values caused a loss of one bit of precision. */
+		if (pvr.check_mask) {
+			for (i = 0; i < nb; i++)
+				colors_alt[i] = 0xffffffff;
+
+			cxt.blend.src = PVR_BLEND_DESTCOLOR;
+			cxt.blend.dst = PVR_BLEND_INVDESTALPHA;
+
+			send_hdr(&cxt);
+			draw_prim(xcoords, ycoords, colors_alt, nb);
+		}
+
+		/* Step 3: Render the polygon normally, with additive
+		 * blending. */
+		if (pvr.check_mask)
+			cxt.blend.src = PVR_BLEND_DESTALPHA;
+		else
+			cxt.blend.src = PVR_BLEND_ONE;
+
+		cxt.blend.dst = PVR_BLEND_ONE;
+		break;
+	}
+
+	/* For the very last render step, if we want to force the destination's
+	 * mask bit, enable the use of the vertex colors' alpha. Since the
+	 * colors always have zero alpha, the destination will then also have
+	 * zero alpha (mask bit set). */
+	if (pvr.set_mask)
+		cxt.gen.alpha = PVR_ALPHA_ENABLE;
+	else
+		cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 	send_hdr(&cxt);
 	draw_prim(xcoords, ycoords, colors, nb);
@@ -288,9 +463,13 @@ int do_cmd_list(uint32_t *list, int list_len,
 			break;
 
 		case 0x20:
+		case 0x22:
 		case 0x28:
+		case 0x2a:
 		case 0x30:
-		case 0x38: {
+		case 0x32:
+		case 0x38:
+		case 0x3a: {
 			/* Monochrome/shaded non-textured polygon */
 			bool multicolor = cmd & 0x10;
 			bool poly4 = cmd & 0x08;
@@ -317,15 +496,21 @@ int do_cmd_list(uint32_t *list, int list_len,
 			break;
 		}
 
-		case 0x21 ... 0x27:
-		case 0x29 ... 0x2f:
-		case 0x31 ... 0x37:
-		case 0x39 ... 0x3f:
+		case 0x21:
+		case 0x23 ... 0x27:
+		case 0x29:
+		case 0x2b ... 0x2f:
+		case 0x31:
+		case 0x33 ... 0x37:
+		case 0x39:
+		case 0x3b ... 0x3f:
 			pvr_printf("Render polygon (0x%x)\n", cmd);
 			break;
 
 		case 0x40:
+		case 0x42:
 		case 0x50:
+		case 0x52:
 			/* Monochrome/shaded line */
 			bool multicolor = cmd & 0x10;
 			bool semi_trans = cmd & 0x02;
@@ -361,15 +546,21 @@ int do_cmd_list(uint32_t *list, int list_len,
 			}
 			break;
 
-		case 0x41 ... 0x4f:
-		case 0x51 ... 0x5a:
+		case 0x41:
+		case 0x43 ... 0x4f:
+		case 0x51:
+		case 0x53 ... 0x5a:
 			pvr_printf("Render line (0x%x)\n", cmd);
 			break;
 
 		case 0x60:
+		case 0x62:
 		case 0x68:
+		case 0x6a:
 		case 0x70:
-		case 0x78: {
+		case 0x72:
+		case 0x78:
+		case 0x7a: {
 			/* Monochrome rectangle */
 			float x[4], y[4];
 			uint32_t colors[4];
@@ -407,10 +598,14 @@ int do_cmd_list(uint32_t *list, int list_len,
 			break;
 		}
 
-		case 0x61 ... 0x67:
-		case 0x69 ... 0x6f:
-		case 0x71 ... 0x77:
-		case 0x79 ... 0x7f:
+		case 0x61:
+		case 0x63 ... 0x67:
+		case 0x69:
+		case 0x6b ... 0x6f:
+		case 0x71:
+		case 0x73 ... 0x77:
+		case 0x79:
+		case 0x7b ... 0x7f:
 			pvr_printf("Render rectangle (0x%x)\n", cmd);
 			break;
 
