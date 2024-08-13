@@ -139,31 +139,72 @@ static inline float y_to_pvr(int16_t y)
 	return (float)(y + pvr.draw_dy - pvr.draw_y1) * screen_fh;
 }
 
-static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
-		      int16_t x1, int16_t y1, uint32_t color1)
+static void draw_prim(const float *x, const float *y,
+		      const uint32_t *color, unsigned int nb)
 {
-	unsigned int i, up = y1 < y0;
-	int16_t xcoords[6] = {
-		x0, x0, x0 + 1, x1, x1 + 1, x1 + 1,
-	};
-	int16_t ycoords[6] = {
-		y0 + up, y0 + !up, y0 + up, y1 + !up, y1 + up, y1 + !up,
-	};
 	pvr_vertex_t *v;
+	unsigned int i;
 
-	for (i = 0; i < 6; i++) {
+	for (i = 0; i < nb; i++) {
 		v = pvr_dr_get();
 
 		*v = (pvr_vertex_t){
-			.flags = (i == 5) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
-			.argb = (i < 3) ? color0 : color1,
-			.x = x_to_pvr(xcoords[i]),
-			.y = y_to_pvr(ycoords[i]),
+			.flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
+			.argb = color[i],
+			.x = x[i],
+			.y = y[i],
 			.z = 1.0f,
 		};
 
 		pvr_dr_put(v);
 	}
+}
+
+static void send_hdr(pvr_poly_cxt_t *cxt)
+{
+	pvr_poly_hdr_t *hdr;
+
+	hdr = pvr_dr_get();
+	pvr_poly_compile(hdr, cxt);
+	pvr_dr_put(hdr);
+}
+
+static void draw_poly(const float *xcoords, const float *ycoords,
+		      const uint32_t *colors, unsigned int nb,
+		      bool semi_trans)
+{
+	pvr_poly_cxt_t cxt;
+
+	pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);
+
+	cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
+	cxt.gen.culling = PVR_CULLING_NONE;
+
+	send_hdr(&cxt);
+	draw_prim(xcoords, ycoords, colors, nb);
+}
+
+static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
+		      int16_t x1, int16_t y1, uint32_t color1,
+		      bool semi_trans)
+{
+	unsigned int up = y1 < y0;
+	float xcoords[6], ycoords[6];
+	uint32_t colors[6] = {
+		color0, color0, color0, color1, color1, color1,
+	};
+
+	xcoords[0] = xcoords[1] = x_to_pvr(x0);
+	xcoords[2] = x_to_pvr(x0 + 1);
+	xcoords[3] = x_to_pvr(x1);
+	xcoords[4] = xcoords[5] = x_to_pvr(x1 + 1);
+
+	ycoords[0] = ycoords[2] = y_to_pvr(y0 + up);
+	ycoords[1] = y_to_pvr(y0 + !up);
+	ycoords[3] = ycoords[5] = y_to_pvr(y1 + !up);
+	ycoords[4] = y_to_pvr(y1 + up);
+
+	draw_poly(xcoords, ycoords, colors, 6, semi_trans);
 }
 
 int do_cmd_list(uint32_t *list, int list_len,
@@ -251,49 +292,28 @@ int do_cmd_list(uint32_t *list, int list_len,
 		case 0x30:
 		case 0x38: {
 			/* Monochrome/shaded non-textured polygon */
-			pvr_poly_cxt_t cxt;
-			pvr_poly_hdr_t *hdr;
-			pvr_vertex_t *v;
 			bool multicolor = cmd & 0x10;
-			bool poly4 = cmd & 0x8;
+			bool poly4 = cmd & 0x08;
+			bool semi_trans = cmd & 0x02;
 			uint32_t val, *buf = pbuffer.U4;
 			unsigned int i, nb = 3 + !!poly4;
-			uint32_t color = 0;
-			int16_t x, y;
-
-			pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);
-
-			cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
-			cxt.gen.culling = PVR_CULLING_NONE;
-
-			hdr = pvr_dr_get();
-			pvr_poly_compile(hdr, &cxt);
-			pvr_dr_put(hdr);
+			float xcoords[4], ycoords[4];
+			uint32_t colors[4];
 
 			for (i = 0; i < nb; i++) {
 				if (i == 0 || multicolor) {
 					/* BGR->RGB swap */
-					color = __builtin_bswap32(*buf++) >> 8;
-					pvr_printf("Render polygon color 0x%x\n", color);
+					colors[i] = __builtin_bswap32(*buf++) >> 8;
+				} else {
+					colors[i] = colors[0];
 				}
 
 				val = *buf++;
-				x = (int16_t)val;
-				y = (int16_t)(val >> 16);
-
-				v = pvr_dr_get();
-
-				*v = (pvr_vertex_t){
-					.flags = (i == nb - 1) ?
-						PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
-					.argb = color,
-					.x = x_to_pvr(x),
-					.y = y_to_pvr(y),
-					.z = 1.0f,
-				};
-
-				pvr_dr_put(v);
+				xcoords[i] = x_to_pvr(val);
+				ycoords[i] = y_to_pvr(val >> 16);
 			}
+
+			draw_poly(xcoords, ycoords, colors, nb, semi_trans);
 			break;
 		}
 
@@ -307,22 +327,12 @@ int do_cmd_list(uint32_t *list, int list_len,
 		case 0x40:
 		case 0x50:
 			/* Monochrome/shaded line */
-			pvr_poly_cxt_t cxt;
-			pvr_poly_hdr_t *hdr;
 			bool multicolor = cmd & 0x10;
+			bool semi_trans = cmd & 0x02;
 			uint32_t val, *buf = pbuffer.U4;
 			unsigned int i, nb = 2;
 			uint32_t oldcolor, color;
 			int16_t x, y, oldx, oldy;
-
-			pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);
-
-			cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
-			cxt.gen.culling = PVR_CULLING_NONE;
-
-			hdr = pvr_dr_get();
-			pvr_poly_compile(hdr, &cxt);
-			pvr_dr_put(hdr);
 
 			/* BGR->RGB swap */
 			color = __builtin_bswap32(*buf++) >> 8;
@@ -341,9 +351,9 @@ int do_cmd_list(uint32_t *list, int list_len,
 				y = (int16_t)(val >> 16);
 
 				if (oldx > x)
-					draw_line(x, y, color, oldx, oldy, oldcolor);
+					draw_line(x, y, color, oldx, oldy, oldcolor, semi_trans);
 				else
-					draw_line(oldx, oldy, oldcolor, x, y, color);
+					draw_line(oldx, oldy, oldcolor, x, y, color, semi_trans);
 
 				oldx = x;
 				oldy = y;
@@ -361,28 +371,17 @@ int do_cmd_list(uint32_t *list, int list_len,
 		case 0x70:
 		case 0x78: {
 			/* Monochrome rectangle */
-			pvr_poly_cxt_t cxt;
-			pvr_poly_hdr_t *hdr;
-			pvr_vertex_t *v;
-			int16_t x[2], y[2];
-			unsigned int i;
-			uint32_t color;
-			uint16_t w, h;
-
-			pvr_poly_cxt_col(&cxt, PVR_LIST_OP_POLY);
-
-			cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
-			cxt.gen.culling = PVR_CULLING_NONE;
-
-			hdr = pvr_dr_get();
-			pvr_poly_compile(hdr, &cxt);
-			pvr_dr_put(hdr);
+			float x[4], y[4];
+			uint32_t colors[4];
+			uint16_t w, h, x0, y0;
+			bool semi_trans = cmd & 0x02;
 
 			/* BGR->RGB swap */
-			color = __builtin_bswap32(pbuffer.U4[0]) >> 8;
+			colors[0] = __builtin_bswap32(pbuffer.U4[0]) >> 8;
+			colors[3] = colors[2] = colors[1] = colors[0];
 
-			x[0] = (int16_t)pbuffer.U4[1];
-			y[0] = (int16_t)(pbuffer.U4[1] >> 16);
+			x0 = (int16_t)pbuffer.U4[1];
+			y0 = (int16_t)(pbuffer.U4[1] >> 16);
 
 			if ((cmd & 0x18) == 0x18) {
 				w = 16;
@@ -398,22 +397,13 @@ int do_cmd_list(uint32_t *list, int list_len,
 				h = (int16_t)(pbuffer.U4[2] >> 16);
 			}
 
-			x[1] = x[0] + w;
-			y[1] = y[0] + h;
 
-			for (i = 0; i < 4; i++) {
-				v = pvr_dr_get();
+			x[1] = x[3] = x_to_pvr(x0);
+			x[0] = x[2] = x_to_pvr(x0 + w);
+			y[0] = y[1] = y_to_pvr(y0);
+			y[2] = y[3] = y_to_pvr(y0 + h);
 
-				*v = (pvr_vertex_t){
-					.flags = (i == 3) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
-					.argb = color,
-					.x = x_to_pvr(x[!!(i & 0x1)]),
-					.y = y_to_pvr(y[!!(i & 0x2)]),
-					.z = 1.0f,
-				};
-
-				pvr_dr_put(v);
-			}
+			draw_poly(x, y, colors, 4, semi_trans);
 			break;
 		}
 
