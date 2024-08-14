@@ -132,18 +132,6 @@ static void cmd_clear_image(union PacketBuffer *pbuffer)
 	 * caches that are covered by this rectangle */
 }
 
-static void * pvr_dr_get(void)
-{
-	sq_lock((void *)PVR_TA_INPUT);
-	return pvr_dr_target(pvr_dr_state);
-}
-
-static void pvr_dr_put(void *addr)
-{
-	pvr_dr_commit(addr);
-	sq_unlock();
-}
-
 static inline float x_to_pvr(int16_t x)
 {
 	return (float)(x + pvr.draw_dx - pvr.draw_x1) * screen_fw;
@@ -154,14 +142,21 @@ static inline float y_to_pvr(int16_t y)
 	return (float)(y + pvr.draw_dy - pvr.draw_y1) * screen_fh;
 }
 
-static void draw_prim(const float *x, const float *y,
+static void draw_prim(pvr_poly_cxt_t *cxt, const float *x, const float *y,
 		      const uint32_t *color, unsigned int nb)
 {
+	pvr_poly_hdr_t *hdr;
 	pvr_vertex_t *v;
 	unsigned int i;
 
+	sq_lock((void *)PVR_TA_INPUT);
+
+	hdr = (void *)pvr_dr_target(pvr_dr_state);
+	pvr_poly_compile(hdr, cxt);
+	pvr_dr_commit(hdr);
+
 	for (i = 0; i < nb; i++) {
-		v = pvr_dr_get();
+		v = pvr_dr_target(pvr_dr_state);
 
 		*v = (pvr_vertex_t){
 			.flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
@@ -171,17 +166,10 @@ static void draw_prim(const float *x, const float *y,
 			.z = 1.0f,
 		};
 
-		pvr_dr_put(v);
+		pvr_dr_commit(v);
 	}
-}
 
-static void send_hdr(pvr_poly_cxt_t *cxt)
-{
-	pvr_poly_hdr_t *hdr;
-
-	hdr = pvr_dr_get();
-	pvr_poly_compile(hdr, cxt);
-	pvr_dr_put(hdr);
+	sq_unlock();
 }
 
 static void draw_poly(const float *xcoords, const float *ycoords,
@@ -264,8 +252,7 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 		cxt.blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt.blend.dst = PVR_BLEND_ZERO;
 
-		send_hdr(&cxt);
-		draw_prim(xcoords, ycoords, colors_alt, nb);
+		draw_prim(&cxt, xcoords, ycoords, colors_alt, nb);
 
 		if (pvr.check_mask)
 			cxt.blend.src = PVR_BLEND_INVDESTALPHA;
@@ -274,8 +261,7 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 
 		cxt.blend.dst = PVR_BLEND_ONE;
 
-		send_hdr(&cxt);
-		draw_prim(xcoords, ycoords, colors, nb);
+		draw_prim(&cxt, xcoords, ycoords, colors, nb);
 
 		cxt.blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt.blend.dst = PVR_BLEND_ZERO;
@@ -316,8 +302,7 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 		cxt.blend.src = PVR_BLEND_DESTCOLOR;
 		cxt.blend.dst = PVR_BLEND_ZERO;
 
-		send_hdr(&cxt);
-		draw_prim(xcoords, ycoords, colors_alt, nb);
+		draw_prim(&cxt, xcoords, ycoords, colors_alt, nb);
 
 		/* Step 2: Add B/2 back to itself, conditionally (if we need to
 		 * check for the mask), so that only non-masked pixels will
@@ -331,8 +316,7 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 			cxt.blend.src = PVR_BLEND_DESTCOLOR;
 			cxt.blend.dst = PVR_BLEND_INVDESTALPHA;
 
-			send_hdr(&cxt);
-			draw_prim(xcoords, ycoords, colors_alt, nb);
+			draw_prim(&cxt, xcoords, ycoords, colors_alt, nb);
 		}
 
 		/* Step 3: Render the polygon normally, with additive
@@ -355,8 +339,7 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 	else
 		cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
-	send_hdr(&cxt);
-	draw_prim(xcoords, ycoords, colors, nb);
+	draw_prim(&cxt, xcoords, ycoords, colors, nb);
 }
 
 static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
