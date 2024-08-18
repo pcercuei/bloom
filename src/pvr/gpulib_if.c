@@ -368,6 +368,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 int do_cmd_list(uint32_t *list, int list_len,
 		int *cycles_sum_out, int *cycles_last, int *last_cmd)
 {
+	bool multicolor, multiple, semi_trans, textured, raw_tex;
 	int cpu_cycles_sum = 0, cpu_cycles = *cycles_last;
 	uint32_t cmd = 0, len;
 	uint32_t *list_start = list;
@@ -387,80 +388,95 @@ int do_cmd_list(uint32_t *list, int list_len,
 		for (i = 0; i <= len; i++)
 			pbuffer.U4[i] = list[i];
 
-		switch (cmd) {
-		case 0x02:
-			cmd_clear_image(&pbuffer);
-			gput_sum(cpu_cycles_sum, cpu_cycles,
-				 gput_fill(pbuffer.U2[4] & 0x3ff,
-					   pbuffer.U2[5] & 0x1ff));
+		multicolor = cmd & 0x10;
+		multiple = cmd & 0x08;
+		textured = cmd & 0x04;
+		semi_trans = cmd & 0x02;
+		raw_tex = cmd & 0x01;
+
+		switch (cmd >> 5) {
+		case 0x0:
+			switch (cmd) {
+			case 0x02:
+				cmd_clear_image(&pbuffer);
+				gput_sum(cpu_cycles_sum, cpu_cycles,
+					 gput_fill(pbuffer.U2[4] & 0x3ff,
+						   pbuffer.U2[5] & 0x1ff));
+				break;
+
+			default:
+				/* VRAM access commands, or NOP */
+				break;
+			}
 			break;
 
-		case 0xe1:
-			/* Set texture page */
-			pvr.gp1 = (pvr.gp1 & ~0x7ff) | (pbuffer.U4[0] & 0x7ff);
+		case 0x7:
+			switch (cmd) {
+			case 0xe1:
+				/* Set texture page */
+				pvr.gp1 = (pvr.gp1 & ~0x7ff) | (pbuffer.U4[0] & 0x7ff);
+				break;
+
+			case 0xe2:
+				/* TODO: Set texture window */
+				break;
+
+			case 0xe3:
+				/* Set top-left corner of drawing area */
+				pvr.draw_x1 = pbuffer.U4[0] & 0x3ff;
+				pvr.draw_y1 = (pbuffer.U4[0] >> 10) & 0x1ff;
+				if (0)
+					pvr_printf("Set top-left corner to %ux%u\n",
+						   pvr.draw_x1, pvr.draw_y1);
+				break;
+
+			case 0xe4:
+				/* Set top-left corner of drawing area */
+				pvr.draw_x2 = pbuffer.U4[0] & 0x3ff;
+				pvr.draw_y2 = (pbuffer.U4[0] >> 10) & 0x1ff;
+				if (0)
+					pvr_printf("Set bottom-right corner to %ux%u\n",
+						   pvr.draw_x2, pvr.draw_y2);
+				break;
+
+			case 0xe5:
+				/* Set drawing offsets */
+				pvr.draw_dx = ((int32_t)pbuffer.U4[0] << 21) >> 21;
+				pvr.draw_dy = ((int32_t)pbuffer.U4[0] << 10) >> 21;
+				if (0)
+					pvr_printf("Set drawing offsets to %dx%d\n",
+						   pvr.draw_dx, pvr.draw_dy);
+				break;
+
+			case 0xe6:
+				/* VRAM mask settings */
+				pvr.set_mask = pbuffer.U4[0] & 0x1;
+				pvr.check_mask = (pbuffer.U4[0] & 0x2) >> 1;
+				break;
+
+			default:
+				break;
+			}
 			break;
 
-		case 0xe2:
-			/* TODO: Set texture window */
-			break;
-
-		case 0xe3:
-			/* Set top-left corner of drawing area */
-			pvr.draw_x1 = pbuffer.U4[0] & 0x3ff;
-			pvr.draw_y1 = (pbuffer.U4[0] >> 10) & 0x1ff;
-			pvr_printf("Set top-left corner to %ux%u\n",
-			       pvr.draw_x1, pvr.draw_y1);
-			break;
-
-		case 0xe4:
-			/* Set top-left corner of drawing area */
-			pvr.draw_x2 = pbuffer.U4[0] & 0x3ff;
-			pvr.draw_y2 = (pbuffer.U4[0] >> 10) & 0x1ff;
-			pvr_printf("Set bottom-right corner to %ux%u\n",
-			       pvr.draw_x2, pvr.draw_y2);
-			break;
-
-		case 0xe5:
-			/* Set drawing offsets */
-			pvr.draw_dx = ((int32_t)pbuffer.U4[0] << 21) >> 21;
-			pvr.draw_dy = ((int32_t)pbuffer.U4[0] << 10) >> 21;
-			pvr_printf("Set drawing offsets to %dx%d\n",
-			       pvr.draw_dx, pvr.draw_dy);
-			break;
-
-		case 0xe6:
-			/* VRAM mask settings */
-			pvr.set_mask = pbuffer.U4[0] & 0x1;
-			pvr.check_mask = (pbuffer.U4[0] & 0x2) >> 1;
-			break;
-
-		case 0x01:
-		case 0x80 ... 0x9f:
-		case 0xa0 ... 0xbf:
-		case 0xc0 ... 0xdf:
+		case 4:
+		case 5:
+		case 6:
 			/* VRAM access commands */
 			break;
 
-		case 0x00:
-			/* NOP */
-			break;
-
-		case 0x20:
-		case 0x22:
-		case 0x28:
-		case 0x2a:
-		case 0x30:
-		case 0x32:
-		case 0x38:
-		case 0x3a: {
+		case 0x1: {
 			/* Monochrome/shaded non-textured polygon */
-			bool multicolor = cmd & 0x10;
-			bool poly4 = cmd & 0x08;
-			bool semi_trans = cmd & 0x02;
 			uint32_t val, *buf = pbuffer.U4;
-			unsigned int i, nb = 3 + !!poly4;
+			unsigned int i, nb = 3 + !!multiple;
 			float xcoords[4], ycoords[4];
 			uint32_t colors[4];
+
+			if (textured || raw_tex) {
+				/* TODO: Handle textured */
+				pvr_printf("Render textured polygon (0x%x)\n", cmd);
+				break;
+			}
 
 			for (i = 0; i < nb; i++) {
 				if (i == 0 || multicolor) {
@@ -479,28 +495,18 @@ int do_cmd_list(uint32_t *list, int list_len,
 			break;
 		}
 
-		case 0x21:
-		case 0x23 ... 0x27:
-		case 0x29:
-		case 0x2b ... 0x2f:
-		case 0x31:
-		case 0x33 ... 0x37:
-		case 0x39:
-		case 0x3b ... 0x3f:
-			pvr_printf("Render polygon (0x%x)\n", cmd);
-			break;
-
-		case 0x40:
-		case 0x42:
-		case 0x50:
-		case 0x52:
+		case 0x2: {
 			/* Monochrome/shaded line */
-			bool multicolor = cmd & 0x10;
-			bool semi_trans = cmd & 0x02;
 			uint32_t val, *buf = pbuffer.U4;
 			unsigned int i, nb = 2;
 			uint32_t oldcolor, color;
 			int16_t x, y, oldx, oldy;
+
+			if (multiple) {
+				/* TODO: Handle polylines */
+				pvr_printf("Render polyline (0x%x)\n", cmd);
+				break;
+			}
 
 			/* BGR->RGB swap */
 			color = __builtin_bswap32(*buf++) >> 8;
@@ -528,27 +534,19 @@ int do_cmd_list(uint32_t *list, int list_len,
 				oldcolor = color;
 			}
 			break;
+		}
 
-		case 0x41:
-		case 0x43 ... 0x4f:
-		case 0x51:
-		case 0x53 ... 0x5a:
-			pvr_printf("Render line (0x%x)\n", cmd);
-			break;
-
-		case 0x60:
-		case 0x62:
-		case 0x68:
-		case 0x6a:
-		case 0x70:
-		case 0x72:
-		case 0x78:
-		case 0x7a: {
+		case 0x3: {
 			/* Monochrome rectangle */
 			float x[4], y[4];
 			uint32_t colors[4];
 			uint16_t w, h, x0, y0;
-			bool semi_trans = cmd & 0x02;
+
+			if (textured || raw_tex) {
+				/* TODO: Handle textured */
+				pvr_printf("Render textured rectangle (0x%x)\n", cmd);
+				break;
+			}
 
 			/* BGR->RGB swap */
 			colors[0] = __builtin_bswap32(pbuffer.U4[0]) >> 8;
@@ -580,17 +578,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 			draw_poly(x, y, colors, 4, semi_trans);
 			break;
 		}
-
-		case 0x61:
-		case 0x63 ... 0x67:
-		case 0x69:
-		case 0x6b ... 0x6f:
-		case 0x71:
-		case 0x73 ... 0x77:
-		case 0x79:
-		case 0x7b ... 0x7f:
-			pvr_printf("Render rectangle (0x%x)\n", cmd);
-			break;
 
 		default:
 			pvr_printf("Unhandled GPU CMD: 0x%x\n", cmd);
