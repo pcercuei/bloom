@@ -463,7 +463,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 		case 5:
 		case 6:
 			/* VRAM access commands */
-			break;
+			goto out;
 
 		case 0x1: {
 			/* Monochrome/shaded non-textured polygon */
@@ -585,6 +585,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 		}
 	}
 
+out:
 	gpu.ex_regs[1] &= ~0x1ff;
 	gpu.ex_regs[1] |= pvr.gp1 & 0x1ff;
 
