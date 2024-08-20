@@ -492,6 +492,16 @@ int do_cmd_list(uint32_t *list, int list_len,
 			}
 
 			draw_poly(xcoords, ycoords, colors, nb, semi_trans);
+
+			if (multicolor && textured)
+				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
+			else if (textured)
+				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_t());
+			else if (multicolor)
+				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_g());
+			else
+				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base());
+
 			break;
 		}
 
@@ -532,6 +542,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 				oldx = x;
 				oldy = y;
 				oldcolor = color;
+
+				gput_sum(cpu_cycles_sum, cpu_cycles, gput_line(0));
 			}
 			break;
 		}
@@ -576,6 +588,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 			y[2] = y[3] = y_to_pvr(y0 + h);
 
 			draw_poly(x, y, colors, 4, semi_trans);
+
+			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
 			break;
 		}
 
