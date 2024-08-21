@@ -35,6 +35,28 @@ union PacketBuffer {
 	uint8_t  U1[64];
 };
 
+enum texture_bpp {
+	TEXTURE_4BPP,
+	TEXTURE_8BPP,
+	TEXTURE_16BPP,
+};
+
+struct texture_settings {
+	enum texture_bpp bpp :2;
+	unsigned int mask_x :5;
+	unsigned int mask_y :5;
+	unsigned int offt_x :5;
+	unsigned int offt_y :5;
+};
+
+enum blending_mode {
+	BLENDING_MODE_HALF,
+	BLENDING_MODE_ADD,
+	BLENDING_MODE_SUB,
+	BLENDING_MODE_QUARTER,
+	BLENDING_MODE_NONE,
+};
+
 struct pvr_renderer {
 	uint32_t gp1;
 
@@ -48,14 +70,12 @@ struct pvr_renderer {
 
 	uint32_t set_mask :1;
 	uint32_t check_mask :1;
-};
 
-enum blending_mode {
-	BLENDING_MODE_HALF,
-	BLENDING_MODE_ADD,
-	BLENDING_MODE_SUB,
-	BLENDING_MODE_QUARTER,
-	BLENDING_MODE_NONE,
+	uint32_t page_x :4;
+	uint32_t page_y :1;
+	enum blending_mode blending_mode :3;
+
+	struct texture_settings settings;
 };
 
 static struct pvr_renderer pvr;
@@ -385,10 +405,20 @@ int do_cmd_list(uint32_t *list, int list_len,
 			case 0xe1:
 				/* Set texture page */
 				pvr.gp1 = (pvr.gp1 & ~0x7ff) | (pbuffer.U4[0] & 0x7ff);
+
+				pvr.settings.bpp = (enum texture_bpp)((pvr.gp1 >> 7) & 0x3);
+				pvr.blending_mode = (enum blending_mode)((pvr.gp1 >> 5) & 0x3);
+				pvr.page_x = pvr.gp1 & 0xf;
+				pvr.page_y = pvr.gp1 >> 4;
+
 				break;
 
 			case 0xe2:
 				/* TODO: Set texture window */
+				pvr.settings.mask_x = pbuffer.U4[0];
+				pvr.settings.mask_y = pbuffer.U4[0] >> 5;
+				pvr.settings.offt_x = pbuffer.U4[0] >> 10;
+				pvr.settings.offt_y = pbuffer.U4[0] >> 15;
 				break;
 
 			case 0xe3:
