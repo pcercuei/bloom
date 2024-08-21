@@ -431,9 +431,9 @@ int do_cmd_list(uint32_t *list, int list_len,
 				break;
 
 			case 0xe4:
-				/* Set top-left corner of drawing area */
-				pvr.draw_x2 = pbuffer.U4[0] & 0x3ff;
-				pvr.draw_y2 = (pbuffer.U4[0] >> 10) & 0x1ff;
+				/* Set bottom-right corner of drawing area */
+				pvr.draw_x2 = (pbuffer.U4[0] & 0x3ff) + 1;
+				pvr.draw_y2 = ((pbuffer.U4[0] >> 10) & 0x1ff) + 1;
 				if (0)
 					pvr_printf("Set bottom-right corner to %ux%u\n",
 						   pvr.draw_x2, pvr.draw_y2);
