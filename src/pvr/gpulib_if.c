@@ -15,6 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <kos/string.h>
+
 #define FRAME_WIDTH 1024
 #define FRAME_HEIGHT 512
 
@@ -165,7 +167,7 @@ static inline float y_to_pvr(int16_t y)
 static void draw_prim(pvr_poly_cxt_t *cxt, const float *x, const float *y,
 		      const uint32_t *color, unsigned int nb)
 {
-	pvr_poly_hdr_t *hdr;
+	pvr_poly_hdr_t tmp, *hdr;
 	pvr_vertex_t *v;
 	unsigned int i;
 	float z;
@@ -180,7 +182,8 @@ static void draw_prim(pvr_poly_cxt_t *cxt, const float *x, const float *y,
 	sq_lock((void *)PVR_TA_INPUT);
 
 	hdr = (void *)pvr_dr_target(pvr_dr_state);
-	pvr_poly_compile(hdr, cxt);
+	pvr_poly_compile(&tmp, cxt);
+	memcpy4(hdr, &tmp, sizeof(tmp));
 	pvr_dr_commit(hdr);
 
 	for (i = 0; i < nb; i++) {
