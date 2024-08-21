@@ -148,6 +148,14 @@ static void draw_prim(pvr_poly_cxt_t *cxt, const float *x, const float *y,
 	pvr_poly_hdr_t *hdr;
 	pvr_vertex_t *v;
 	unsigned int i;
+	float z;
+
+	if (!pvr.set_mask)
+		z = 1.0f;
+	else if (pvr.check_mask)
+		z = 2.0f;
+	else
+		z = 3.0f;
 
 	sq_lock((void *)PVR_TA_INPUT);
 
@@ -163,7 +171,7 @@ static void draw_prim(pvr_poly_cxt_t *cxt, const float *x, const float *y,
 			.argb = color[i],
 			.x = x[i],
 			.y = y[i],
-			.z = 1.0f,
+			.z = z,
 		};
 
 		pvr_dr_commit(v);
@@ -182,8 +190,13 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 	uint32_t *colors_alt;
 	unsigned int i;
 
-	cxt->depth.comparison = PVR_DEPTHCMP_GEQUAL;
 	cxt->gen.culling = PVR_CULLING_NONE;
+	cxt->depth.write = PVR_DEPTHWRITE_ENABLE;
+
+	if (pvr.check_mask)
+		cxt->depth.comparison = PVR_DEPTHCMP_GEQUAL;
+	else
+		cxt->depth.comparison = PVR_DEPTHCMP_ALWAYS;
 
 	if (semi_trans)
 		blending_mode = pvr_get_blending_mode();
@@ -192,17 +205,8 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 	switch (blending_mode) {
 	case BLENDING_MODE_NONE:
-		/* Alpha blending is used to emulate the mask bit feature of the
-		 * PSX GPU. In the accumulation buffer, a pixel's alpha value of
-		 * 0 corresponds to the mask bit set, a value of 255 corresponds
-		 * to the mask bit cleared. */
-		if (pvr.check_mask) {
-			cxt->blend.dst = PVR_BLEND_INVDESTALPHA;
-			cxt->blend.src = PVR_BLEND_DESTALPHA;
-		} else {
-			cxt->blend.src = PVR_BLEND_ONE;
-			cxt->blend.dst = PVR_BLEND_ZERO;
-		}
+		cxt->blend.src = PVR_BLEND_ONE;
+		cxt->blend.dst = PVR_BLEND_ZERO;
 		break;
 
 	case BLENDING_MODE_QUARTER:
@@ -225,11 +229,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		/* fall-through */
 	case BLENDING_MODE_ADD:
 		/* B + F blending. */
-		if (pvr.check_mask)
-			cxt->blend.src = PVR_BLEND_DESTALPHA;
-		else
-			cxt->blend.src = PVR_BLEND_ONE;
-
+		cxt->blend.src = PVR_BLEND_ONE;
 		cxt->blend.dst = PVR_BLEND_ONE;
 		break;
 
@@ -252,11 +252,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 		draw_prim(cxt, xcoords, ycoords, colors_alt, nb);
 
-		if (pvr.check_mask)
-			cxt->blend.src = PVR_BLEND_INVDESTALPHA;
-		else
-			cxt->blend.src = PVR_BLEND_ONE;
-
+		cxt->blend.src = PVR_BLEND_ONE;
 		cxt->blend.dst = PVR_BLEND_ONE;
 
 		draw_prim(cxt, xcoords, ycoords, colors, nb);
@@ -302,40 +298,12 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 		draw_prim(cxt, xcoords, ycoords, colors_alt, nb);
 
-		/* Step 2: Add B/2 back to itself, conditionally (if we need to
-		 * check for the mask), so that only non-masked pixels will
-		 * be at B/2, while the masked pixels will be reset to their
-		 * original value - or close to their original value, as halving
-		 * the color values caused a loss of one bit of precision. */
-		if (pvr.check_mask) {
-			for (i = 0; i < nb; i++)
-				colors_alt[i] = 0xffffffff;
-
-			cxt->blend.src = PVR_BLEND_DESTCOLOR;
-			cxt->blend.dst = PVR_BLEND_INVDESTALPHA;
-
-			draw_prim(cxt, xcoords, ycoords, colors_alt, nb);
-		}
-
-		/* Step 3: Render the polygon normally, with additive
+		/* Step 2: Render the polygon normally, with additive
 		 * blending. */
-		if (pvr.check_mask)
-			cxt->blend.src = PVR_BLEND_DESTALPHA;
-		else
-			cxt->blend.src = PVR_BLEND_ONE;
-
+		cxt->blend.src = PVR_BLEND_ONE;
 		cxt->blend.dst = PVR_BLEND_ONE;
 		break;
 	}
-
-	/* For the very last render step, if we want to force the destination's
-	 * mask bit, enable the use of the vertex colors' alpha. Since the
-	 * colors always have zero alpha, the destination will then also have
-	 * zero alpha (mask bit set). */
-	if (pvr.set_mask)
-		cxt->gen.alpha = PVR_ALPHA_ENABLE;
-	else
-		cxt->gen.alpha = PVR_ALPHA_DISABLE;
 
 	draw_prim(cxt, xcoords, ycoords, colors, nb);
 }
