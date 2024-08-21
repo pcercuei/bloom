@@ -172,20 +172,18 @@ static void draw_prim(pvr_poly_cxt_t *cxt, const float *x, const float *y,
 	sq_unlock();
 }
 
-static void draw_poly(const float *xcoords, const float *ycoords,
+static void draw_poly(pvr_poly_cxt_t *cxt,
+		      const float *xcoords, const float *ycoords,
 		      const uint32_t *colors, unsigned int nb,
 		      bool semi_trans)
 {
 	enum blending_mode blending_mode;
 	bool textured = false;
 	uint32_t *colors_alt;
-	pvr_poly_cxt_t cxt;
 	unsigned int i;
 
-	pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
-
-	cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
-	cxt.gen.culling = PVR_CULLING_NONE;
+	cxt->depth.comparison = PVR_DEPTHCMP_GEQUAL;
+	cxt->gen.culling = PVR_CULLING_NONE;
 
 	if (semi_trans)
 		blending_mode = pvr_get_blending_mode();
@@ -199,11 +197,11 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 		 * 0 corresponds to the mask bit set, a value of 255 corresponds
 		 * to the mask bit cleared. */
 		if (pvr.check_mask) {
-			cxt.blend.dst = PVR_BLEND_INVDESTALPHA;
-			cxt.blend.src = PVR_BLEND_DESTALPHA;
+			cxt->blend.dst = PVR_BLEND_INVDESTALPHA;
+			cxt->blend.src = PVR_BLEND_DESTALPHA;
 		} else {
-			cxt.blend.src = PVR_BLEND_ONE;
-			cxt.blend.dst = PVR_BLEND_ZERO;
+			cxt->blend.src = PVR_BLEND_ONE;
+			cxt->blend.dst = PVR_BLEND_ZERO;
 		}
 		break;
 
@@ -228,11 +226,11 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 	case BLENDING_MODE_ADD:
 		/* B + F blending. */
 		if (pvr.check_mask)
-			cxt.blend.src = PVR_BLEND_DESTALPHA;
+			cxt->blend.src = PVR_BLEND_DESTALPHA;
 		else
-			cxt.blend.src = PVR_BLEND_ONE;
+			cxt->blend.src = PVR_BLEND_ONE;
 
-		cxt.blend.dst = PVR_BLEND_ONE;
+		cxt->blend.dst = PVR_BLEND_ONE;
 		break;
 
 	case BLENDING_MODE_SUB:
@@ -249,22 +247,22 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 		for (i = 0; i < nb; i++)
 			colors_alt[i] = 0xffffffff;
 
-		cxt.blend.src = PVR_BLEND_INVDESTCOLOR;
-		cxt.blend.dst = PVR_BLEND_ZERO;
+		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
+		cxt->blend.dst = PVR_BLEND_ZERO;
 
-		draw_prim(&cxt, xcoords, ycoords, colors_alt, nb);
+		draw_prim(cxt, xcoords, ycoords, colors_alt, nb);
 
 		if (pvr.check_mask)
-			cxt.blend.src = PVR_BLEND_INVDESTALPHA;
+			cxt->blend.src = PVR_BLEND_INVDESTALPHA;
 		else
-			cxt.blend.src = PVR_BLEND_ONE;
+			cxt->blend.src = PVR_BLEND_ONE;
 
-		cxt.blend.dst = PVR_BLEND_ONE;
+		cxt->blend.dst = PVR_BLEND_ONE;
 
-		draw_prim(&cxt, xcoords, ycoords, colors, nb);
+		draw_prim(cxt, xcoords, ycoords, colors, nb);
 
-		cxt.blend.src = PVR_BLEND_INVDESTCOLOR;
-		cxt.blend.dst = PVR_BLEND_ZERO;
+		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
+		cxt->blend.dst = PVR_BLEND_ZERO;
 
 		colors = colors_alt;
 		break;
@@ -299,10 +297,10 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 		for (i = 0; i < nb; i++)
 			colors_alt[i] = 0xff808080;
 
-		cxt.blend.src = PVR_BLEND_DESTCOLOR;
-		cxt.blend.dst = PVR_BLEND_ZERO;
+		cxt->blend.src = PVR_BLEND_DESTCOLOR;
+		cxt->blend.dst = PVR_BLEND_ZERO;
 
-		draw_prim(&cxt, xcoords, ycoords, colors_alt, nb);
+		draw_prim(cxt, xcoords, ycoords, colors_alt, nb);
 
 		/* Step 2: Add B/2 back to itself, conditionally (if we need to
 		 * check for the mask), so that only non-masked pixels will
@@ -313,20 +311,20 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 			for (i = 0; i < nb; i++)
 				colors_alt[i] = 0xffffffff;
 
-			cxt.blend.src = PVR_BLEND_DESTCOLOR;
-			cxt.blend.dst = PVR_BLEND_INVDESTALPHA;
+			cxt->blend.src = PVR_BLEND_DESTCOLOR;
+			cxt->blend.dst = PVR_BLEND_INVDESTALPHA;
 
-			draw_prim(&cxt, xcoords, ycoords, colors_alt, nb);
+			draw_prim(cxt, xcoords, ycoords, colors_alt, nb);
 		}
 
 		/* Step 3: Render the polygon normally, with additive
 		 * blending. */
 		if (pvr.check_mask)
-			cxt.blend.src = PVR_BLEND_DESTALPHA;
+			cxt->blend.src = PVR_BLEND_DESTALPHA;
 		else
-			cxt.blend.src = PVR_BLEND_ONE;
+			cxt->blend.src = PVR_BLEND_ONE;
 
-		cxt.blend.dst = PVR_BLEND_ONE;
+		cxt->blend.dst = PVR_BLEND_ONE;
 		break;
 	}
 
@@ -335,11 +333,11 @@ static void draw_poly(const float *xcoords, const float *ycoords,
 	 * colors always have zero alpha, the destination will then also have
 	 * zero alpha (mask bit set). */
 	if (pvr.set_mask)
-		cxt.gen.alpha = PVR_ALPHA_ENABLE;
+		cxt->gen.alpha = PVR_ALPHA_ENABLE;
 	else
-		cxt.gen.alpha = PVR_ALPHA_DISABLE;
+		cxt->gen.alpha = PVR_ALPHA_DISABLE;
 
-	draw_prim(&cxt, xcoords, ycoords, colors, nb);
+	draw_prim(cxt, xcoords, ycoords, colors, nb);
 }
 
 static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
@@ -351,6 +349,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	uint32_t colors[6] = {
 		color0, color0, color0, color1, color1, color1,
 	};
+	pvr_poly_cxt_t cxt;
 
 	xcoords[0] = xcoords[1] = x_to_pvr(x0);
 	xcoords[2] = x_to_pvr(x0 + 1);
@@ -362,7 +361,9 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	ycoords[3] = ycoords[5] = y_to_pvr(y1 + !up);
 	ycoords[4] = y_to_pvr(y1 + up);
 
-	draw_poly(xcoords, ycoords, colors, 6, semi_trans);
+	pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+
+	draw_poly(&cxt, xcoords, ycoords, colors, 6, semi_trans);
 }
 
 int do_cmd_list(uint32_t *list, int list_len,
@@ -374,6 +375,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 	uint32_t *list_start = list;
 	uint32_t *list_end = list + list_len;
 	union PacketBuffer pbuffer;
+	pvr_poly_cxt_t cxt;
 	unsigned int i;
 
 	for (; list < list_end; list += 1 + len)
@@ -491,7 +493,9 @@ int do_cmd_list(uint32_t *list, int list_len,
 				ycoords[i] = y_to_pvr(val >> 16);
 			}
 
-			draw_poly(xcoords, ycoords, colors, nb, semi_trans);
+			pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+
+			draw_poly(&cxt, xcoords, ycoords, colors, nb, semi_trans);
 
 			if (multicolor && textured)
 				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
@@ -587,7 +591,9 @@ int do_cmd_list(uint32_t *list, int list_len,
 			y[0] = y[1] = y_to_pvr(y0);
 			y[2] = y[3] = y_to_pvr(y0 + h);
 
-			draw_poly(x, y, colors, 4, semi_trans);
+			pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+
+			draw_poly(&cxt, x, y, colors, 4, semi_trans);
 
 			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
 			break;
