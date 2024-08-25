@@ -28,6 +28,8 @@
 #  define pvr_printf(...)
 #endif
 
+#define BIT(x)	(1 << (x))
+
 extern float screen_fw, screen_fh;
 extern uint32_t pvr_dr_state;
 
@@ -49,6 +51,13 @@ struct texture_settings {
 	unsigned int mask_y :5;
 	unsigned int offt_x :5;
 	unsigned int offt_y :5;
+};
+
+struct texture_page {
+	struct texture_page *next;
+	pvr_ptr_t tex;
+	unsigned int palette_offt;
+	struct texture_settings settings;
 };
 
 enum blending_mode {
@@ -78,6 +87,8 @@ struct pvr_renderer {
 	enum blending_mode blending_mode :3;
 
 	struct texture_settings settings;
+
+	struct texture_page *textures[32];
 };
 
 static struct pvr_renderer pvr;
@@ -105,8 +116,231 @@ void renderer_sync_ecmds(uint32_t *ecmds)
 	do_cmd_list(&ecmds[1], 6, &dummy, &dummy, &dummy);
 }
 
+static inline uint16_t bgr_to_rgb(uint16_t bgr)
+{
+	return ((bgr & 0x7c00) >> 10)
+		| ((bgr & 0x001f) << 10)
+		| (bgr & 0x83e0);
+}
+
+static inline uint16_t psx_to_rgb(uint16_t bgr)
+{
+	uint16_t pixel = bgr_to_rgb(bgr);
+
+	/* On PSX, bit 15 is used for semi-transparent blending.
+	 * The transparent pixel is color-coded to value 0x0000.
+	 * For native textures, we will use bit 15 as the opaque/transparent
+	 * bit. */
+	if (pixel != 0x0000)
+		pixel |= 0x8000;
+
+	return pixel;
+}
+
+static inline unsigned int get_twiddled_offset(unsigned int idx)
+{
+	unsigned int i, addr = 0;
+
+	for (i = 0; i < 8; i++)
+		addr += (idx & BIT(i)) << i;
+
+	return addr;
+}
+
+static inline unsigned int twiddled(unsigned int x, unsigned int y)
+{
+	return get_twiddled_offset(y) + get_twiddled_offset(x) * 2;
+}
+
+static void pvr_txr_load_strided(const void *src, pvr_ptr_t dst,
+				 uint32_t w, uint32_t h, bool bpp16)
+{
+	unsigned int min = w < h ? w : h;
+	unsigned int mask = min - 1;
+	unsigned int x, y;
+	uint16_t *vtex = (uint16_t *)dst;
+	unsigned int stride = 2048;
+
+	if (!bpp16) {
+		uint8_t *pixels = (uint8_t *)src;
+
+		for (y = 0; y < h; y += 2) {
+			for (x = 0; x < w; x++) {
+				vtex[twiddled((y & mask) / 2, x & mask) +
+					(x / min + y / min) * min * min / 2] =
+					pixels[x] | (pixels[x + stride] << 8);
+			}
+
+			pixels += stride * 2;
+		}
+	} else {
+		uint16_t *pixels = (uint16_t *)src;
+
+		for (y = 0; y < h; y++) {
+			for (x = 0; x < w; x++) {
+				vtex[twiddled(x & mask, y & mask) +
+					(x / min + y / min) * min * min] = pixels[x];
+			}
+
+			pixels += stride / 2;
+		}
+	}
+}
+
+static struct texture_page *
+get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
+		     unsigned int palette_offt,
+		     struct texture_settings settings)
+{
+	unsigned int page_offset = page_y * 16 + page_x;
+	pvr_ptr_t tex = NULL, tex_data = NULL;
+	unsigned int i, tex_width = 0;
+	uint64_t color, codebook[256];
+	struct texture_page *page;
+	uint16_t *src, *palette = NULL;
+
+	for (page = pvr.textures[page_offset]; page; page = page->next) {
+		/* The page settings (window mask/offset and bpp) must match. */
+		if (memcmp(&page->settings, &settings, sizeof(settings)))
+			continue;
+
+		/* If it's a paletted texture, the palettes must match. */
+		if (settings.bpp != TEXTURE_16BPP && palette_offt != page->palette_offt)
+			continue;
+
+		pvr_printf("Found cached texture for page %ux%u bpp %u palette 0x%x\n",
+			   page_x, page_y, 4 << settings.bpp, page->palette_offt);
+
+		return page;
+	}
+
+	src = &gpu.vram[page_offset * 64];
+
+	page = malloc(sizeof(*page));
+	if (!page)
+		return NULL;
+
+	memcpy(&page->settings, &settings, sizeof(settings));
+	page->next = pvr.textures[page_offset];
+
+	if (settings.bpp != TEXTURE_16BPP) {
+		page->palette_offt = palette_offt;
+		palette = &gpu.vram[palette_offt / 2];
+	}
+
+	/* No match - create a new texture */
+	switch (settings.bpp) {
+	case TEXTURE_16BPP:
+		tex = pvr_mem_malloc(256 * 256 * 2);
+		tex_data = tex;
+		tex_width = 256;
+
+		break;
+
+	case TEXTURE_8BPP:
+		tex = pvr_mem_malloc(256 * 8 + 256 * 256);
+		tex_data = (pvr_ptr_t)((uintptr_t)tex + 256 * 8);
+		tex_width = 256;
+
+		/* Copy the palette to the color book, converting the colors
+		 * on the fly */
+		for (i = 0; i < 256; i++) {
+			color = psx_to_rgb(palette[i]);
+
+			color |= color << 16;
+			color |= color << 32;
+			codebook[i] = color;
+		}
+
+		break;
+
+	case TEXTURE_4BPP:
+		tex = pvr_mem_malloc(256 * 8 + 256 * 256 / 2);
+		tex_data = (pvr_ptr_t)((uintptr_t)tex + 256 * 8);
+		tex_width = 128;
+
+		/* Copy the palette to the color book, converting the colors
+		 * on the fly */
+		for (i = 0; i < 256; i++) {
+			color = psx_to_rgb(palette[i & 0xf]);
+			color |= (uint64_t)psx_to_rgb(palette[i >> 4]) << 32;
+			color |= color << 16;
+			codebook[i] = color;
+		}
+
+		break;
+	default:
+		printf("Unsupported texture format %u\n", settings.bpp);
+		return NULL;
+	}
+
+	if (!tex) {
+		fprintf(stderr, "Cannot allocate texture\n");
+		free(page);
+		return NULL;
+	}
+
+	if (settings.bpp != TEXTURE_16BPP)
+		pvr_txr_load(codebook, tex, sizeof(codebook));
+
+	pvr_txr_load_strided(src, tex_data, tex_width, 256,
+			     settings.bpp == TEXTURE_16BPP);
+
+	page->tex = tex;
+
+	pvr.textures[page_offset] = page;
+
+	pvr_printf("Created new texture for page %ux%u bpp %u\n",
+		   page_x, page_y, 4 << settings.bpp);
+
+	return page;
+}
+
+static void invalidate_textures(unsigned int page_offset)
+{
+	struct texture_page *page, *next;
+
+	for (page = pvr.textures[page_offset]; page; ) {
+		next = page->next;
+
+		pvr_mem_free(page->tex);
+		free(page);
+		page = next;
+	}
+
+	if (pvr.textures[page_offset])
+		pvr_printf("Invalidated texture page %u.\n", page_offset);
+
+	pvr.textures[page_offset] = NULL;
+}
+
 void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 {
+	unsigned int x2, y2, dx, dy, page_offset;
+
+	/* Compute bottom-right point coordinates, aligned */
+	x2 = (unsigned int)((x + w + 63) & -64);
+	y2 = (unsigned int)((y + h + 255) & -256);
+
+	/* Align top-left point coordinates */
+	x &= -64;
+	y &= -256;
+
+	/* Texture pages overlap, so we actually have to invalidate three
+	 * pages before the one pointed by the aligned x/y coordinates */
+	if (x < 192)
+		x = 0;
+	else
+		x -= 192;
+
+	for (dy = y; dy < y2; dy += 256) {
+		for (dx = x; dx < x2; dx += 64) {
+			page_offset = (dy >> 4) + (dx >> 6);
+			invalidate_textures(page_offset);
+		}
+	}
+
+	pvr_printf("Update caches %dx%d -> %dx%d\n", x, y, x + w, y + h);
 }
 
 void renderer_flush_queues(void)
@@ -162,6 +396,16 @@ static inline float y_to_pvr(int16_t y)
 static inline float uv_to_pvr(uint16_t uv)
 {
 	return (float)uv / 256.0f;
+}
+
+static inline unsigned int clut_get_offset(uint16_t clut)
+{
+	return ((clut >> 6) & 0x1ff) * 2048 + (clut & 0x3f) * 32;
+}
+
+static inline uint16_t *clut_get_ptr(uint16_t clut)
+{
+	return &gpu.vram[clut_get_offset(clut) / 2];
 }
 
 static void draw_prim(pvr_poly_cxt_t *cxt,
@@ -383,6 +627,47 @@ static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded
 	return len;
 }
 
+static uint32_t get_tex_vertex_color(uint32_t color)
+{
+	uint32_t mask = color & 0x808080;
+
+	mask |= mask >> 1;
+	mask |= mask >> 2;
+	mask |= mask >> 4;
+
+	return ((color & 0x7f7f7f) << 1) | mask;
+}
+
+static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt, pvr_ptr_t tex,
+				     enum texture_bpp bpp)
+{
+	unsigned int tex_fmt, tex_width, tex_height;
+
+	switch (bpp) {
+	case TEXTURE_16BPP:
+		tex_fmt = PVR_TXRFMT_ARGB1555;
+		tex_width = 256;
+		tex_height = 256;
+		break;
+	case TEXTURE_8BPP:
+		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE;
+		tex_width = 512;
+		tex_height = 512;
+		break;
+	case TEXTURE_4BPP:
+		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE;
+		tex_width = 256;
+		tex_height = 512;
+		break;
+	default:
+		__builtin_unreachable();
+		break;
+	}
+
+	pvr_poly_cxt_txr(cxt, PVR_LIST_TR_POLY, tex_fmt,
+			 tex_width, tex_height, tex, PVR_FILTER_BILINEAR);
+}
+
 int do_cmd_list(uint32_t *list, int list_len,
 		int *cycles_sum_out, int *cycles_last, int *last_cmd)
 {
@@ -392,6 +677,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 	uint32_t *list_start = list;
 	uint32_t *list_end = list + list_len;
 	union PacketBuffer pbuffer;
+	struct texture_page *tex_page;
 	pvr_poly_cxt_t cxt;
 	unsigned int i;
 
@@ -496,20 +782,19 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 		case 0x1: {
 			/* Monochrome/shaded non-textured polygon */
+			unsigned int i, clut_offt, nb = 3 + !!multiple;
 			uint32_t val, *buf = pbuffer.U4;
-			unsigned int i, nb = 3 + !!multiple;
 			float xcoords[4], ycoords[4];
 			float ucoords[4] = {}, vcoords[4] = {};
-			uint32_t colors[4];
+			struct texture_settings settings;
+			uint32_t colors[4], texcoord[4];
+			unsigned int page_x, page_y;
+			uint16_t texpage;
 
-			if (textured || raw_tex) {
-				/* TODO: Handle textured */
-				pvr_printf("Render textured polygon (0x%x)\n", cmd);
-				break;
-			}
+			colors[0] = 0xffffffff;
 
 			for (i = 0; i < nb; i++) {
-				if (i == 0 || multicolor) {
+				if (!(textured && raw_tex) && (i == 0 || multicolor)) {
 					/* BGR->RGB swap */
 					colors[i] = __builtin_bswap32(*buf++) >> 8;
 				} else {
@@ -519,9 +804,34 @@ int do_cmd_list(uint32_t *list, int list_len,
 				val = *buf++;
 				xcoords[i] = x_to_pvr(val);
 				ycoords[i] = y_to_pvr(val >> 16);
+
+				if (textured) {
+					texcoord[i] = *buf++;
+
+					ucoords[i] = uv_to_pvr((uint8_t)texcoord[i]);
+					vcoords[i] = uv_to_pvr((uint8_t)(texcoord[i] >> 8));
+				}
 			}
 
-			pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+			if (textured) {
+				clut_offt = clut_get_offset(texcoord[0] >> 16);
+				texpage = texcoord[1] >> 16;
+				settings = pvr.settings;
+
+				settings.bpp = (texpage >> 7) & 0x3;
+				page_x = texpage & 0xf;
+				page_y = (texpage >> 4) & 0x1;
+
+				tex_page = get_or_alloc_texture(page_x, page_y,
+								clut_offt, settings);
+				pvr_prepare_poly_cxt_txr(&cxt, tex_page->tex, settings.bpp);
+			} else {
+				pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+			}
+
+			/* We don't actually use the alpha channel of the vertex
+			 * colors */
+			cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 			draw_poly(&cxt, xcoords, ycoords, ucoords,
 				  vcoords, colors, nb, semi_trans);
@@ -592,15 +902,28 @@ int do_cmd_list(uint32_t *list, int list_len,
 			float ucoords[4] = {}, vcoords[4] = {};
 			uint32_t colors[4];
 			uint16_t w, h, x0, y0;
+			unsigned int clut_offt;
 
-			if (textured || raw_tex) {
-				/* TODO: Handle textured */
-				pvr_printf("Render textured rectangle (0x%x)\n", cmd);
-				break;
+			if (raw_tex) {
+				colors[0] = 0xffffffff;
+			} else {
+				/* BGR->RGB swap */
+				colors[0] = __builtin_bswap32(pbuffer.U4[0]) >> 8;
 			}
 
-			/* BGR->RGB swap */
-			colors[0] = __builtin_bswap32(pbuffer.U4[0]) >> 8;
+			if (textured && !raw_tex) {
+				if ((colors[0] & 0xff) > 0x80 ||
+				    (colors[0] & 0xff00) > 0x8000 ||
+				    (colors[0] & 0xff0000) > 0x800000) {
+					/* TODO: Support "brighter than bright" colors */
+					pvr_printf("Unsupported vertex colors: 0x%06x\n",
+						   colors[0]);
+					break;
+				}
+
+				colors[0] = get_tex_vertex_color(colors[0]);
+			}
+
 			colors[3] = colors[2] = colors[1] = colors[0];
 
 			x0 = (int16_t)pbuffer.U4[1];
@@ -616,17 +939,34 @@ int do_cmd_list(uint32_t *list, int list_len,
 				w = 1;
 				h = 1;
 			} else {
-				w = (int16_t)pbuffer.U4[2];
-				h = (int16_t)(pbuffer.U4[2] >> 16);
+				w = pbuffer.U2[4 + 2 * !!textured];
+				h = pbuffer.U2[5 + 2 * !!textured];
 			}
-
 
 			x[1] = x[3] = x_to_pvr(x0);
 			x[0] = x[2] = x_to_pvr(x0 + w);
 			y[0] = y[1] = y_to_pvr(y0);
 			y[2] = y[3] = y_to_pvr(y0 + h);
 
-			pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+			if (textured) {
+				ucoords[1] = ucoords[3] = uv_to_pvr(pbuffer.U1[8]);
+				ucoords[0] = ucoords[2] = uv_to_pvr(pbuffer.U1[8] + w);
+
+				vcoords[0] = vcoords[1] = uv_to_pvr(pbuffer.U1[9]);
+				vcoords[2] = vcoords[3] = uv_to_pvr(pbuffer.U1[9] + h);
+
+				clut_offt = clut_get_offset(pbuffer.U2[5]);
+
+				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y,
+								clut_offt, pvr.settings);
+				pvr_prepare_poly_cxt_txr(&cxt, tex_page->tex, pvr.settings.bpp);
+			} else {
+				pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+			}
+
+			/* We don't actually use the alpha channel of the vertex
+			 * colors */
+			cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 			draw_poly(&cxt, x, y, ucoords, vcoords,
 				  colors, 4, semi_trans);
