@@ -159,11 +159,18 @@ static inline float y_to_pvr(int16_t y)
 	return (float)(y + pvr.draw_dy - pvr.draw_y1) * screen_fh;
 }
 
-static void draw_prim(pvr_poly_cxt_t *cxt, const float *x, const float *y,
+static inline float uv_to_pvr(uint16_t uv)
+{
+	return (float)uv / 256.0f;
+}
+
+static void draw_prim(pvr_poly_cxt_t *cxt,
+		      const float *x, const float *y,
+		      const float *u, const float *v,
 		      const uint32_t *color, unsigned int nb)
 {
 	pvr_poly_hdr_t tmp, *hdr;
-	pvr_vertex_t *v;
+	pvr_vertex_t *vert;
 	unsigned int i;
 	float z;
 
@@ -182,17 +189,19 @@ static void draw_prim(pvr_poly_cxt_t *cxt, const float *x, const float *y,
 	pvr_dr_commit(hdr);
 
 	for (i = 0; i < nb; i++) {
-		v = pvr_dr_target(pvr_dr_state);
+		vert = pvr_dr_target(pvr_dr_state);
 
-		*v = (pvr_vertex_t){
+		*vert = (pvr_vertex_t){
 			.flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
 			.argb = color[i],
 			.x = x[i],
 			.y = y[i],
 			.z = z,
+			.u = u[i],
+			.v = v[i],
 		};
 
-		pvr_dr_commit(v);
+		pvr_dr_commit(vert);
 	}
 
 	sq_unlock();
@@ -200,6 +209,7 @@ static void draw_prim(pvr_poly_cxt_t *cxt, const float *x, const float *y,
 
 static void draw_poly(pvr_poly_cxt_t *cxt,
 		      const float *xcoords, const float *ycoords,
+		      const float *ucoords, const float *vcoords,
 		      const uint32_t *colors, unsigned int nb,
 		      bool semi_trans)
 {
@@ -268,12 +278,13 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
 
-		draw_prim(cxt, xcoords, ycoords, colors_alt, nb);
+		draw_prim(cxt, xcoords, ycoords,
+			  ucoords, vcoords, colors_alt, nb);
 
 		cxt->blend.src = PVR_BLEND_ONE;
 		cxt->blend.dst = PVR_BLEND_ONE;
 
-		draw_prim(cxt, xcoords, ycoords, colors, nb);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
 
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
@@ -314,7 +325,8 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.src = PVR_BLEND_DESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
 
-		draw_prim(cxt, xcoords, ycoords, colors_alt, nb);
+		draw_prim(cxt, xcoords, ycoords,
+			  ucoords, vcoords, colors_alt, nb);
 
 		/* Step 2: Render the polygon normally, with additive
 		 * blending. */
@@ -323,7 +335,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		break;
 	}
 
-	draw_prim(cxt, xcoords, ycoords, colors, nb);
+	draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
 }
 
 static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
@@ -349,7 +361,10 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 
 	pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
 
-	draw_poly(&cxt, xcoords, ycoords, colors, 6, semi_trans);
+	/* Pass xcoords/ycoords as U/V, since we don't use a texture, we don't
+	 * care what the U/V values are */
+	draw_poly(&cxt, xcoords, ycoords, xcoords, ycoords,
+		  colors, 6, semi_trans);
 }
 
 static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded)
@@ -484,6 +499,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			uint32_t val, *buf = pbuffer.U4;
 			unsigned int i, nb = 3 + !!multiple;
 			float xcoords[4], ycoords[4];
+			float ucoords[4] = {}, vcoords[4] = {};
 			uint32_t colors[4];
 
 			if (textured || raw_tex) {
@@ -507,7 +523,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
 
-			draw_poly(&cxt, xcoords, ycoords, colors, nb, semi_trans);
+			draw_poly(&cxt, xcoords, ycoords, ucoords,
+				  vcoords, colors, nb, semi_trans);
 
 			if (multicolor && textured)
 				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
@@ -572,6 +589,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 		case 0x3: {
 			/* Monochrome rectangle */
 			float x[4], y[4];
+			float ucoords[4] = {}, vcoords[4] = {};
 			uint32_t colors[4];
 			uint16_t w, h, x0, y0;
 
@@ -610,7 +628,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
 
-			draw_poly(&cxt, x, y, colors, 4, semi_trans);
+			draw_poly(&cxt, x, y, ucoords, vcoords,
+				  colors, 4, semi_trans);
 
 			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
 			break;
