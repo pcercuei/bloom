@@ -461,6 +461,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 	bool textured = false;
 	uint32_t *colors_alt;
 	unsigned int i;
+	int txr_en;
 
 	cxt->gen.culling = PVR_CULLING_NONE;
 	cxt->depth.write = PVR_DEPTHWRITE_ENABLE;
@@ -477,8 +478,8 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 	switch (blending_mode) {
 	case BLENDING_MODE_NONE:
-		cxt->blend.src = PVR_BLEND_ONE;
-		cxt->blend.dst = PVR_BLEND_ZERO;
+		cxt->blend.src = PVR_BLEND_SRCALPHA;
+		cxt->blend.dst = PVR_BLEND_INVSRCALPHA;
 		break;
 
 	case BLENDING_MODE_QUARTER:
@@ -501,7 +502,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		/* fall-through */
 	case BLENDING_MODE_ADD:
 		/* B + F blending. */
-		cxt->blend.src = PVR_BLEND_ONE;
+		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
 		break;
 
@@ -519,19 +520,23 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		for (i = 0; i < nb; i++)
 			colors_alt[i] = 0xffffffff;
 
+		txr_en = cxt->txr.enable;
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
+		cxt->txr.enable = PVR_TEXTURE_DISABLE;
 
 		draw_prim(cxt, xcoords, ycoords,
 			  ucoords, vcoords, colors_alt, nb);
 
-		cxt->blend.src = PVR_BLEND_ONE;
+		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
+		cxt->txr.enable = txr_en;
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
 
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
+		cxt->txr.enable = PVR_TEXTURE_DISABLE;
 
 		colors = colors_alt;
 		break;
@@ -566,16 +571,19 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		for (i = 0; i < nb; i++)
 			colors_alt[i] = 0xff808080;
 
+		txr_en = cxt->txr.enable;
 		cxt->blend.src = PVR_BLEND_DESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
+		cxt->txr.enable = PVR_TEXTURE_DISABLE;
 
 		draw_prim(cxt, xcoords, ycoords,
 			  ucoords, vcoords, colors_alt, nb);
 
 		/* Step 2: Render the polygon normally, with additive
 		 * blending. */
-		cxt->blend.src = PVR_BLEND_ONE;
+		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
+		cxt->txr.enable = txr_en;
 		break;
 	}
 
