@@ -82,11 +82,6 @@ struct pvr_renderer {
 
 static struct pvr_renderer pvr;
 
-static enum blending_mode pvr_get_blending_mode(void)
-{
-	return (enum blending_mode)((pvr.gp1 >> 5) & 0x3);
-}
-
 int renderer_init(void)
 {
 	pvr_printf("PVR renderer init\n");
@@ -222,7 +217,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->depth.comparison = PVR_DEPTHCMP_ALWAYS;
 
 	if (semi_trans)
-		blending_mode = pvr_get_blending_mode();
+		blending_mode = pvr.blending_mode;
 	else
 		blending_mode = BLENDING_MODE_NONE;
 
