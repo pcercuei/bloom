@@ -352,6 +352,22 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	draw_poly(&cxt, xcoords, ycoords, colors, 6, semi_trans);
 }
 
+static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded)
+{
+	const uint32_t *pos = &list[3 + shaded];
+	uint32_t len = 2;
+
+	while (pos < end) {
+		if ((*pos & 0xf000f000) == 0x50005000)
+			break;
+
+		pos += 1 + shaded;
+		len++;
+	}
+
+	return len;
+}
+
 int do_cmd_list(uint32_t *list, int list_len,
 		int *cycles_sum_out, int *cycles_last, int *last_cmd)
 {
@@ -513,9 +529,14 @@ int do_cmd_list(uint32_t *list, int list_len,
 			int16_t x, y, oldx, oldy;
 
 			if (multiple) {
-				/* TODO: Handle polylines */
-				pvr_printf("Render polyline (0x%x)\n", cmd);
-				break;
+				nb = get_line_length(list, list_end, multicolor);
+
+				len += (nb - 2) << !!multicolor;
+
+				if (list + len >= list_end) {
+					cmd = -1;
+					break;
+				}
 			}
 
 			/* BGR->RGB swap */
