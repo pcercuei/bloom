@@ -56,6 +56,7 @@ struct texture_settings {
 struct texture_page {
 	struct texture_page *next;
 	pvr_ptr_t tex;
+	pvr_ptr_t mask_tex;
 	unsigned int palette_offt;
 	struct texture_settings settings;
 };
@@ -102,6 +103,10 @@ int renderer_init(void)
 	memset(&pvr, 0, sizeof(pvr));
 	pvr.gp1 = 0x14802000;
 
+	pvr_set_pal_format(PVR_PAL_ARGB1555);
+	pvr_set_pal_entry(0, 0x0000);
+	pvr_set_pal_entry(1, 0xffff);
+
 	return 0;
 }
 
@@ -130,7 +135,8 @@ static inline uint16_t psx_to_rgb(uint16_t bgr)
 	/* On PSX, bit 15 is used for semi-transparent blending.
 	 * The transparent pixel is color-coded to value 0x0000.
 	 * For native textures, we will use bit 15 as the opaque/transparent
-	 * bit. */
+	 * bit; at that point, the semi-transparent info has already been saved
+	 * into a mask texture. */
 	if (pixel != 0x0000)
 		pixel |= 0x8000;
 
@@ -187,17 +193,62 @@ static void pvr_txr_load_strided(const void *src, pvr_ptr_t dst,
 	}
 }
 
+static pvr_ptr_t create_mask_texture(uint16_t *mask)
+{
+	unsigned int i, j;
+	uint64_t *new_mask;
+	uint64_t mask64;
+	pvr_ptr_t tex;
+
+	/* Demultiplex the semi mask created in get_or_alloc_texture(), which
+	 * has one bit per pixel, to having 4 bits per pixel, into a
+	 * heap-allocated array.
+	 * This array is then loaded to the VRAM as a 4bpp texture, which will
+	 * be used by the blending routines. */
+
+	new_mask = malloc(256 * 256 / 2);
+	if (!new_mask)
+		return NULL;
+
+	for (i = 0; i < 256 * 256 / 16; i++) {
+		mask64 = 0;
+
+		for (j = 0; j < 16; j++) {
+			mask64 = (mask64 << 4) | (*mask & 1);
+			*mask >>= 1;
+		}
+
+		new_mask[i] = mask64;
+		mask++;
+	}
+
+	tex = pvr_mem_malloc(256 * 256 / 2);
+	if (!tex) {
+		free(new_mask);
+		return NULL;
+	}
+
+	pvr_txr_load_ex(new_mask, tex, 256, 256, PVR_TXRLOAD_4BPP);
+	free(new_mask);
+
+	return tex;
+}
+
 static struct texture_page *
 get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 		     unsigned int palette_offt,
 		     struct texture_settings settings)
 {
 	unsigned int page_offset = page_y * 16 + page_x;
-	pvr_ptr_t tex = NULL, tex_data = NULL;
-	unsigned int i, tex_width = 0;
+	pvr_ptr_t tex = NULL, tex_data = NULL, mask_tex = NULL;
+	unsigned int i, y, x, tex_width = 0;
 	uint64_t color, codebook[256];
 	struct texture_page *page;
-	uint16_t *src, *palette = NULL;
+	uint16_t mask, val, *src, *src16, *palette = NULL;
+	uint16_t semi_mask[256 * 256 / 16];
+	bool has_semi = false;
+	bool only_semi = true;
+	uint8_t idx, *src8;
 
 	for (page = pvr.textures[page_offset]; page; page = page->next) {
 		/* The page settings (window mask/offset and bpp) must match. */
@@ -234,6 +285,28 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 		tex = pvr_mem_malloc(256 * 256 * 2);
 		tex_data = tex;
 		tex_width = 256;
+		src16 = src;
+
+		/* Compute the semi-transparency bitmask */
+		for (y = 0; y < 256; y++) {
+			for (x = 0; x < 256; x += 16) {
+				mask = 0;
+
+				for (i = 0; i < 16; i++) {
+					val = *src16++;
+					mask = (mask >> 1)
+						| (val & 0x8000)
+						| (!val << 15);
+				}
+
+				has_semi |= !!mask;
+				only_semi &= mask == 0xffff;
+
+				semi_mask[(y * 256 + x) / 16] = mask;
+			}
+
+			src16 += 1024 - 256;
+		}
 
 		break;
 
@@ -241,6 +314,28 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 		tex = pvr_mem_malloc(256 * 8 + 256 * 256);
 		tex_data = (pvr_ptr_t)((uintptr_t)tex + 256 * 8);
 		tex_width = 256;
+		src8 = (uint8_t *)src;
+
+		/* Compute the semi-transparency bitmask */
+		for (y = 0; y < 256; y++) {
+			for (x = 0; x < 256; x += 16) {
+				mask = 0;
+
+				for (i = 0; i < 16; i++) {
+					val = palette[*src8++];
+					mask = (mask >> 1)
+						| (val & 0x8000)
+						| (!val << 15);
+				}
+
+				has_semi |= !!mask;
+				only_semi &= mask == 0xffff;
+
+				semi_mask[(y * 256 + x) / 16] = mask;
+			}
+
+			src8 += 2048 - 256;
+		}
 
 		/* Copy the palette to the color book, converting the colors
 		 * on the fly */
@@ -258,6 +353,35 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 		tex = pvr_mem_malloc(256 * 8 + 256 * 256 / 2);
 		tex_data = (pvr_ptr_t)((uintptr_t)tex + 256 * 8);
 		tex_width = 128;
+		src8 = (uint8_t *)src;
+
+		/* Compute the semi-transparency bitmask */
+		for (y = 0; y < 256; y++) {
+			for (x = 0; x < 256; x += 16) {
+				mask = 0;
+
+				for (i = 0; i < 16; i += 2) {
+					idx = *src8++;
+
+					val = palette[idx >> 4];
+					mask = (mask >> 1)
+						| (val & 0x8000)
+						| (!val << 15);
+
+					val = palette[idx & 0x3];
+					mask = (mask >> 1)
+						| (val & 0x8000)
+						| (!val << 15);
+				}
+
+				has_semi |= !!mask;
+				only_semi &= mask == 0xffff;
+
+				semi_mask[(y * 256 + x) / 16] = mask;
+			}
+
+			src8 += 2048 - 256 / 2;
+		}
 
 		/* Copy the palette to the color book, converting the colors
 		 * on the fly */
@@ -280,6 +404,20 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 		return NULL;
 	}
 
+	/* If we actually found some (semi-)transparent pixels, create a
+	 * 4bpp mask texture that will contain only two (paletted)
+	 * colors: 0x0000 for regular opaque pixels, 0xffff for
+	 * semi-transparent or transparent pixels. */
+	if (has_semi && !only_semi) {
+		mask_tex = create_mask_texture(semi_mask);
+		if (!mask_tex) {
+			fprintf(stderr, "Cannot allocate mask tex\n");
+			pvr_mem_free(tex);
+			free(page);
+			return NULL;
+		}
+	}
+
 	if (settings.bpp != TEXTURE_16BPP)
 		pvr_txr_load(codebook, tex, sizeof(codebook));
 
@@ -287,6 +425,7 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 			     settings.bpp == TEXTURE_16BPP);
 
 	page->tex = tex;
+	page->mask_tex = mask_tex;
 
 	pvr.textures[page_offset] = page;
 
@@ -302,6 +441,9 @@ static void invalidate_textures(unsigned int page_offset)
 
 	for (page = pvr.textures[page_offset]; page; ) {
 		next = page->next;
+
+		if (page->mask_tex)
+			pvr_mem_free(page->mask_tex);
 
 		pvr_mem_free(page->tex);
 		free(page);
@@ -438,6 +580,7 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 		*vert = (pvr_vertex_t){
 			.flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
 			.argb = color[i],
+			.oargb = 0x00ffffff,
 			.x = x[i],
 			.y = y[i],
 			.z = z,
@@ -451,17 +594,71 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	sq_unlock();
 }
 
+static void load_mask_texture(pvr_ptr_t mask_tex,
+			      const float *xcoords, const float *ycoords,
+			      const float *ucoords, const float *vcoords,
+			      unsigned int nb, bool is_sub)
+{
+	pvr_poly_cxt_t mask_cxt;
+	uint32_t colors[4] = {};
+
+	/* If we are blending with a texture, we need to check the transparent
+	 * and semi-transparent bits. These are stored inside a separate 4bpp
+	 * mask texture. Copy them into the destination alpha bits, so that we
+	 * can check them when blending the source texture later. */
+
+	pvr_poly_cxt_txr(&mask_cxt, PVR_LIST_TR_POLY,
+			 PVR_TXRFMT_PAL4BPP, 256, 256,
+			 mask_tex, PVR_FILTER_NONE);
+
+	mask_cxt.gen.culling = PVR_CULLING_NONE;
+	mask_cxt.depth.write = PVR_DEPTHWRITE_ENABLE;
+
+	if (pvr.check_mask)
+		mask_cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
+	else
+		mask_cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
+
+	if (is_sub) {
+		/* If we had a substraction blending, the accumulation buffer's
+		 * alpha bits are all zero. Just blend the source texture
+		 * modulated with 0xff000000 (to clear its RGB bits) 1:1 with
+		 * the accumulation buffer, so that the alpha bits are copied
+		 * there. */
+		mask_cxt.gen.alpha = PVR_ALPHA_DISABLE;
+		mask_cxt.blend.src = PVR_BLEND_ONE;
+		mask_cxt.blend.dst = PVR_BLEND_ONE;
+		mask_cxt.txr.env = PVR_TXRENV_MODULATE;
+	} else {
+		/* Otherwise, the accumulation buffer's alpha bits are all ones.
+		 * Use offset color 0x00ffffff on the source texture and
+		 * multiply the result with the accumulation buffer's pixels,
+		 * so that the source alpha bits are copied there. */
+		mask_cxt.gen.specular = PVR_SPECULAR_ENABLE;
+		mask_cxt.gen.alpha = PVR_ALPHA_DISABLE;
+		mask_cxt.blend.src = PVR_BLEND_DESTCOLOR;
+		mask_cxt.blend.dst = PVR_BLEND_ZERO;
+		mask_cxt.txr.env = PVR_TXRENV_REPLACE;
+	}
+
+	draw_prim(&mask_cxt, xcoords, ycoords,
+		  ucoords, vcoords, colors, nb);
+}
+
 static void draw_poly(pvr_poly_cxt_t *cxt,
 		      const float *xcoords, const float *ycoords,
 		      const float *ucoords, const float *vcoords,
 		      const uint32_t *colors, unsigned int nb,
-		      bool semi_trans)
+		      bool semi_trans, struct texture_page *tex_page)
 {
 	enum blending_mode blending_mode;
-	bool textured = false;
+	pvr_ptr_t mask_tex = NULL;
 	uint32_t *colors_alt;
 	unsigned int i;
 	int txr_en;
+
+	if (tex_page)
+		mask_tex = tex_page->mask_tex;
 
 	cxt->gen.culling = PVR_CULLING_NONE;
 	cxt->depth.write = PVR_DEPTHWRITE_ENABLE;
@@ -480,31 +677,46 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 	case BLENDING_MODE_NONE:
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_INVSRCALPHA;
-		break;
+
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+
+		/* We're done here */
+		return;
 
 	case BLENDING_MODE_QUARTER:
 		/* B + F/4 blending.
 		 * This is a regular additive blending with the foreground color
 		 * values divided by 4. */
-		if (textured) {
-			/* TODO: use modulation */
-		} else {
-			/* If non-textured, we just need to divide the source
-			 * colors by 4. */
-			colors_alt = alloca(sizeof(*colors_alt) * nb);
+		colors_alt = alloca(sizeof(*colors_alt) * nb);
 
-			for (i = 0; i < nb; i++)
-				colors_alt[i] = (colors[i] & 0x00fcfcfc) >> 2;
+		for (i = 0; i < nb; i++)
+			colors_alt[i] = (colors[i] & 0x00fcfcfc) >> 2;
 
-			colors = colors_alt;
-		}
-
-		/* fall-through */
-	case BLENDING_MODE_ADD:
-		/* B + F blending. */
+		/* Regular additive blending */
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb);
+
 		break;
+
+	case BLENDING_MODE_ADD:
+		/* B + F blending. */
+
+		/* The source alpha is set for opaque pixels.
+		 * The destination alpha is set for transparent or
+		 * semi-transparent pixels. */
+		if (mask_tex) {
+			load_mask_texture(mask_tex, xcoords, ycoords,
+					  ucoords, vcoords, nb, false);
+		}
+
+		cxt->blend.src = PVR_BLEND_SRCALPHA;
+		cxt->blend.dst = PVR_BLEND_DESTALPHA;
+
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+
+		/* We're done here */
+		return;
 
 	case BLENDING_MODE_SUB:
 		/* B - F blending.
@@ -518,15 +730,14 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		colors_alt = alloca(sizeof(*colors_alt) * nb);
 
 		for (i = 0; i < nb; i++)
-			colors_alt[i] = 0xffffffff;
+			colors_alt[i] = 0xffffff;
 
 		txr_en = cxt->txr.enable;
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
 		cxt->txr.enable = PVR_TEXTURE_DISABLE;
 
-		draw_prim(cxt, xcoords, ycoords,
-			  ucoords, vcoords, colors_alt, nb);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb);
 
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
@@ -534,31 +745,18 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
 
+		cxt->gen.alpha = PVR_ALPHA_ENABLE;
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
 		cxt->txr.enable = PVR_TEXTURE_DISABLE;
-
-		colors = colors_alt;
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb);
 		break;
 
 	case BLENDING_MODE_HALF:
 		/* B/2 + F/2 blending.
-		 * The F/2 part is done by using color modulation when drawing
-		 * a textured poly, or by dividing the input color values
-		 * when non-textured.
+		 * The F/2 part is done by dividing the input color values.
 		 * B/2 has to be done conditionally based on the destination
 		 * alpha value. This is done in three steps, described below. */
-		if (textured) {
-			/* TODO: use modulation */
-		} else {
-			colors_alt = alloca(sizeof(*colors_alt) * nb);
-
-			for (i = 0; i < nb; i++) {
-				colors_alt[i] = (colors[i] & 0x00fefefe) >> 1;
-			}
-
-			colors = colors_alt;
-		}
 
 		/* Step 1: render a solid grey polygon (color #FF808080 and use
 		 * the following blending settings:
@@ -579,15 +777,32 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		draw_prim(cxt, xcoords, ycoords,
 			  ucoords, vcoords, colors_alt, nb);
 
+		for (i = 0; i < nb; i++)
+			colors_alt[i] = (colors[i] & 0x00fefefe) >> 1;
+
 		/* Step 2: Render the polygon normally, with additive
 		 * blending. */
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
 		cxt->txr.enable = txr_en;
+
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb);
 		break;
 	}
 
-	draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+	if (mask_tex) {
+		load_mask_texture(mask_tex, xcoords, ycoords,
+				  ucoords, vcoords, nb,
+				  blending_mode == BLENDING_MODE_SUB);
+
+		/* Copy back opaque non-semi-transparent pixels from the
+		 * source texture to the destination. */
+		cxt->txr.enable = PVR_TEXTURE_ENABLE;
+		cxt->txr.alpha = PVR_TXRALPHA_DISABLE;
+		cxt->blend.src = PVR_BLEND_INVDESTALPHA;
+		cxt->blend.dst = PVR_BLEND_DESTALPHA;
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+	}
 }
 
 static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
@@ -616,7 +831,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	/* Pass xcoords/ycoords as U/V, since we don't use a texture, we don't
 	 * care what the U/V values are */
 	draw_poly(&cxt, xcoords, ycoords, xcoords, ycoords,
-		  colors, 6, semi_trans);
+		  colors, 6, semi_trans, NULL);
 }
 
 static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded)
@@ -706,6 +921,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 		textured = cmd & 0x04;
 		semi_trans = cmd & 0x02;
 		raw_tex = cmd & 0x01;
+
+		tex_page = NULL;
 
 		switch (cmd >> 5) {
 		case 0x0:
@@ -799,7 +1016,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			unsigned int page_x, page_y;
 			uint16_t texpage;
 
-			colors[0] = 0xffffffff;
+			colors[0] = 0xffffff;
 
 			for (i = 0; i < nb; i++) {
 				if (!(textured && raw_tex) && (i == 0 || multicolor)) {
@@ -842,7 +1059,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 			draw_poly(&cxt, xcoords, ycoords, ucoords,
-				  vcoords, colors, nb, semi_trans);
+				  vcoords, colors, nb, semi_trans, tex_page);
 
 			if (multicolor && textured)
 				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
@@ -913,7 +1130,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			unsigned int clut_offt;
 
 			if (raw_tex) {
-				colors[0] = 0xffffffff;
+				colors[0] = 0xffffff;
 			} else {
 				/* BGR->RGB swap */
 				colors[0] = __builtin_bswap32(pbuffer.U4[0]) >> 8;
@@ -977,7 +1194,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 			draw_poly(&cxt, x, y, ucoords, vcoords,
-				  colors, 4, semi_trans);
+				  colors, 4, semi_trans, tex_page);
 
 			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
 			break;
