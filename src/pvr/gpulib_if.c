@@ -1022,6 +1022,19 @@ int do_cmd_list(uint32_t *list, int list_len,
 				if (!(textured && raw_tex) && (i == 0 || multicolor)) {
 					/* BGR->RGB swap */
 					colors[i] = __builtin_bswap32(*buf++) >> 8;
+
+					if (textured
+					    && ((colors[i] & 0xff) > 0x80 ||
+						(colors[i] & 0xff00) > 0x8000 ||
+						(colors[i] & 0xff0000) > 0x800000)) {
+						/* TODO: Support "brighter than bright" colors */
+						pvr_printf("Unsupported vertex colors: 0x%06x\n",
+							   colors[i]);
+						break;
+					}
+
+					if (textured)
+						colors[i] = get_tex_vertex_color(colors[i]);
 				} else {
 					colors[i] = colors[0];
 				}
