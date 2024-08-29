@@ -654,9 +654,9 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		      const float *xcoords, const float *ycoords,
 		      const float *ucoords, const float *vcoords,
 		      const uint32_t *colors, unsigned int nb,
-		      bool semi_trans, struct texture_page *tex_page)
+		      enum blending_mode blending_mode,
+		      struct texture_page *tex_page)
 {
-	enum blending_mode blending_mode;
 	pvr_ptr_t mask_tex = NULL;
 	uint32_t *colors_alt;
 	unsigned int i;
@@ -672,11 +672,6 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->depth.comparison = PVR_DEPTHCMP_GEQUAL;
 	else
 		cxt->depth.comparison = PVR_DEPTHCMP_ALWAYS;
-
-	if (semi_trans)
-		blending_mode = pvr.blending_mode;
-	else
-		blending_mode = BLENDING_MODE_NONE;
 
 	switch (blending_mode) {
 	case BLENDING_MODE_NONE:
@@ -812,7 +807,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 		      int16_t x1, int16_t y1, uint32_t color1,
-		      bool semi_trans)
+		      enum blending_mode blending_mode)
 {
 	unsigned int up = y1 < y0;
 	float xcoords[6], ycoords[6];
@@ -845,7 +840,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	/* Pass xcoords/ycoords as U/V, since we don't use a texture, we don't
 	 * care what the U/V values are */
 	draw_poly(&cxt, xcoords, ycoords, xcoords, ycoords,
-		  colors, 6, semi_trans, NULL);
+		  colors, 6, blending_mode, NULL);
 }
 
 static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded)
@@ -915,6 +910,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 	uint32_t *list_end = list + list_len;
 	union PacketBuffer pbuffer;
 	struct texture_page *tex_page;
+	enum blending_mode blending_mode;
 	pvr_poly_cxt_t cxt;
 	unsigned int i;
 
@@ -937,6 +933,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 		raw_tex = cmd & 0x01;
 
 		tex_page = NULL;
+		blending_mode = semi_trans ? pvr.blending_mode : BLENDING_MODE_NONE;
 
 		switch (cmd >> 5) {
 		case 0x0:
@@ -1077,6 +1074,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 				tex_page = get_or_alloc_texture(page_x, page_y,
 								clut_offt, settings);
 				pvr_prepare_poly_cxt_txr(&cxt, tex_page->tex, settings.bpp);
+
+				blending_mode = (enum blending_mode)((texpage >> 5) & 0x3);
 			} else {
 				pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
 			}
@@ -1086,7 +1085,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 			draw_poly(&cxt, xcoords, ycoords, ucoords,
-				  vcoords, colors, nb, semi_trans, tex_page);
+				  vcoords, colors, nb, blending_mode, tex_page);
 
 			if (multicolor && textured)
 				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
@@ -1135,9 +1134,9 @@ int do_cmd_list(uint32_t *list, int list_len,
 				y = (int16_t)(val >> 16);
 
 				if (oldx > x)
-					draw_line(x, y, color, oldx, oldy, oldcolor, semi_trans);
+					draw_line(x, y, color, oldx, oldy, oldcolor, blending_mode);
 				else
-					draw_line(oldx, oldy, oldcolor, x, y, color, semi_trans);
+					draw_line(oldx, oldy, oldcolor, x, y, color, blending_mode);
 
 				oldx = x;
 				oldy = y;
@@ -1221,7 +1220,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 			draw_poly(&cxt, x, y, ucoords, vcoords,
-				  colors, 4, semi_trans, tex_page);
+				  colors, 4, blending_mode, tex_page);
 
 			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
 			break;
