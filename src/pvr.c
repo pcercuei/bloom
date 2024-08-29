@@ -71,6 +71,8 @@ enum blending_mode {
 struct pvr_renderer {
 	uint32_t gp1;
 
+	uint32_t dr_state;
+
 	uint16_t draw_x1;
 	uint16_t draw_y1;
 	uint16_t draw_x2;
@@ -568,13 +570,13 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 
 	sq_lock((void *)PVR_TA_INPUT);
 
-	hdr = (void *)pvr_dr_target(pvr_dr_state);
+	hdr = (void *)pvr_dr_target(pvr.dr_state);
 	pvr_poly_compile(&tmp, cxt);
 	memcpy4(hdr, &tmp, sizeof(tmp));
 	pvr_dr_commit(hdr);
 
 	for (i = 0; i < nb; i++) {
-		vert = pvr_dr_target(pvr_dr_state);
+		vert = pvr_dr_target(pvr.dr_state);
 
 		*vert = (pvr_vertex_t){
 			.flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,

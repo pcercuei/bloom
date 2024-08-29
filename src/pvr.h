@@ -11,6 +11,5 @@
 #include <stdint.h>
 
 extern float screen_fw, screen_fh;
-extern uint32_t pvr_dr_state;
 
 #endif /* __BLOOM_PVR_H */
