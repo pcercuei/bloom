@@ -116,6 +116,8 @@ add_library(libpcsxcore STATIC
 	deps/pcsx_rearmed/libpcsxcore/spu.c
 	deps/pcsx_rearmed/libpcsxcore/new_dynarec/emu_if.c
 	deps/pcsx_rearmed/libpcsxcore/lightrec/plugin.c
+	deps/pcsx_rearmed/plugins/gpulib/gpu.c
+	deps/pcsx_rearmed/plugins/gpulib/vout_pl.c
 )
 target_include_directories(libpcsxcore PUBLIC
 	deps/pcsx_rearmed/include
@@ -146,8 +148,6 @@ endif()
 if (GPU_PLUGIN STREQUAL Unai)
 	add_library(gpu STATIC
 		deps/pcsx_rearmed/plugins/gpu_unai/gpulib_if.cpp
-		deps/pcsx_rearmed/plugins/gpulib/gpu.c
-		deps/pcsx_rearmed/plugins/gpulib/vout_pl.c
 	)
 	set_target_properties(gpu PROPERTIES LINKER_LANGUAGE CXX)
 	target_compile_definitions(gpu PRIVATE
@@ -157,9 +157,7 @@ if (GPU_PLUGIN STREQUAL Unai)
 	set(HARDWARE_ACCELERATED OFF)
 elseif(GPU_PLUGIN STREQUAL PVR)
 	add_library(gpu STATIC
-		src/pvr/gpulib_if.c
-		deps/pcsx_rearmed/plugins/gpulib/gpu.c
-		deps/pcsx_rearmed/plugins/gpulib/vout_pl.c
+		src/pvr.c
 	)
 	set_target_properties(gpu PROPERTIES LINKER_LANGUAGE C)
 	target_include_directories(gpu PRIVATE deps/pcsx_rearmed/plugins)
