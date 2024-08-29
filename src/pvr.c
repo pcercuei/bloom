@@ -17,6 +17,8 @@
 
 #include <kos/string.h>
 
+#include "pvr.h"
+
 #define FRAME_WIDTH 1024
 #define FRAME_HEIGHT 512
 
@@ -29,9 +31,6 @@
 #endif
 
 #define BIT(x)	(1 << (x))
-
-extern float screen_fw, screen_fh;
-extern uint32_t pvr_dr_state;
 
 union PacketBuffer {
 	uint32_t U4[16];

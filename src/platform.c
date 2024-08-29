@@ -22,8 +22,8 @@
 
 #include "bloom-config.h"
 #include "emu.h"
+#include "pvr.h"
 #include "vmu.h"
-#include "bloom-config.h"
 
 #define BIT(x) (1 << (x))
 
