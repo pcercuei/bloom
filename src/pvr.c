@@ -833,6 +833,15 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 
 	pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
 
+	cxt.gen.alpha = PVR_ALPHA_DISABLE;
+	cxt.gen.culling = PVR_CULLING_NONE;
+	cxt.depth.write = PVR_DEPTHWRITE_ENABLE;
+
+	if (pvr.check_mask)
+		cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
+	else
+		cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
+
 	/* Pass xcoords/ycoords as U/V, since we don't use a texture, we don't
 	 * care what the U/V values are */
 	draw_poly(&cxt, xcoords, ycoords, xcoords, ycoords,
