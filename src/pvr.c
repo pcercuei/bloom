@@ -145,6 +145,16 @@ static inline uint16_t psx_to_rgb(uint16_t bgr)
 	return pixel;
 }
 
+static inline uint32_t min32(uint32_t a, uint32_t b)
+{
+	return a < b ? a : b;
+}
+
+static inline uint32_t max32(uint32_t a, uint32_t b)
+{
+	return a < b ? b : a;
+}
+
 static inline unsigned int get_twiddled_offset(unsigned int idx)
 {
 	unsigned int i, addr = 0;
@@ -163,7 +173,7 @@ static inline unsigned int twiddled(unsigned int x, unsigned int y)
 static void pvr_txr_load_strided(const void *src, pvr_ptr_t dst,
 				 uint32_t w, uint32_t h, bool bpp16)
 {
-	unsigned int min = w < h ? w : h;
+	unsigned int min = min32(w, h);
 	unsigned int mask = min - 1;
 	unsigned int x, y;
 	uint16_t *vtex = (uint16_t *)dst;
@@ -509,22 +519,6 @@ void renderer_notify_update_lace(int updated)
 
 void renderer_set_config(const struct rearmed_cbs *cbs)
 {
-}
-
-static void cmd_clear_image(union PacketBuffer *pbuffer)
-{
-	int32_t x0, y0, w0, h0;
-	x0 = pbuffer->U2[2] & 0x3ff;
-	y0 = pbuffer->U2[3] & 0x1ff;
-	w0 = ((pbuffer->U2[4] - 1) & 0x3ff) + 1;
-	h0 = ((pbuffer->U2[5] - 1) & 0x1ff) + 1;
-
-	/* horizontal position / size work in 16-pixel blocks */
-	x0 = (x0 + 0xe) & 0xf;
-	w0 = (w0 + 0xe) & 0xf;
-
-	/* TODO: Invalidate anything in the framebuffer, texture and palette
-	 * caches that are covered by this rectangle */
 }
 
 static inline float x_to_pvr(int16_t x)
@@ -898,6 +892,61 @@ static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt, pvr_ptr_t tex,
 
 	pvr_poly_cxt_txr(cxt, PVR_LIST_TR_POLY, tex_fmt,
 			 tex_width, tex_height, tex, PVR_FILTER_BILINEAR);
+}
+
+static bool overlap_draw_area(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+	return x < pvr.draw_x2
+		&& y < pvr.draw_y2
+		&& x + w > pvr.draw_x1
+		&& y + h > pvr.draw_y1;
+}
+
+static void cmd_clear_image(union PacketBuffer *pbuffer)
+{
+	int32_t x0, y0, w0, h0;
+	pvr_poly_cxt_t cxt;
+	float x[4], y[4];
+	uint32_t colors[4];
+	bool set_mask, check_mask;
+
+	/* horizontal position / size work in 16-pixel blocks */
+	x0 = pbuffer->U2[2] & 0x3f0;
+	y0 = pbuffer->U2[3] & 0x1ff;
+	w0 = ((pbuffer->U2[4] & 0x3f0) + 0xf) & ~0xf;
+	h0 = pbuffer->U2[5] & 0x1ff;
+
+	if (overlap_draw_area(x0, y0, w0, h0)) {
+		x[1] = x[3] = x_to_pvr(max32(x0, pvr.draw_x1));
+		y[0] = y[1] = y_to_pvr(max32(y0, pvr.draw_y1));
+		x[0] = x[2] = x_to_pvr(min32(x0 + w0, pvr.draw_x2));
+		y[2] = y[3] = y_to_pvr(min32(y0 + h0, pvr.draw_y2));
+
+		colors[0] = __builtin_bswap32(pbuffer->U4[0]) >> 8;
+		colors[3] = colors[2] = colors[1] = colors[0];
+
+		pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+
+		cxt.gen.alpha = PVR_ALPHA_DISABLE;
+		cxt.gen.culling = PVR_CULLING_NONE;
+		cxt.depth.write = PVR_DEPTHWRITE_ENABLE;
+		cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
+
+		/* The rectangle fill ignores the mask bit */
+		set_mask = pvr.set_mask;
+		check_mask = pvr.check_mask;
+		pvr.set_mask = 0;
+		pvr.check_mask = 0;
+
+		draw_poly(&cxt, x, y, x, y,
+			  colors, 4, BLENDING_MODE_NONE, NULL);
+
+		pvr.set_mask = set_mask;
+		pvr.check_mask = check_mask;
+	}
+
+	/* TODO: Invalidate anything in the framebuffer, texture and palette
+	 * caches that are covered by this rectangle */
 }
 
 int do_cmd_list(uint32_t *list, int list_len,
