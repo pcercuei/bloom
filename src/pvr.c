@@ -1062,6 +1062,14 @@ int do_cmd_list(uint32_t *list, int list_len,
 				}
 			}
 
+			if (!multiple
+			    && ((xcoords[0] == xcoords[1] && ycoords[0] == ycoords[1])
+				|| (xcoords[0] == xcoords[2] && ycoords[0] == ycoords[2])
+				|| (xcoords[1] == xcoords[2] && ycoords[1] == ycoords[2]))) {
+				/* Cull degenerate polys */
+				break;
+			}
+
 			if (textured) {
 				clut_offt = clut_get_offset(texcoord[0] >> 16);
 				texpage = texcoord[1] >> 16;
