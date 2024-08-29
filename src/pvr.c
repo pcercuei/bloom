@@ -1229,3 +1229,16 @@ out:
 	*last_cmd = cmd;
 	return list - list_start;
 }
+
+void hw_render_start(void)
+{
+	pvr_wait_ready();
+	pvr_scene_begin();
+	pvr_list_begin(PVR_LIST_TR_POLY);
+}
+
+void hw_render_stop(void)
+{
+	pvr_list_finish();
+	pvr_scene_finish();
+}

@@ -54,19 +54,6 @@ int in_type[8] = {
    PSE_PAD_TYPE_NONE, PSE_PAD_TYPE_NONE
 };
 
-static void hw_render_start(void)
-{
-	pvr_wait_ready();
-	pvr_scene_begin();
-	pvr_list_begin(PVR_LIST_TR_POLY);
-}
-
-static void hw_render_stop(void)
-{
-	pvr_list_finish();
-	pvr_scene_finish();
-}
-
 static int dc_vout_open(void)
 {
 	if (!started)
