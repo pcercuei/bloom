@@ -71,6 +71,7 @@ enum blending_mode {
 struct pvr_renderer {
 	uint32_t gp1;
 
+	float zoffset;
 	uint32_t dr_state;
 
 	uint16_t draw_x1;
@@ -567,6 +568,9 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 		z = 2.0f;
 	else
 		z = 3.0f;
+
+	z += pvr.zoffset;
+	pvr.zoffset += 0.00001f;
 
 	sq_lock((void *)PVR_TA_INPUT);
 
@@ -1235,6 +1239,8 @@ void hw_render_start(void)
 	pvr_wait_ready();
 	pvr_scene_begin();
 	pvr_list_begin(PVR_LIST_TR_POLY);
+
+	pvr.zoffset = 0.0f;
 }
 
 void hw_render_stop(void)
