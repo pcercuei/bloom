@@ -72,7 +72,7 @@ enum blending_mode {
 struct pvr_renderer {
 	uint32_t gp1;
 
-	float zoffset;
+	unsigned int zoffset;
 	uint32_t dr_state;
 
 	uint16_t draw_x1;
@@ -550,6 +550,30 @@ static inline uint16_t *clut_get_ptr(uint16_t clut)
 	return &gpu.vram[clut_get_offset(clut) / 2];
 }
 
+static float get_zvalue(void)
+{
+	union fint32 {
+		unsigned int vint;
+		float vf;
+	} fint32;
+
+	/* Craft a floating-point value, using a higher exponent for the masked
+	 * bits, and using a mantissa that increases by (1 << 8) for each poly
+	 * rendered. This is done so because the PVR seems to discard the lower
+	 * 8 bits of the Z value. */
+
+	if (!pvr.set_mask)
+		fint32.vint = 125 << 23;
+	else if (pvr.check_mask)
+		fint32.vint = 126 << 23;
+	else
+		fint32.vint = 127 << 23;
+
+	fint32.vint += pvr.zoffset++ << 8;
+
+	return fint32.vf;
+}
+
 static void draw_prim(pvr_poly_cxt_t *cxt,
 		      const float *x, const float *y,
 		      const float *u, const float *v,
@@ -558,17 +582,7 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	pvr_poly_hdr_t tmp, *hdr;
 	pvr_vertex_t *vert;
 	unsigned int i;
-	float z;
-
-	if (!pvr.set_mask)
-		z = 1.0f;
-	else if (pvr.check_mask)
-		z = 2.0f;
-	else
-		z = 3.0f;
-
-	z += pvr.zoffset;
-	pvr.zoffset += 0.00001f;
+	float z = get_zvalue();
 
 	sq_lock((void *)PVR_TA_INPUT);
 
@@ -1313,7 +1327,7 @@ void hw_render_start(void)
 	pvr_scene_begin();
 	pvr_list_begin(PVR_LIST_TR_POLY);
 
-	pvr.zoffset = 0.0f;
+	pvr.zoffset = 0;
 }
 
 void hw_render_stop(void)
