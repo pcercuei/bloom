@@ -1154,7 +1154,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 								clut_offt, settings);
 				pvr_prepare_poly_cxt_txr(&cxt, tex_page->tex, settings.bpp);
 
-				blending_mode = (enum blending_mode)((texpage >> 5) & 0x3);
+				if (semi_trans)
+					blending_mode = (enum blending_mode)((texpage >> 5) & 0x3);
 			} else {
 				pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
 			}
