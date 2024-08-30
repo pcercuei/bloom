@@ -883,7 +883,9 @@ static uint32_t get_tex_vertex_color(uint32_t color)
 	mask |= mask >> 2;
 	mask |= mask >> 4;
 
-	return ((color & 0x7f7f7f) << 1) | mask;
+	return ((color & 0x7f7f7f) << 1)
+		| (color & 0x010101)
+		| mask;
 }
 
 static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt, pvr_ptr_t tex,
