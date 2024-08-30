@@ -278,7 +278,7 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 		return page;
 	}
 
-	src = &gpu.vram[page_offset * 64];
+	src = &gpu.vram[page_x * 64 + page_y * 256 * 1024];
 
 	page = malloc(sizeof(*page));
 	if (!page)
