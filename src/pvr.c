@@ -56,7 +56,8 @@ struct texture_page {
 	struct texture_page *next;
 	pvr_ptr_t tex;
 	pvr_ptr_t mask_tex;
-	unsigned int palette_offt;
+	unsigned int palette_offt :31;
+	unsigned int has_semi :1;
 	struct texture_settings settings;
 };
 
@@ -256,9 +257,9 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 	unsigned int i, y, x, tex_width = 0;
 	uint64_t color, codebook[256];
 	struct texture_page *page;
-	uint16_t mask, val, *src, *src16, *palette = NULL;
+	uint16_t mask_semi, mask_trans, val, *src, *src16, *palette = NULL;
 	uint16_t semi_mask[256 * 256 / 16];
-	bool has_semi = false;
+	bool has_semi = false, has_trans = false;
 	bool only_semi = true;
 	uint8_t idx, *src8;
 
@@ -302,19 +303,20 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 		/* Compute the semi-transparency bitmask */
 		for (y = 0; y < 256; y++) {
 			for (x = 0; x < 256; x += 16) {
-				mask = 0;
+				mask_trans = 0;
+				mask_semi = 0;
 
 				for (i = 0; i < 16; i++) {
 					val = *src16++;
-					mask = (mask >> 1)
-						| (val & 0x8000)
-						| (!val << 15);
+					mask_semi = (mask_semi >> 1) | (val & 0x8000);
+					mask_trans = (mask_trans >> 1) | (!val << 15);
 				}
 
-				has_semi |= !!mask;
-				only_semi &= mask == 0xffff;
+				has_semi |= !!mask_semi;
+				has_trans |= !!mask_trans;
+				only_semi &= (mask_semi | mask_trans) == 0xffff;
 
-				semi_mask[(y * 256 + x) / 16] = mask;
+				semi_mask[(y * 256 + x) / 16] = mask_semi | mask_trans;
 			}
 
 			src16 += 1024 - 256;
@@ -331,19 +333,20 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 		/* Compute the semi-transparency bitmask */
 		for (y = 0; y < 256; y++) {
 			for (x = 0; x < 256; x += 16) {
-				mask = 0;
+				mask_trans = 0;
+				mask_semi = 0;
 
 				for (i = 0; i < 16; i++) {
 					val = palette[*src8++];
-					mask = (mask >> 1)
-						| (val & 0x8000)
-						| (!val << 15);
+					mask_semi = (mask_semi >> 1) | (val & 0x8000);
+					mask_trans = (mask_trans >> 1) | (!val << 15);
 				}
 
-				has_semi |= !!mask;
-				only_semi &= mask == 0xffff;
+				has_semi |= !!mask_semi;
+				has_trans |= !!mask_trans;
+				only_semi &= (mask_semi | mask_trans) == 0xffff;
 
-				semi_mask[(y * 256 + x) / 16] = mask;
+				semi_mask[(y * 256 + x) / 16] = mask_semi | mask_trans;
 			}
 
 			src8 += 2048 - 256;
@@ -370,26 +373,26 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 		/* Compute the semi-transparency bitmask */
 		for (y = 0; y < 256; y++) {
 			for (x = 0; x < 256; x += 16) {
-				mask = 0;
+				mask_trans = 0;
+				mask_semi = 0;
 
 				for (i = 0; i < 16; i += 2) {
 					idx = *src8++;
 
 					val = palette[idx >> 4];
-					mask = (mask >> 1)
-						| (val & 0x8000)
-						| (!val << 15);
+					mask_semi = (mask_semi >> 1) | (val & 0x8000);
+					mask_trans = (mask_trans >> 1) | (!val << 15);
 
 					val = palette[idx & 0x3];
-					mask = (mask >> 1)
-						| (val & 0x8000)
-						| (!val << 15);
+					mask_semi = (mask_semi >> 1) | (val & 0x8000);
+					mask_trans = (mask_trans >> 1) | (!val << 15);
 				}
 
-				has_semi |= !!mask;
-				only_semi &= mask == 0xffff;
+				has_semi |= !!mask_semi;
+				has_trans |= !!mask_trans;
+				only_semi &= (mask_semi | mask_trans) == 0xffff;
 
-				semi_mask[(y * 256 + x) / 16] = mask;
+				semi_mask[(y * 256 + x) / 16] = mask_semi | mask_trans;
 			}
 
 			src8 += 2048 - 256 / 2;
@@ -438,6 +441,7 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 
 	page->tex = tex;
 	page->mask_tex = mask_tex;
+	page->has_semi = has_semi;
 
 	pvr.textures[page_offset] = page;
 
@@ -666,6 +670,14 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->depth.comparison = PVR_DEPTHCMP_GEQUAL;
 	else
 		cxt->depth.comparison = PVR_DEPTHCMP_ALWAYS;
+
+	if (tex_page
+	    && !tex_page->has_semi
+	    && blending_mode != BLENDING_MODE_NONE) {
+		/* Blending command with a texture with no semi-transparent
+		 * texels: we don't actually need to blend anything */
+		blending_mode = BLENDING_MODE_NONE;
+	}
 
 	switch (blending_mode) {
 	case BLENDING_MODE_NONE:
