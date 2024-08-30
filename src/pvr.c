@@ -699,18 +699,13 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		/* The source alpha is set for opaque pixels.
 		 * The destination alpha is set for transparent or
 		 * semi-transparent pixels. */
-		if (mask_tex) {
-			load_mask_texture(mask_tex, xcoords, ycoords,
-					  ucoords, vcoords, nb, false);
-		}
 
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
-		cxt->blend.dst = PVR_BLEND_DESTALPHA;
+		cxt->blend.dst = PVR_BLEND_ONE;
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
 
-		/* We're done here */
-		return;
+		break;
 
 	case BLENDING_MODE_SUB:
 		/* B - F blending.
@@ -793,6 +788,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		 * source texture to the destination. */
 		cxt->txr.enable = PVR_TEXTURE_ENABLE;
 		cxt->txr.alpha = PVR_TXRALPHA_DISABLE;
+		cxt->gen.alpha = PVR_ALPHA_DISABLE;
 		cxt->blend.src = PVR_BLEND_INVDESTALPHA;
 		cxt->blend.dst = PVR_BLEND_DESTALPHA;
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
