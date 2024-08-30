@@ -666,7 +666,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		      const float *xcoords, const float *ycoords,
 		      const float *ucoords, const float *vcoords,
 		      const uint32_t *colors, unsigned int nb,
-		      enum blending_mode blending_mode,
+		      enum blending_mode blending_mode, bool bright,
 		      struct texture_page *tex_page)
 {
 	pvr_ptr_t mask_tex = NULL;
@@ -700,6 +700,15 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
 
+		if (bright) {
+			/* Make the source texture twice as bright by adding it
+			 * again. */
+			cxt->blend.src = PVR_BLEND_SRCALPHA;
+			cxt->blend.dst = PVR_BLEND_ONE;
+
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+		}
+
 		/* We're done here */
 		return;
 
@@ -709,8 +718,14 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		 * values divided by 4. */
 		colors_alt = alloca(sizeof(*colors_alt) * nb);
 
-		for (i = 0; i < nb; i++)
-			colors_alt[i] = (colors[i] & 0x00fcfcfc) >> 2;
+		if (bright) {
+			/* Use F/2 instead of F/4 if we need brighter colors. */
+			for (i = 0; i < nb; i++)
+				colors_alt[i] = (colors[i] & 0x00fefefe) >> 1;
+		} else {
+			for (i = 0; i < nb; i++)
+				colors_alt[i] = (colors[i] & 0x00fcfcfc) >> 2;
+		}
 
 		/* Regular additive blending */
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
@@ -730,6 +745,12 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.dst = PVR_BLEND_ONE;
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+
+		if (bright) {
+			/* Make the source texture twice as bright by adding it
+			 * again. */
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+		}
 
 		break;
 
@@ -759,6 +780,12 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->txr.enable = txr_en;
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+
+		if (bright) {
+			/* Make the source texture twice as bright by adding it
+			 * again */
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+		}
 
 		cxt->gen.alpha = PVR_ALPHA_ENABLE;
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
@@ -792,8 +819,13 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		draw_prim(cxt, xcoords, ycoords,
 			  ucoords, vcoords, colors_alt, nb);
 
-		for (i = 0; i < nb; i++)
-			colors_alt[i] = (colors[i] & 0x00fefefe) >> 1;
+		if (bright) {
+			/* Use F instead of F/2 if we need brighter colors. */
+			colors_alt = (uint32_t *)colors;
+		} else {
+			for (i = 0; i < nb; i++)
+				colors_alt[i] = (colors[i] & 0x00fefefe) >> 1;
+		}
 
 		/* Step 2: Render the polygon normally, with additive
 		 * blending. */
@@ -815,6 +847,24 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->txr.enable = PVR_TEXTURE_ENABLE;
 		cxt->txr.alpha = PVR_TXRALPHA_DISABLE;
 		cxt->gen.alpha = PVR_ALPHA_DISABLE;
+
+		if (bright) {
+			/* If we need brighter colors, compute F*2 into the
+			 * second accumulation buffer, and use it as the source
+			 * for the final blending step. */
+			cxt->blend.dst_enable = PVR_BLEND_ENABLE;
+			cxt->blend.src = PVR_BLEND_SRCALPHA;
+			cxt->blend.dst = PVR_BLEND_ZERO;
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+
+			cxt->blend.src_enable = PVR_BLEND_ENABLE;
+			cxt->blend.src = PVR_BLEND_SRCALPHA;
+			cxt->blend.dst = PVR_BLEND_ONE;
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+
+			cxt->blend.dst_enable = PVR_BLEND_DISABLE;
+		}
+
 		cxt->blend.src = PVR_BLEND_INVDESTALPHA;
 		cxt->blend.dst = PVR_BLEND_DESTALPHA;
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
@@ -856,7 +906,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	/* Pass xcoords/ycoords as U/V, since we don't use a texture, we don't
 	 * care what the U/V values are */
 	draw_poly(&cxt, xcoords, ycoords, xcoords, ycoords,
-		  colors, 6, blending_mode, NULL);
+		  colors, 6, blending_mode, false, NULL);
 }
 
 static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded)
@@ -877,6 +927,14 @@ static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded
 
 static uint32_t get_tex_vertex_color(uint32_t color)
 {
+	/* When rendering textured blended polys and rectangles, the brightest
+	 * colors are 0x80; values above that are "brighter than bright",
+	 * allowing the textures to be rendered up to twice as bright as how
+	 * they are stored in memory.
+	 *
+	 * If each subpixel is below that threshold, we can simply double the
+	 * vertex color values, which we are doing here. Otherwise, we have to
+	 * handle the brighter pixel colors in the blending routine. */
 	uint32_t mask = color & 0x808080;
 
 	mask |= mask >> 1;
@@ -963,7 +1021,7 @@ static void cmd_clear_image(union PacketBuffer *pbuffer)
 		pvr.check_mask = 0;
 
 		draw_poly(&cxt, x, y, x, y,
-			  colors, 4, BLENDING_MODE_NONE, NULL);
+			  colors, 4, BLENDING_MODE_NONE, false, NULL);
 
 		pvr.set_mask = set_mask;
 		pvr.check_mask = check_mask;
@@ -1099,6 +1157,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			uint32_t colors[4], texcoord[4];
 			unsigned int page_x, page_y;
 			uint16_t texpage;
+			bool bright = false;
 
 			colors[0] = 0xffffff;
 
@@ -1107,18 +1166,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 					/* BGR->RGB swap */
 					colors[i] = __builtin_bswap32(*buf++) >> 8;
 
-					if (textured
-					    && ((colors[i] & 0xff) > 0x80 ||
-						(colors[i] & 0xff00) > 0x8000 ||
-						(colors[i] & 0xff0000) > 0x800000)) {
-						/* TODO: Support "brighter than bright" colors */
-						pvr_printf("Unsupported vertex colors: 0x%06x\n",
-							   colors[i]);
-						break;
+					if (textured) {
+						bright |= (colors[i] & 0xff) > 0x80
+							|| (colors[i] & 0xff00) > 0x8000
+							|| (colors[i] & 0xff0000) > 0x800000;
 					}
-
-					if (textured)
-						colors[i] = get_tex_vertex_color(colors[i]);
 				} else {
 					colors[i] = colors[0];
 				}
@@ -1133,6 +1185,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 					ucoords[i] = uv_to_pvr((uint8_t)texcoord[i]);
 					vcoords[i] = uv_to_pvr((uint8_t)(texcoord[i] >> 8));
 				}
+			}
+
+			if (textured && !raw_tex && !bright) {
+				for (i = 0; i < nb; i++)
+					colors[i] = get_tex_vertex_color(colors[i]);
 			}
 
 			if (!multiple
@@ -1167,7 +1224,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 			draw_poly(&cxt, xcoords, ycoords, ucoords,
-				  vcoords, colors, nb, blending_mode, tex_page);
+				  vcoords, colors, nb, blending_mode, bright, tex_page);
 
 			if (multicolor && textured)
 				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
@@ -1236,6 +1293,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			uint32_t colors[4];
 			uint16_t w, h, x0, y0;
 			unsigned int clut_offt;
+			bool bright = false;
 
 			if (raw_tex) {
 				colors[0] = 0xffffff;
@@ -1245,16 +1303,12 @@ int do_cmd_list(uint32_t *list, int list_len,
 			}
 
 			if (textured && !raw_tex) {
-				if ((colors[0] & 0xff) > 0x80 ||
-				    (colors[0] & 0xff00) > 0x8000 ||
-				    (colors[0] & 0xff0000) > 0x800000) {
-					/* TODO: Support "brighter than bright" colors */
-					pvr_printf("Unsupported vertex colors: 0x%06x\n",
-						   colors[0]);
-					break;
-				}
+				bright = (colors[0] & 0xff) > 0x80
+					|| (colors[0] & 0xff00) > 0x8000
+					|| (colors[0] & 0xff0000) > 0x800000;
 
-				colors[0] = get_tex_vertex_color(colors[0]);
+				if (!bright)
+					colors[0] = get_tex_vertex_color(colors[0]);
 			}
 
 			colors[3] = colors[2] = colors[1] = colors[0];
@@ -1302,7 +1356,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 			draw_poly(&cxt, x, y, ucoords, vcoords,
-				  colors, 4, blending_mode, tex_page);
+				  colors, 4, blending_mode, bright, tex_page);
 
 			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
 			break;
