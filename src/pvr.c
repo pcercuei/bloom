@@ -83,6 +83,8 @@ struct pvr_renderer {
 	int16_t draw_dx;
 	int16_t draw_dy;
 
+	uint32_t new_frame :1;
+
 	uint32_t set_mask :1;
 	uint32_t check_mask :1;
 
@@ -583,6 +585,14 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	pvr_vertex_t *vert;
 	unsigned int i;
 	float z = get_zvalue();
+
+	if (pvr.new_frame) {
+		pvr_wait_ready();
+		pvr_scene_begin();
+		pvr_list_begin(PVR_LIST_TR_POLY);
+
+		pvr.new_frame = 0;
+	}
 
 	sq_lock((void *)PVR_TA_INPUT);
 
@@ -1380,15 +1390,14 @@ out:
 
 void hw_render_start(void)
 {
-	pvr_wait_ready();
-	pvr_scene_begin();
-	pvr_list_begin(PVR_LIST_TR_POLY);
-
+	pvr.new_frame = 1;
 	pvr.zoffset = 0;
 }
 
 void hw_render_stop(void)
 {
-	pvr_list_finish();
-	pvr_scene_finish();
+	if (!pvr.new_frame) {
+		pvr_list_finish();
+		pvr_scene_finish();
+	}
 }
