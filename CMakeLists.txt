@@ -88,6 +88,9 @@ set(LIBLIGHTNING_INCLUDE_DIR $<TARGET_PROPERTY:lightning,INTERFACE_INCLUDE_DIREC
 # Include Lightrec's own CMake file
 add_subdirectory(deps/pcsx_rearmed/deps/lightrec)
 
+set(CODE_BUFFER_SIZE 0x300000 CACHE STRING "Code buffer size")
+math(EXPR CODEBUF_SIZE "${CODE_BUFFER_SIZE}" OUTPUT_FORMAT HEXADECIMAL)
+
 add_library(libpcsxcore STATIC
 	deps/pcsx_rearmed/libpcsxcore/cdriso.c
 	deps/pcsx_rearmed/libpcsxcore/cdrom.c
@@ -131,7 +134,7 @@ target_compile_definitions(libpcsxcore PUBLIC
 	LIGHTREC_CODE_INV
 	NO_SOCKET
 	DISABLE_MEM_LUTS
-	CODE_BUFFER_SIZE=0x300000
+	CODE_BUFFER_SIZE=${CODEBUF_SIZE}
 	LIGHTREC_PROG_NAME="/rd/dummy.elf"
 )
 target_compile_options(libpcsxcore PRIVATE -Wno-format)
