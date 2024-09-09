@@ -124,7 +124,7 @@ unsigned char * DC_getBufferSub(int sec)
 {
 	unsigned char val = 0, *ptr = &subq.ControlAndADR;
 	unsigned char dummy_sector[2352];
-	unsigned char subq_buf[100];
+	unsigned char subq_buf[102];
 	unsigned int i, j;
 	int ret;
 
