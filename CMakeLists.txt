@@ -161,6 +161,11 @@ set_source_files_properties(
 	${PCSX_REAL_DIR}/libpcsxcore/psxmem.c
 	PROPERTIES COMPILE_DEFINITIONS psxMemReset=psxMemReset_dummy
 )
+set_source_files_properties(
+	${PCSX_REAL_DIR}/libpcsxcore/gte.c
+	PROPERTIES COMPILE_DEFINITIONS
+	gteRTPS=gteRTPS_pcsx
+)
 target_include_directories(libpcsxcore PUBLIC
 	${PCSX_REAL_DIR}/include
 	${PCSX_REAL_DIR}
@@ -267,6 +272,7 @@ add_executable(bloom
 	src/dynload.c
 	src/emu.c
 	src/genmenu.cpp
+	src/gte.c
 	src/input.c
 	src/mcd.c
 	src/mmap.c
