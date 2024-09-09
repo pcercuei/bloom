@@ -111,7 +111,6 @@ add_library(libpcsxcore STATIC
 	deps/pcsx_rearmed/libpcsxcore/decode_xa.c
 	deps/pcsx_rearmed/libpcsxcore/disr3000a.c
 	deps/pcsx_rearmed/libpcsxcore/gpu.c
-	deps/pcsx_rearmed/libpcsxcore/gte.c
 	deps/pcsx_rearmed/libpcsxcore/gte_divider.c
 	deps/pcsx_rearmed/libpcsxcore/mdec.c
 	deps/pcsx_rearmed/libpcsxcore/misc.c
@@ -151,6 +150,15 @@ target_compile_definitions(libpcsxcore PUBLIC
 )
 target_compile_options(libpcsxcore PRIVATE -Wno-format)
 target_link_libraries(libpcsxcore PUBLIC lightrec zlib)
+
+add_library(libpcsxcore_gte STATIC
+	deps/pcsx_rearmed/libpcsxcore/gte.c
+)
+target_compile_definitions(libpcsxcore_gte PRIVATE
+	gteRTPS=old_gteRTPS
+)
+target_link_libraries(libpcsxcore_gte PUBLIC libpcsxcore)
+target_link_libraries(libpcsxcore PUBLIC libpcsxcore_gte)
 
 if (NOT GPU_PLUGIN)
 	set(GPU_PLUGIN PVR CACHE STRING "GPU plugin" FORCE)
@@ -219,6 +227,7 @@ add_executable(bloom
 	src/dynload.c
 	src/emu.c
 	src/genmenu.cpp
+	src/gte.c
 	src/input.c
 	src/mcd.c
 	src/mmap.c
