@@ -5,9 +5,13 @@
  * Copyright (C) 2024 Paul Cercueil <paul@crapouillou.net>
  */
 
+#include <stdalign.h>
 #include <stddef.h>
+#include <arch/cache.h>
 #include <dc/cdrom.h>
 #include <libpcsxcore/plugins.h>
+
+#include "bloom-config.h"
 
 #ifdef DEBUG
 #  define cdr_printf(...) printf(__VA_ARGS__)
@@ -15,9 +19,11 @@
 #  define cdr_printf(...)
 #endif
 
+#define cache_line_aligned(sz) (((sz) + 31) & -32)
+
 static CDROM_TOC cdrom_toc;
 
-static unsigned char sector[2352];
+static alignas(32) unsigned char sector[cache_line_aligned(2352)];
 static unsigned int curr_lba;
 static struct SubQ subq;
 
@@ -111,8 +117,10 @@ _Bool DC_readTrack(unsigned char *time)
 
 	curr_lba = lba;
 
-	/* TODO: Use CDROM_READ_DMA */
-	return !cdrom_read_sectors_ex(sector, lba, 1, CDROM_READ_PIO);
+	if (WITH_CDROM_DMA)
+		dcache_inval_range((uintptr_t)sector, sizeof(sector));
+
+	return !cdrom_read_sectors_ex(sector, lba, 1, WITH_CDROM_DMA);
 }
 
 unsigned char * DC_getBuffer(void)
@@ -123,14 +131,17 @@ unsigned char * DC_getBuffer(void)
 unsigned char * DC_getBufferSub(int sec)
 {
 	unsigned char val = 0, *ptr = &subq.ControlAndADR;
-	unsigned char dummy_sector[2352];
+	alignas(32) unsigned char dummy_sector[cache_line_aligned(2352)];
 	unsigned char subq_buf[102];
 	unsigned int i, j;
 	int ret;
 
 	if (sec + 150 != curr_lba) {
+		if (WITH_CDROM_DMA)
+			dcache_inval_range((uintptr_t)dummy_sector, sizeof(dummy_sector));
+
 		/* We need to read the sector to be able to get the subchannel data... */
-		cdrom_read_sectors(dummy_sector, sec + 150, 1);
+		cdrom_read_sectors_ex(dummy_sector, sec + 150, 1, WITH_CDROM_DMA);
 
 		curr_lba = sec + 150;
 	}

@@ -203,6 +203,8 @@ target_link_libraries(bloom PUBLIC libpcsxcore gpu spu tsunami
 	#${ZLIB_LIBRARIES} tsunami parallax
 )
 
+option(WITH_CDROM_DMA "Read CD-ROM sectors using DMA" ON)
+
 option(WITH_SDCARD "Enable SD cards support" OFF)
 if (WITH_SDCARD)
 	target_sources(bloom PRIVATE src/sdcard.c)
