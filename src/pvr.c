@@ -973,7 +973,7 @@ static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt, pvr_ptr_t tex,
 	}
 
 	pvr_poly_cxt_txr(cxt, PVR_LIST_TR_POLY, tex_fmt,
-			 tex_width, tex_height, tex, PVR_FILTER_BILINEAR);
+			 tex_width, tex_height, tex, PVR_FILTER_NONE);
 }
 
 static bool overlap_draw_area(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
