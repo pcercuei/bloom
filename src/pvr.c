@@ -158,53 +158,16 @@ static inline uint32_t max32(uint32_t a, uint32_t b)
 	return a < b ? b : a;
 }
 
-static inline unsigned int get_twiddled_offset(unsigned int idx)
-{
-	unsigned int i, addr = 0;
-
-	for (i = 0; i < 8; i++)
-		addr += (idx & BIT(i)) << i;
-
-	return addr;
-}
-
-static inline unsigned int twiddled(unsigned int x, unsigned int y)
-{
-	return get_twiddled_offset(y) + get_twiddled_offset(x) * 2;
-}
-
 static void pvr_txr_load_strided(const void *src, pvr_ptr_t dst,
-				 uint32_t w, uint32_t h, bool bpp16)
+				 uint32_t w, uint32_t h)
 {
-	unsigned int min = min32(w, h);
-	unsigned int mask = min - 1;
-	unsigned int x, y;
-	uint16_t *vtex = (uint16_t *)dst;
-	unsigned int stride = 2048;
+	uint8_t *pixels = (uint8_t *)src;
+	unsigned int y;
 
-	if (!bpp16) {
-		uint8_t *pixels = (uint8_t *)src;
-
-		for (y = 0; y < h; y += 2) {
-			for (x = 0; x < w; x++) {
-				vtex[twiddled((y & mask) / 2, x & mask) +
-					(x / min + y / min) * min * min / 2] =
-					pixels[x] | (pixels[x + stride] << 8);
-			}
-
-			pixels += stride * 2;
-		}
-	} else {
-		uint16_t *pixels = (uint16_t *)src;
-
-		for (y = 0; y < h; y++) {
-			for (x = 0; x < w; x++) {
-				vtex[twiddled(x & mask, y & mask) +
-					(x / min + y / min) * min * min] = pixels[x];
-			}
-
-			pixels += stride / 2;
-		}
+	for (y = 0; y < h; y++) {
+		pvr_txr_load(pixels, dst, w);
+		pixels += 2048;
+		dst += w;
 	}
 }
 
@@ -299,7 +262,7 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 	case TEXTURE_16BPP:
 		tex = pvr_mem_malloc(256 * 256 * 2);
 		tex_data = tex;
-		tex_width = 256;
+		tex_width = 512;
 		src16 = src;
 
 		/* Compute the semi-transparency bitmask */
@@ -438,8 +401,7 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 	if (settings.bpp != TEXTURE_16BPP)
 		pvr_txr_load(codebook, tex, sizeof(codebook));
 
-	pvr_txr_load_strided(src, tex_data, tex_width, 256,
-			     settings.bpp == TEXTURE_16BPP);
+	pvr_txr_load_strided(src, tex_data, tex_width, 256);
 
 	page->tex = tex;
 	page->mask_tex = mask_tex;
@@ -999,14 +961,14 @@ static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt, pvr_ptr_t tex,
 		tex_height = 256;
 		break;
 	case TEXTURE_8BPP:
-		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE;
-		tex_width = 512;
-		tex_height = 512;
+		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
+		tex_width = 1024;
+		tex_height = 256;
 		break;
 	case TEXTURE_4BPP:
-		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE;
-		tex_width = 256;
-		tex_height = 512;
+		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
+		tex_width = 512;
+		tex_height = 256;
 		break;
 	default:
 		__builtin_unreachable();
