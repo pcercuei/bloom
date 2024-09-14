@@ -56,7 +56,7 @@ struct texture_page {
 	struct texture_page *next;
 	pvr_ptr_t tex;
 	pvr_ptr_t mask_tex;
-	unsigned int palette_offt :31;
+	uint16_t clut;
 	unsigned int has_semi :1;
 	struct texture_settings settings;
 };
@@ -158,6 +158,16 @@ static inline uint32_t max32(uint32_t a, uint32_t b)
 	return a < b ? b : a;
 }
 
+static inline unsigned int clut_get_offset(uint16_t clut)
+{
+	return ((clut >> 6) & 0x1ff) * 2048 + (clut & 0x3f) * 32;
+}
+
+static inline uint16_t *clut_get_ptr(uint16_t clut)
+{
+	return &gpu.vram[clut_get_offset(clut) / 2];
+}
+
 static void pvr_txr_load_strided(const void *src, pvr_ptr_t dst,
 				 uint32_t w, uint32_t h)
 {
@@ -214,8 +224,7 @@ static pvr_ptr_t create_mask_texture(uint16_t *mask)
 
 static struct texture_page *
 get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
-		     unsigned int palette_offt,
-		     struct texture_settings settings)
+		     uint16_t clut, struct texture_settings settings)
 {
 	unsigned int page_offset = page_y * 16 + page_x;
 	pvr_ptr_t tex = NULL, tex_data = NULL, mask_tex = NULL;
@@ -234,11 +243,11 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 			continue;
 
 		/* If it's a paletted texture, the palettes must match. */
-		if (settings.bpp != TEXTURE_16BPP && palette_offt != page->palette_offt)
+		if (settings.bpp != TEXTURE_16BPP && clut != page->clut)
 			continue;
 
-		pvr_printf("Found cached texture for page %ux%u bpp %u palette 0x%x\n",
-			   page_x, page_y, 4 << settings.bpp, page->palette_offt);
+		pvr_printf("Found cached texture for page %ux%u bpp %u palette 0x%hx\n",
+			   page_x, page_y, 4 << settings.bpp, page->clut);
 
 		return page;
 	}
@@ -253,8 +262,8 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 	page->next = pvr.textures[page_offset];
 
 	if (settings.bpp != TEXTURE_16BPP) {
-		page->palette_offt = palette_offt;
-		palette = &gpu.vram[palette_offt / 2];
+		page->clut = clut;
+		palette = clut_get_ptr(clut);
 	}
 
 	/* No match - create a new texture */
@@ -502,16 +511,6 @@ static inline float y_to_pvr(int16_t y)
 static inline float uv_to_pvr(uint16_t uv)
 {
 	return (float)uv / 256.0f;
-}
-
-static inline unsigned int clut_get_offset(uint16_t clut)
-{
-	return ((clut >> 6) & 0x1ff) * 2048 + (clut & 0x3f) * 32;
-}
-
-static inline uint16_t *clut_get_ptr(uint16_t clut)
-{
-	return &gpu.vram[clut_get_offset(clut) / 2];
 }
 
 static float get_zvalue(void)
@@ -1151,14 +1150,14 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 		case 0x1: {
 			/* Monochrome/shaded non-textured polygon */
-			unsigned int i, clut_offt, nb = 3 + !!multiple;
+			unsigned int i, nb = 3 + !!multiple;
 			uint32_t val, *buf = pbuffer.U4;
 			float xcoords[4], ycoords[4];
 			float ucoords[4] = {}, vcoords[4] = {};
 			struct texture_settings settings;
 			uint32_t colors[4], texcoord[4];
 			unsigned int page_x, page_y;
-			uint16_t texpage;
+			uint16_t texpage, clut;
 			bool bright = false;
 
 			colors[0] = 0xffffff;
@@ -1203,7 +1202,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			}
 
 			if (textured) {
-				clut_offt = clut_get_offset(texcoord[0] >> 16);
+				clut = texcoord[0] >> 16;
 				texpage = texcoord[1] >> 16;
 				settings = pvr.settings;
 
@@ -1211,8 +1210,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 				page_x = texpage & 0xf;
 				page_y = (texpage >> 4) & 0x1;
 
-				tex_page = get_or_alloc_texture(page_x, page_y,
-								clut_offt, settings);
+				tex_page = get_or_alloc_texture(page_x, page_y, clut, settings);
 				pvr_prepare_poly_cxt_txr(&cxt, tex_page->tex, settings.bpp);
 
 				if (semi_trans)
@@ -1293,8 +1291,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			float x[4], y[4];
 			float ucoords[4] = {}, vcoords[4] = {};
 			uint32_t colors[4];
-			uint16_t w, h, x0, y0;
-			unsigned int clut_offt;
+			uint16_t w, h, x0, y0, clut;
 			bool bright = false;
 
 			if (raw_tex) {
@@ -1344,10 +1341,10 @@ int do_cmd_list(uint32_t *list, int list_len,
 				vcoords[0] = vcoords[1] = uv_to_pvr(pbuffer.U1[9]);
 				vcoords[2] = vcoords[3] = uv_to_pvr(pbuffer.U1[9] + h);
 
-				clut_offt = clut_get_offset(pbuffer.U2[5]);
+				clut = pbuffer.U2[5];
 
 				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y,
-								clut_offt, pvr.settings);
+								clut, pvr.settings);
 				pvr_prepare_poly_cxt_txr(&cxt, tex_page->tex, pvr.settings.bpp);
 			} else {
 				pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
