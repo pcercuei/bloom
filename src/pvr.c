@@ -544,7 +544,7 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 		      const uint32_t *color, unsigned int nb,
 		      uint32_t oargb)
 {
-	pvr_poly_hdr_t tmp, *hdr;
+	pvr_poly_hdr_t *hdr;
 	pvr_vertex_t *vert;
 	unsigned int i;
 	float z = get_zvalue();
@@ -560,8 +560,7 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	sq_lock((void *)PVR_TA_INPUT);
 
 	hdr = (void *)pvr_dr_target(pvr.dr_state);
-	pvr_poly_compile(&tmp, cxt);
-	memcpy4(hdr, &tmp, sizeof(tmp));
+	pvr_poly_compile(hdr, cxt);
 	pvr_dr_commit(hdr);
 
 	for (i = 0; i < nb; i++) {
