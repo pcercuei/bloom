@@ -144,6 +144,7 @@ struct pvr_renderer {
 	struct texture_settings settings;
 
 	struct texture_page *textures[32];
+	struct texture_page *reap_list[2];
 };
 
 static struct pvr_renderer pvr;
@@ -162,11 +163,6 @@ int renderer_init(void)
 	pvr_set_pal_entry(1, 0xffff);
 
 	return 0;
-}
-
-void renderer_finish(void)
-{
-	free(gpu.vram);
 }
 
 void renderer_sync_ecmds(uint32_t *ecmds)
@@ -191,6 +187,34 @@ static inline struct texture_page_16bpp *
 to_texture_page_16bpp(struct texture_page *page)
 {
 	return container_of(page, struct texture_page_16bpp, base);
+}
+
+static void pvr_reap_textures(void)
+{
+	struct texture_page *page, *next;
+
+	for (page = pvr.reap_list[1]; page; page = next) {
+		next = page->next;
+
+		if (page->settings.bpp == TEXTURE_16BPP) {
+			pvr_mem_free(to_texture_page_16bpp(page)->tex);
+			pvr_mem_free(to_texture_page_16bpp(page)->mask_tex);
+		} else {
+			pvr_mem_free(to_texture_page_8bpp(page)->vq);
+		}
+
+		free(page);
+	}
+
+	pvr.reap_list[1] = pvr.reap_list[0];
+	pvr.reap_list[0] = NULL;
+}
+
+void renderer_finish(void)
+{
+	pvr_reap_textures();
+	pvr_reap_textures();
+	free(gpu.vram);
 }
 
 static inline uint16_t bgr_to_rgb(uint16_t bgr)
@@ -523,26 +547,20 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 	return page;
 }
 
+static void pvr_reap_texture(struct texture_page *page)
+{
+	page->next = pvr.reap_list[0];
+	pvr.reap_list[0] = page;
+}
+
 static void invalidate_textures(unsigned int page_offset)
 {
 	struct texture_page *page, *next;
 
-	for (page = pvr.textures[page_offset]; page; ) {
+	for (page = pvr.textures[page_offset]; page; page = next) {
 		next = page->next;
-
-		if (page->settings.bpp == TEXTURE_16BPP) {
-			pvr_mem_free(to_texture_page_16bpp(page)->tex);
-			pvr_mem_free(to_texture_page_16bpp(page)->mask_tex);
-		} else {
-			pvr_mem_free(to_texture_page_8bpp(page)->vq);
-		}
-
-		free(page);
-		page = next;
+		pvr_reap_texture(page);
 	}
-
-	if (pvr.textures[page_offset])
-		pvr_printf("Invalidated texture page %u.\n", page_offset);
 
 	pvr.textures[page_offset] = NULL;
 }
@@ -657,6 +675,7 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 
 	if (pvr.new_frame) {
 		pvr_wait_ready();
+		pvr_reap_textures();
 		pvr_scene_begin();
 		pvr_list_begin(PVR_LIST_TR_POLY);
 
