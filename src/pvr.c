@@ -227,8 +227,8 @@ static pvr_ptr_t create_mask_texture(uint16_t *mask)
 		mask64 = 0;
 
 		for (j = 0; j < 16; j++) {
-			mask64 = (mask64 << 4) | (*mask & 1);
-			*mask >>= 1;
+			mask64 = (mask64 << 4) | (*mask >> 15);
+			*mask <<= 1;
 		}
 
 		new_mask[i] = mask64;
