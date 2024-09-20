@@ -344,11 +344,11 @@ get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
 				for (i = 0; i < 16; i += 2) {
 					idx = *src8++;
 
-					val = palette[idx >> 4];
+					val = palette[idx & 0xf];
 					mask_semi = (mask_semi >> 1) | (val & 0x8000);
 					mask_trans = (mask_trans >> 1) | (!val << 15);
 
-					val = palette[idx & 0x3];
+					val = palette[idx >> 4];
 					mask_semi = (mask_semi >> 1) | (val & 0x8000);
 					mask_trans = (mask_trans >> 1) | (!val << 15);
 				}
