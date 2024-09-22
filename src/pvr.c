@@ -819,16 +819,46 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		 * by 2, except for the alpha. */
 		colors_alt = alloca(sizeof(*colors_alt) * nb);
 
-		for (i = 0; i < nb; i++)
-			colors_alt[i] = 0xff808080;
-
 		txr_en = cxt->txr.enable;
-		cxt->blend.src = PVR_BLEND_DESTCOLOR;
-		cxt->blend.dst = PVR_BLEND_ZERO;
-		cxt->txr.enable = PVR_TEXTURE_DISABLE;
 
-		draw_prim(cxt, xcoords, ycoords,
-			  ucoords, vcoords, colors_alt, nb, 0);
+		if (txr_en) {
+			for (i = 0; i < nb; i++)
+				colors_alt[i] = 0xff000000;
+
+			cxt->gen.specular = PVR_SPECULAR_ENABLE;
+			cxt->blend.src = PVR_BLEND_SRCALPHA;
+			cxt->blend.dst = PVR_BLEND_ZERO;
+			cxt->blend.dst_enable = PVR_BLEND_ENABLE;
+			cxt->txr.env = PVR_TXRENV_MODULATE;
+
+			draw_prim(cxt, xcoords, ycoords,
+				  ucoords, vcoords, colors_alt, nb, 0x00808080);
+
+			/* Now, opaque pixels will be 0xff808080 in the second
+			 * accumulation buffer, and transparent pixels will be
+			 * 0x00000000. */
+
+			cxt->gen.specular = PVR_SPECULAR_DISABLE;
+			cxt->blend.src = PVR_BLEND_DESTCOLOR;
+			cxt->blend.src_enable = PVR_BLEND_ENABLE;
+			cxt->blend.dst = PVR_BLEND_INVSRCALPHA;
+			cxt->blend.dst_enable = PVR_BLEND_DISABLE;
+			cxt->txr.env = PVR_TXRENV_REPLACE;
+
+			draw_prim(cxt, xcoords, ycoords,
+				  ucoords, vcoords, colors_alt, nb, 0);
+
+			cxt->blend.src_enable = PVR_BLEND_DISABLE;
+		} else {
+			for (i = 0; i < nb; i++)
+				colors_alt[i] = 0xff808080;
+
+			cxt->blend.src = PVR_BLEND_DESTCOLOR;
+			cxt->blend.dst = PVR_BLEND_ZERO;
+
+			draw_prim(cxt, xcoords, ycoords,
+				  ucoords, vcoords, colors_alt, nb, 0);
+		}
 
 		if (bright) {
 			/* Use F instead of F/2 if we need brighter colors. */
