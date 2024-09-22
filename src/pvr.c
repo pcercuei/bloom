@@ -579,7 +579,8 @@ static float get_zvalue(void)
 static void draw_prim(pvr_poly_cxt_t *cxt,
 		      const float *x, const float *y,
 		      const float *u, const float *v,
-		      const uint32_t *color, unsigned int nb)
+		      const uint32_t *color, unsigned int nb,
+		      uint32_t oargb)
 {
 	pvr_poly_hdr_t tmp, *hdr;
 	pvr_vertex_t *vert;
@@ -607,7 +608,7 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 		*vert = (pvr_vertex_t){
 			.flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
 			.argb = color[i],
-			.oargb = 0x00ffffff,
+			.oargb = oargb,
 			.x = x[i],
 			.y = y[i],
 			.z = z,
@@ -669,7 +670,7 @@ static void load_mask_texture(pvr_ptr_t mask_tex,
 	}
 
 	draw_prim(&mask_cxt, xcoords, ycoords,
-		  ucoords, vcoords, colors, nb);
+		  ucoords, vcoords, colors, nb, 0x00ffffff);
 }
 
 static void draw_poly(pvr_poly_cxt_t *cxt,
@@ -708,7 +709,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_INVSRCALPHA;
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 
 		if (bright) {
 			/* Make the source texture twice as bright by adding it
@@ -716,7 +717,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 			cxt->blend.src = PVR_BLEND_SRCALPHA;
 			cxt->blend.dst = PVR_BLEND_ONE;
 
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 		}
 
 		/* We're done here */
@@ -740,7 +741,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		/* Regular additive blending */
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
 
 		break;
 
@@ -754,12 +755,12 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 
 		if (bright) {
 			/* Make the source texture twice as bright by adding it
 			 * again. */
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 		}
 
 		break;
@@ -783,25 +784,25 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.dst = PVR_BLEND_ZERO;
 		cxt->txr.enable = PVR_TEXTURE_DISABLE;
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
 
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
 		cxt->txr.enable = txr_en;
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 
 		if (bright) {
 			/* Make the source texture twice as bright by adding it
 			 * again */
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 		}
 
 		cxt->gen.alpha = PVR_ALPHA_ENABLE;
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
 		cxt->txr.enable = PVR_TEXTURE_DISABLE;
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
 		break;
 
 	case BLENDING_MODE_HALF:
@@ -827,7 +828,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->txr.enable = PVR_TEXTURE_DISABLE;
 
 		draw_prim(cxt, xcoords, ycoords,
-			  ucoords, vcoords, colors_alt, nb);
+			  ucoords, vcoords, colors_alt, nb, 0);
 
 		if (bright) {
 			/* Use F instead of F/2 if we need brighter colors. */
@@ -843,7 +844,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.dst = PVR_BLEND_ONE;
 		cxt->txr.enable = txr_en;
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
 		break;
 	}
 
@@ -865,19 +866,19 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 			cxt->blend.dst_enable = PVR_BLEND_ENABLE;
 			cxt->blend.src = PVR_BLEND_SRCALPHA;
 			cxt->blend.dst = PVR_BLEND_ZERO;
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 
 			cxt->blend.src_enable = PVR_BLEND_ENABLE;
 			cxt->blend.src = PVR_BLEND_SRCALPHA;
 			cxt->blend.dst = PVR_BLEND_ONE;
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 
 			cxt->blend.dst_enable = PVR_BLEND_DISABLE;
 		}
 
 		cxt->blend.src = PVR_BLEND_INVDESTALPHA;
 		cxt->blend.dst = PVR_BLEND_DESTALPHA;
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 	}
 }
 
