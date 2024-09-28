@@ -26,13 +26,52 @@
 
 #define pvr_printf(...) do { if (DEBUG) printf(__VA_ARGS__); } while (0)
 
+#define container_of(ptr, type, member) \
+	((type *)((void *)(ptr) - offsetof(type, member)))
+
+#define sizeof_field(type, member) \
+	sizeof(((type *)0)->member)
+
 #define BIT(x)	(1 << (x))
+
+#define CODEBOOK_AREA_SIZE (256 * 256)
+
+#define NB_CODEBOOKS_4BPP   \
+	((CODEBOOK_AREA_SIZE - 2048) / sizeof(struct pvr_vq_codebook_4bpp))
+#define NB_CODEBOOKS_8BPP   \
+	(CODEBOOK_AREA_SIZE / sizeof(struct pvr_vq_codebook_8bpp))
 
 union PacketBuffer {
 	uint32_t U4[16];
 	uint16_t U2[32];
 	uint8_t  U1[64];
 };
+
+struct pvr_vq_codebook_4bpp {
+	uint64_t palette[16];
+	uint64_t pad1[16];
+	uint64_t mask[16];
+	uint64_t pad2[16];
+};
+
+struct pvr_vq_codebook_8bpp {
+	uint64_t palette[256];
+	uint64_t mask[256];
+};
+
+struct texture_vq {
+	union {
+		struct {
+			struct pvr_vq_codebook_4bpp codebook4[NB_CODEBOOKS_4BPP];
+			char _pad[2048];
+		};
+		struct pvr_vq_codebook_8bpp codebook8[NB_CODEBOOKS_8BPP];
+	};
+	uint8_t frame[256 * 256];
+};
+
+_Static_assert(sizeof_field(struct texture_vq, codebook4) + 2048
+	       == sizeof_field(struct texture_vq, codebook8));
 
 enum texture_bpp {
 	TEXTURE_4BPP,
@@ -50,11 +89,25 @@ struct texture_settings {
 
 struct texture_page {
 	struct texture_page *next;
+	struct texture_settings settings;
+};
+
+struct texture_page_16bpp {
+	struct texture_page base;
 	pvr_ptr_t tex;
 	pvr_ptr_t mask_tex;
-	uint16_t clut;
-	unsigned int has_semi :1;
-	struct texture_settings settings;
+};
+
+struct texture_page_8bpp {
+	struct texture_page base;
+	struct texture_vq *vq;
+	uint16_t clut[NB_CODEBOOKS_8BPP];
+};
+
+struct texture_page_4bpp {
+	struct texture_page base;
+	struct texture_vq *vq;
+	uint16_t clut[NB_CODEBOOKS_4BPP];
 };
 
 enum blending_mode {
@@ -122,6 +175,24 @@ void renderer_sync_ecmds(uint32_t *ecmds)
 	do_cmd_list(&ecmds[1], 6, &dummy, &dummy, &dummy);
 }
 
+static inline struct texture_page_4bpp *
+to_texture_page_4bpp(struct texture_page *page)
+{
+	return container_of(page, struct texture_page_4bpp, base);
+}
+
+static inline struct texture_page_8bpp *
+to_texture_page_8bpp(struct texture_page *page)
+{
+	return container_of(page, struct texture_page_8bpp, base);
+}
+
+static inline struct texture_page_16bpp *
+to_texture_page_16bpp(struct texture_page *page)
+{
+	return container_of(page, struct texture_page_16bpp, base);
+}
+
 static inline uint16_t bgr_to_rgb(uint16_t bgr)
 {
 	return ((bgr & 0x7c00) >> 10)
@@ -164,258 +235,283 @@ static inline uint16_t *clut_get_ptr(uint16_t clut)
 	return &gpu.vram[clut_get_offset(clut) / 2];
 }
 
-static void pvr_txr_load_strided(const void *src, pvr_ptr_t dst,
-				 uint32_t w, uint32_t h)
+static inline uint16_t semi_transparent_mask(uint16_t color)
 {
-	uint8_t *pixels = (uint8_t *)src;
-	unsigned int y;
-
-	for (y = 0; y < h; y++) {
-		pvr_txr_load(pixels, dst, w);
-		pixels += 2048;
-		dst += w;
-	}
+	return ((color & 0x8000) || (color == 0)) ? 0xffff : 0x0;
 }
 
-static pvr_ptr_t create_mask_texture(uint16_t *mask)
+static void load_palette(pvr_ptr_t palette_addr, pvr_ptr_t mask_addr,
+			 uint16_t clut, unsigned int nb)
 {
-	unsigned int i, j;
-	uint64_t *new_mask;
-	uint64_t mask64;
-	pvr_ptr_t tex;
+	uint64_t color, mask_data[256], palette_data[256];
+	uint16_t *palette;
+	unsigned int i;
 
-	/* Demultiplex the semi mask created in get_or_alloc_texture(), which
-	 * has one bit per pixel, to having 4 bits per pixel, into a
-	 * heap-allocated array.
-	 * This array is then loaded to the VRAM as a 4bpp texture, which will
-	 * be used by the blending routines. */
+	palette = clut_get_ptr(clut);
 
-	new_mask = malloc(256 * 256 / 2);
-	if (!new_mask)
-		return NULL;
+	for (i = 0; i < nb; i++) {
+		color = semi_transparent_mask(palette[i]);
+		color |= color << 16;
+		color |= color << 32;
+		mask_data[i] = color;
 
-	for (i = 0; i < 256 * 256 / 16; i++) {
-		mask64 = 0;
-
-		for (j = 0; j < 16; j++) {
-			mask64 = (mask64 << 4) | (*mask >> 15);
-			*mask <<= 1;
-		}
-
-		new_mask[i] = mask64;
-		mask++;
+		color = psx_to_rgb(palette[i]);
+		color |= color << 16;
+		color |= color << 32;
+		palette_data[i] = color;
 	}
 
-	tex = pvr_mem_malloc(256 * 256 / 2);
-	if (!tex) {
-		free(new_mask);
-		return NULL;
-	}
-
-	pvr_txr_load_ex(new_mask, tex, 256, 256, PVR_TXRLOAD_4BPP);
-	free(new_mask);
-
-	return tex;
+	pvr_txr_load(palette_data, palette_addr, nb * sizeof(color));
+	pvr_txr_load(mask_data, mask_addr, nb * sizeof(color));
 }
 
-static struct texture_page *
-get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
-		     uint16_t clut, struct texture_settings settings)
+static void
+load_palette_bpp4(struct texture_page *page, unsigned int offset, uint16_t clut)
 {
-	unsigned int page_offset = page_y * 16 + page_x;
-	pvr_ptr_t tex = NULL, tex_data = NULL, mask_tex = NULL;
-	unsigned int i, y, x, tex_width = 0;
-	uint64_t color, codebook[256];
-	struct texture_page *page;
-	uint16_t mask_semi, mask_trans, val, *src, *src16, *palette = NULL;
-	uint16_t semi_mask[256 * 256 / 16];
-	bool has_semi = false, has_trans = false;
-	bool only_semi = true;
-	uint8_t idx, *src8;
+	struct texture_page_4bpp *page4 = to_texture_page_4bpp(page);
+	struct pvr_vq_codebook_4bpp *codebook4 = &page4->vq->codebook4[offset];
 
-	for (page = pvr.textures[page_offset]; page; page = page->next) {
-		/* The page settings (window mask/offset and bpp) must match. */
-		if (memcmp(&page->settings, &settings, sizeof(settings)))
-			continue;
+	load_palette(codebook4->palette, codebook4->mask, clut, 16);
+}
 
-		/* If it's a paletted texture, the palettes must match. */
-		if (settings.bpp != TEXTURE_16BPP && clut != page->clut)
-			continue;
+static void
+load_palette_bpp8(struct texture_page *page, unsigned int offset, uint16_t clut)
+{
+	struct texture_page_8bpp *page8 = to_texture_page_8bpp(page);
+	struct pvr_vq_codebook_8bpp *codebook8 = &page8->vq->codebook8[offset];
 
-		pvr_printf("Found cached texture for page %ux%u bpp %u palette 0x%hx\n",
-			   page_x, page_y, 4 << settings.bpp, page->clut);
+	load_palette(codebook8->palette, codebook8->mask, clut, 256);
+}
 
-		return page;
+static unsigned int
+find_texture_codebook(struct texture_page *page, uint16_t clut)
+{
+	struct texture_page_4bpp *page4 = to_texture_page_4bpp(page);
+	bool bpp4 = page->settings.bpp == TEXTURE_4BPP;
+	unsigned int codebooks = bpp4 ? NB_CODEBOOKS_4BPP : NB_CODEBOOKS_8BPP;
+	unsigned int i, offset_with_space = 0;
+
+	/* We use bit 15 as a the entry valid mark */
+	clut |= BIT(15);
+
+	for (i = 0; i < codebooks; i++) {
+		if (page4->clut[i] == clut)
+			break;
+
+		if (!(page4->clut[i] & BIT(15)))
+			offset_with_space = i;
 	}
 
-	src = &gpu.vram[page_x * 64 + page_y * 256 * 1024];
+	if (i < codebooks) {
+		pvr_printf("Found CLUT at offset %u\n", i);
+		return i;
+	}
+
+	/* We didn't find the CLUT anywere - add it and load the palette */
+	page4->clut[offset_with_space] = clut;
+
+	pvr_printf("Load CLUT 0x%04hx at offset %u\n", clut, offset_with_space);
+
+	if (bpp4)
+		load_palette_bpp4(page, offset_with_space, clut);
+	else
+		load_palette_bpp8(page, offset_with_space, clut);
+
+	return offset_with_space;
+}
+
+static struct texture_page * alloc_texture_16bpp(void)
+{
+	struct texture_page_16bpp *page;
 
 	page = malloc(sizeof(*page));
 	if (!page)
 		return NULL;
 
-	memcpy(&page->settings, &settings, sizeof(settings));
-	page->next = pvr.textures[page_offset];
-
-	if (settings.bpp != TEXTURE_16BPP) {
-		page->clut = clut;
-		palette = clut_get_ptr(clut);
-	}
-
-	/* No match - create a new texture */
-	switch (settings.bpp) {
-	case TEXTURE_16BPP:
-		tex = pvr_mem_malloc(256 * 256 * 2);
-		tex_data = tex;
-		tex_width = 512;
-		src16 = src;
-
-		/* Compute the semi-transparency bitmask */
-		for (y = 0; y < 256; y++) {
-			for (x = 0; x < 256; x += 16) {
-				mask_trans = 0;
-				mask_semi = 0;
-
-				for (i = 0; i < 16; i++) {
-					val = *src16++;
-					mask_semi = (mask_semi >> 1) | (val & 0x8000);
-					mask_trans = (mask_trans >> 1) | (!val << 15);
-				}
-
-				has_semi |= !!mask_semi;
-				has_trans |= !!mask_trans;
-				only_semi &= (mask_semi | mask_trans) == 0xffff;
-
-				semi_mask[(y * 256 + x) / 16] = mask_semi | mask_trans;
-			}
-
-			src16 += 1024 - 256;
-		}
-
-		break;
-
-	case TEXTURE_8BPP:
-		tex = pvr_mem_malloc(256 * 8 + 256 * 256);
-		tex_data = (pvr_ptr_t)((uintptr_t)tex + 256 * 8);
-		tex_width = 256;
-		src8 = (uint8_t *)src;
-
-		/* Compute the semi-transparency bitmask */
-		for (y = 0; y < 256; y++) {
-			for (x = 0; x < 256; x += 16) {
-				mask_trans = 0;
-				mask_semi = 0;
-
-				for (i = 0; i < 16; i++) {
-					val = palette[*src8++];
-					mask_semi = (mask_semi >> 1) | (val & 0x8000);
-					mask_trans = (mask_trans >> 1) | (!val << 15);
-				}
-
-				has_semi |= !!mask_semi;
-				has_trans |= !!mask_trans;
-				only_semi &= (mask_semi | mask_trans) == 0xffff;
-
-				semi_mask[(y * 256 + x) / 16] = mask_semi | mask_trans;
-			}
-
-			src8 += 2048 - 256;
-		}
-
-		/* Copy the palette to the color book, converting the colors
-		 * on the fly */
-		for (i = 0; i < 256; i++) {
-			color = psx_to_rgb(palette[i]);
-
-			color |= color << 16;
-			color |= color << 32;
-			codebook[i] = color;
-		}
-
-		break;
-
-	case TEXTURE_4BPP:
-		tex = pvr_mem_malloc(256 * 8 + 256 * 256 / 2);
-		tex_data = (pvr_ptr_t)((uintptr_t)tex + 256 * 8);
-		tex_width = 128;
-		src8 = (uint8_t *)src;
-
-		/* Compute the semi-transparency bitmask */
-		for (y = 0; y < 256; y++) {
-			for (x = 0; x < 256; x += 16) {
-				mask_trans = 0;
-				mask_semi = 0;
-
-				for (i = 0; i < 16; i += 2) {
-					idx = *src8++;
-
-					val = palette[idx & 0xf];
-					mask_semi = (mask_semi >> 1) | (val & 0x8000);
-					mask_trans = (mask_trans >> 1) | (!val << 15);
-
-					val = palette[idx >> 4];
-					mask_semi = (mask_semi >> 1) | (val & 0x8000);
-					mask_trans = (mask_trans >> 1) | (!val << 15);
-				}
-
-				has_semi |= !!mask_semi;
-				has_trans |= !!mask_trans;
-				only_semi &= (mask_semi | mask_trans) == 0xffff;
-
-				semi_mask[(y * 256 + x) / 16] = mask_semi | mask_trans;
-			}
-
-			src8 += 2048 - 256 / 2;
-		}
-
-		/* Copy the palette to the color book, converting the colors
-		 * on the fly */
-		for (i = 0; i < 256; i++) {
-			color = psx_to_rgb(palette[i & 0xf]);
-			color |= (uint64_t)psx_to_rgb(palette[i >> 4]) << 32;
-			color |= color << 16;
-			codebook[i] = color;
-		}
-
-		break;
-	default:
-		printf("Unsupported texture format %u\n", settings.bpp);
-		return NULL;
-	}
-
-	if (!tex) {
-		fprintf(stderr, "Cannot allocate texture\n");
+	page->tex = pvr_mem_malloc(256 * 256 * 2);
+	if (!page->tex) {
 		free(page);
 		return NULL;
 	}
 
-	/* If we actually found some (semi-)transparent pixels, create a
-	 * 4bpp mask texture that will contain only two (paletted)
-	 * colors: 0x0000 for regular opaque pixels, 0xffff for
-	 * semi-transparent or transparent pixels. */
-	if (has_semi && !only_semi) {
-		mask_tex = create_mask_texture(semi_mask);
-		if (!mask_tex) {
-			fprintf(stderr, "Cannot allocate mask tex\n");
-			pvr_mem_free(tex);
-			free(page);
-			return NULL;
+	page->mask_tex = pvr_mem_malloc(256 * 256);
+	if (!page->mask_tex) {
+		pvr_mem_free(page->tex);
+		free(page);
+		return NULL;
+	}
+
+	return &page->base;
+}
+
+static struct texture_page * alloc_texture_8bpp(void)
+{
+	struct texture_page_8bpp *page;
+
+	page = malloc(sizeof(*page));
+	if (!page)
+		return NULL;
+
+	page->vq = pvr_mem_malloc(sizeof(*page->vq));
+	if (!page->vq) {
+		free(page);
+		return NULL;
+	}
+
+	memset(page->clut, 0, sizeof(page->clut));
+
+	return &page->base;
+}
+
+static struct texture_page * alloc_texture_4bpp(void)
+{
+	struct texture_page_4bpp *page;
+
+	page = malloc(sizeof(*page));
+	if (!page)
+		return NULL;
+
+	page->vq = pvr_mem_malloc(sizeof(*page->vq));
+	if (!page->vq) {
+		free(page);
+		return NULL;
+	}
+
+	memset(page->clut, 0, sizeof(page->clut));
+
+	return &page->base;
+}
+
+static struct texture_page * alloc_texture(struct texture_settings settings)
+{
+	if (settings.bpp == TEXTURE_16BPP)
+		return alloc_texture_16bpp();
+
+	if (settings.bpp == TEXTURE_8BPP)
+		return alloc_texture_8bpp();
+
+	return alloc_texture_4bpp();
+}
+
+static inline bool transparent_or_semi(uint16_t pixel)
+{
+	return !pixel || !!(pixel >> 15);
+}
+
+static void load_texture_16bpp(struct texture_page_16bpp *page,
+			       const uint16_t *src)
+{
+	uint8_t mask_line[256], *mask;
+	unsigned int x, y;
+	uint16_t *dst;
+
+	dst = (uint16_t *)page->tex;
+	mask = (uint8_t *)page->mask_tex;
+
+	for (y = 0; y < 256; y++) {
+		memcpy(dst, src, 512);
+
+		for (x = 0; x < 256; x++)
+			mask_line[x] = transparent_or_semi(src[x]);
+
+		memcpy(mask, mask_line, 256);
+
+		dst += 256;
+		src += 1024;
+	}
+}
+
+static void load_texture_8bpp(struct texture_page_8bpp *page,
+			      const uint8_t *src)
+{
+	uint8_t *dst = page->vq->frame;
+	unsigned int y;
+
+	for (y = 0; y < 256; y++) {
+		pvr_txr_load(src, dst, 256);
+		src += 2048;
+		dst += 256;
+	}
+}
+
+static void load_texture_4bpp(struct texture_page_4bpp *page,
+			      const uint8_t *src)
+{
+	uint8_t *dst = page->vq->frame;
+	uint8_t line[256];
+	unsigned int x, y;
+	uint8_t px;
+
+	for (y = 0; y < 256; y++) {
+		memcpy(line, dst, sizeof(line));
+
+		for (x = 0; x < 256; x += 2) {
+			px = src[x / 2];
+			line[x + 0] = px & 0xf;
+			line[x + 1] = px >> 4;
 		}
+
+		memcpy(dst, line, sizeof(line));
+
+		src += 2048;
+		dst += 256;
+	}
+}
+
+static const uint16_t * texture_page_get_addr(unsigned int page_offset)
+{
+	unsigned int page_x = page_offset & 0xf, page_y = page_offset / 16;
+
+	return &gpu.vram[page_x * 64 + page_y * 256 * 1024];
+}
+
+static void load_texture(struct texture_page *page,
+			 unsigned int page_offset)
+{
+	const void *src = texture_page_get_addr(page_offset);
+
+	if (page->settings.bpp == TEXTURE_16BPP)
+		load_texture_16bpp(to_texture_page_16bpp(page), src);
+	else if (page->settings.bpp == TEXTURE_8BPP)
+		load_texture_8bpp(to_texture_page_8bpp(page), src);
+	else
+		load_texture_4bpp(to_texture_page_4bpp(page), src);
+}
+
+static struct texture_page *
+get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
+		     uint16_t clut, struct texture_settings settings,
+		     unsigned int *codebook)
+{
+	unsigned int page_offset = page_y * 16 + page_x;
+	struct texture_page *page;
+
+	for (page = pvr.textures[page_offset]; page; page = page->next) {
+		/* The page settings (window mask/offset and bpp) must match. */
+		if (!memcmp(&page->settings, &settings, sizeof(settings)))
+			break;
+	}
+
+	if (!page) {
+		pvr_printf("Creating new %ubpp texture for page %u\n",
+			   4 << settings.bpp, page_offset);
+
+		/* No valid texture page found - create a new one */
+		page = alloc_texture(settings);
+
+		/* Init the base fields */
+		memcpy(&page->settings, &settings, sizeof(settings));
+
+		/* Add it to our linked list */
+		page->next = pvr.textures[page_offset];
+		pvr.textures[page_offset] = page;
+
+		/* Load the texture to VRAM */
+		load_texture(page, page_offset);
 	}
 
 	if (settings.bpp != TEXTURE_16BPP)
-		pvr_txr_load(codebook, tex, sizeof(codebook));
-
-	pvr_txr_load_strided(src, tex_data, tex_width, 256);
-
-	page->tex = tex;
-	page->mask_tex = mask_tex;
-	page->has_semi = has_semi;
-
-	pvr.textures[page_offset] = page;
-
-	pvr_printf("Created new texture for page %ux%u bpp %u\n",
-		   page_x, page_y, 4 << settings.bpp);
+		*codebook = find_texture_codebook(page, clut);
 
 	return page;
 }
@@ -427,10 +523,13 @@ static void invalidate_textures(unsigned int page_offset)
 	for (page = pvr.textures[page_offset]; page; ) {
 		next = page->next;
 
-		if (page->mask_tex)
-			pvr_mem_free(page->mask_tex);
+		if (page->settings.bpp == TEXTURE_16BPP) {
+			pvr_mem_free(to_texture_page_16bpp(page)->tex);
+			pvr_mem_free(to_texture_page_16bpp(page)->mask_tex);
+		} else {
+			pvr_mem_free(to_texture_page_8bpp(page)->vq);
+		}
 
-		pvr_mem_free(page->tex);
 		free(page);
 		page = next;
 	}
@@ -511,7 +610,7 @@ static inline float u_to_pvr(uint16_t u)
 
 static inline float v_to_pvr(uint16_t v)
 {
-	return (float)v / 256.0f;
+	return (float)v / 512.0f;
 }
 
 static float get_zvalue(void)
@@ -583,21 +682,56 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	sq_unlock();
 }
 
-static void load_mask_texture(pvr_ptr_t mask_tex,
+static void load_mask_texture(struct texture_page *page,
+			      unsigned int codebook,
 			      const float *xcoords, const float *ycoords,
 			      const float *ucoords, const float *vcoords,
 			      unsigned int nb, bool is_sub)
 {
+	unsigned int tex_fmt, tex_width, tex_height;
+	struct texture_vq *vq;
 	pvr_poly_cxt_t mask_cxt;
 	uint32_t colors[4] = {};
+	pvr_ptr_t mask_tex;
+	float new_vcoords[4];
+	unsigned int i;
 
 	/* If we are blending with a texture, we need to check the transparent
 	 * and semi-transparent bits. These are stored inside a separate 4bpp
 	 * mask texture. Copy them into the destination alpha bits, so that we
 	 * can check them when blending the source texture later. */
 
+	if (page->settings.bpp == TEXTURE_16BPP) {
+		mask_tex = to_texture_page_16bpp(page)->mask_tex;
+
+		tex_fmt = PVR_TXRFMT_PAL8BPP | PVR_TXRFMT_NONTWIDDLED;
+		tex_width = 256;
+		tex_height = 512; /* Really 256, but we use V up to 0.5 */
+	} else {
+		/* Get a pointer to the mask codebook, and adjust V coordinates
+		 * as we are not using the same base. */
+		if (page->settings.bpp == TEXTURE_8BPP) {
+			for (i = 0; i < nb; i++)
+				new_vcoords[i] = vcoords[i] - 8.0f / 512.0f;
+
+			vq = to_texture_page_8bpp(page)->vq;
+			mask_tex = (pvr_ptr_t)vq->codebook8[codebook].mask;
+		} else {
+			for (i = 0; i < nb; i++)
+				new_vcoords[i] = vcoords[i] - 1.0f / 512.0f;
+
+			vq = to_texture_page_4bpp(page)->vq;
+			mask_tex = (pvr_ptr_t)vq->codebook4[codebook].mask;
+		}
+
+		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
+		tex_width = 1024;
+		tex_height = 512;
+		vcoords = new_vcoords;
+	}
+
 	pvr_poly_cxt_txr(&mask_cxt, PVR_LIST_TR_POLY,
-			 PVR_TXRFMT_PAL4BPP, 256, 256,
+			 tex_fmt, tex_width, tex_height,
 			 mask_tex, PVR_FILTER_NONE);
 
 	mask_cxt.gen.culling = PVR_CULLING_NONE;
@@ -639,15 +773,12 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		      const float *ucoords, const float *vcoords,
 		      const uint32_t *colors, unsigned int nb,
 		      enum blending_mode blending_mode, bool bright,
-		      struct texture_page *tex_page)
+		      struct texture_page *tex_page,
+		      unsigned int codebook)
 {
-	pvr_ptr_t mask_tex = NULL;
 	uint32_t *colors_alt;
 	unsigned int i;
 	int txr_en;
-
-	if (tex_page)
-		mask_tex = tex_page->mask_tex;
 
 	cxt->gen.culling = PVR_CULLING_NONE;
 	cxt->depth.write = PVR_DEPTHWRITE_ENABLE;
@@ -831,8 +962,8 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		break;
 	}
 
-	if (mask_tex) {
-		load_mask_texture(mask_tex, xcoords, ycoords,
+	if (tex_page) {
+		load_mask_texture(tex_page, codebook, xcoords, ycoords,
 				  ucoords, vcoords, nb,
 				  blending_mode == BLENDING_MODE_SUB);
 
@@ -900,7 +1031,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	/* Pass xcoords/ycoords as U/V, since we don't use a texture, we don't
 	 * care what the U/V values are */
 	draw_poly(&cxt, xcoords, ycoords, xcoords, ycoords,
-		  colors, 6, blending_mode, false, NULL);
+		  colors, 6, blending_mode, false, NULL, 0);
 }
 
 static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded)
@@ -940,30 +1071,31 @@ static uint32_t get_tex_vertex_color(uint32_t color)
 		| mask;
 }
 
-static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt, pvr_ptr_t tex,
-				     enum texture_bpp bpp)
+static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
+				     struct texture_page *page,
+				     unsigned int codebook)
 {
 	unsigned int tex_fmt, tex_width, tex_height;
+	struct texture_vq *vq;
+	pvr_ptr_t tex;
 
-	switch (bpp) {
-	case TEXTURE_16BPP:
-		tex_fmt = PVR_TXRFMT_ARGB1555;
+	if (page->settings.bpp == TEXTURE_16BPP) {
+		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 256;
 		tex_height = 256;
-		break;
-	case TEXTURE_8BPP:
+		tex = to_texture_page_16bpp(page)->tex;
+	} else {
 		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 1024;
-		tex_height = 256;
-		break;
-	case TEXTURE_4BPP:
-		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
-		tex_width = 512;
-		tex_height = 256;
-		break;
-	default:
-		__builtin_unreachable();
-		break;
+		tex_height = 512;
+
+		if (page->settings.bpp == TEXTURE_8BPP) {
+			vq = to_texture_page_8bpp(page)->vq;
+			tex = (pvr_ptr_t)&vq->codebook8[codebook];
+		} else {
+			vq = to_texture_page_4bpp(page)->vq;
+			tex = (pvr_ptr_t)&vq->codebook4[codebook];
+		}
 	}
 
 	pvr_poly_cxt_txr(cxt, PVR_LIST_TR_POLY, tex_fmt,
@@ -1015,7 +1147,7 @@ static void cmd_clear_image(union PacketBuffer *pbuffer)
 		pvr.check_mask = 0;
 
 		draw_poly(&cxt, x, y, x, y,
-			  colors, 4, BLENDING_MODE_NONE, false, NULL);
+			  colors, 4, BLENDING_MODE_NONE, false, NULL, 0);
 
 		pvr.set_mask = set_mask;
 		pvr.check_mask = check_mask;
@@ -1023,6 +1155,30 @@ static void cmd_clear_image(union PacketBuffer *pbuffer)
 
 	/* TODO: Invalidate anything in the framebuffer, texture and palette
 	 * caches that are covered by this rectangle */
+}
+
+static void adjust_vcoords(float *vcoords, unsigned int nb,
+			   enum texture_bpp bpp, unsigned int codebook)
+{
+	unsigned int i, lines;
+	float adjustment;
+
+	switch (bpp) {
+	case TEXTURE_8BPP:
+		lines = (NB_CODEBOOKS_8BPP - 1 - codebook) * 16 + 8;
+		break;
+	case TEXTURE_4BPP:
+		lines = (NB_CODEBOOKS_4BPP - 1 - codebook) * 2 + 2;
+		break;
+	default:
+		/* Nothing to do */
+		return;
+	}
+
+	adjustment = v_to_pvr(lines);
+
+	for (i = 0; i < nb; i++)
+		vcoords[i] += adjustment;
 }
 
 int do_cmd_list(uint32_t *list, int list_len,
@@ -1037,7 +1193,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 	struct texture_page *tex_page;
 	enum blending_mode blending_mode;
 	pvr_poly_cxt_t cxt;
-	unsigned int i;
+	unsigned int i, codebook;
 
 	for (; list < list_end; list += 1 + len)
 	{
@@ -1202,8 +1358,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 				page_x = texpage & 0xf;
 				page_y = (texpage >> 4) & 0x1;
 
-				tex_page = get_or_alloc_texture(page_x, page_y, clut, settings);
-				pvr_prepare_poly_cxt_txr(&cxt, tex_page->tex, settings.bpp);
+				tex_page = get_or_alloc_texture(page_x, page_y, clut,
+								settings, &codebook);
+				pvr_prepare_poly_cxt_txr(&cxt, tex_page, codebook);
+
+				adjust_vcoords(vcoords, nb, settings.bpp, codebook);
 
 				if (semi_trans)
 					blending_mode = (enum blending_mode)((texpage >> 5) & 0x3);
@@ -1216,7 +1375,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 			cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 			draw_poly(&cxt, xcoords, ycoords, ucoords,
-				  vcoords, colors, nb, blending_mode, bright, tex_page);
+				  vcoords, colors, nb, blending_mode,
+				  bright, tex_page, codebook);
 
 			if (multicolor && textured)
 				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
@@ -1335,9 +1495,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 				clut = pbuffer.U2[5];
 
-				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y,
-								clut, pvr.settings);
-				pvr_prepare_poly_cxt_txr(&cxt, tex_page->tex, pvr.settings.bpp);
+				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y, clut,
+								pvr.settings, &codebook);
+				pvr_prepare_poly_cxt_txr(&cxt, tex_page, codebook);
+
+				adjust_vcoords(vcoords, 4, pvr.settings.bpp, codebook);
 			} else {
 				pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
 			}
@@ -1347,7 +1509,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 			cxt.gen.alpha = PVR_ALPHA_DISABLE;
 
 			draw_poly(&cxt, x, y, ucoords, vcoords,
-				  colors, 4, blending_mode, bright, tex_page);
+				  colors, 4, blending_mode, bright,
+				  tex_page, codebook);
 
 			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
 			break;
