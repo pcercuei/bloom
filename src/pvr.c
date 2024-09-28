@@ -504,9 +504,14 @@ static inline float y_to_pvr(int16_t y)
 	return (float)(y + pvr.draw_dy - pvr.draw_y1) * screen_fh;
 }
 
-static inline float uv_to_pvr(uint16_t uv)
+static inline float u_to_pvr(uint16_t u)
 {
-	return (float)uv / 256.0f;
+	return (float)u / 256.0f;
+}
+
+static inline float v_to_pvr(uint16_t v)
+{
+	return (float)v / 256.0f;
 }
 
 static float get_zvalue(void)
@@ -1170,9 +1175,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 				if (textured) {
 					texcoord[i] = *buf++;
-
-					ucoords[i] = uv_to_pvr((uint8_t)texcoord[i]);
-					vcoords[i] = uv_to_pvr((uint8_t)(texcoord[i] >> 8));
+					ucoords[i] = u_to_pvr((uint8_t)texcoord[i]);
+					vcoords[i] = v_to_pvr((uint8_t)(texcoord[i] >> 8));
 				}
 			}
 
@@ -1323,11 +1327,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 			y[2] = y[3] = y_to_pvr(y0 + h);
 
 			if (textured) {
-				ucoords[1] = ucoords[3] = uv_to_pvr(pbuffer.U1[8]);
-				ucoords[0] = ucoords[2] = uv_to_pvr(pbuffer.U1[8] + w);
+				ucoords[1] = ucoords[3] = u_to_pvr(pbuffer.U1[8]);
+				ucoords[0] = ucoords[2] = u_to_pvr(pbuffer.U1[8] + w);
 
-				vcoords[0] = vcoords[1] = uv_to_pvr(pbuffer.U1[9]);
-				vcoords[2] = vcoords[3] = uv_to_pvr(pbuffer.U1[9] + h);
+				vcoords[0] = vcoords[1] = v_to_pvr(pbuffer.U1[9]);
+				vcoords[2] = vcoords[3] = v_to_pvr(pbuffer.U1[9] + h);
 
 				clut = pbuffer.U2[5];
 
