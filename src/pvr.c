@@ -652,14 +652,6 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 	else
 		cxt->depth.comparison = PVR_DEPTHCMP_ALWAYS;
 
-	if (tex_page
-	    && !tex_page->has_semi
-	    && blending_mode != BLENDING_MODE_NONE) {
-		/* Blending command with a texture with no semi-transparent
-		 * texels: we don't actually need to blend anything */
-		blending_mode = BLENDING_MODE_NONE;
-	}
-
 	switch (blending_mode) {
 	case BLENDING_MODE_NONE:
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
