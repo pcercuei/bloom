@@ -24,11 +24,7 @@
 
 #define DEBUG 0
 
-#if DEBUG
-#  define pvr_printf(...) printf(__VA_ARGS__)
-#else
-#  define pvr_printf(...)
-#endif
+#define pvr_printf(...) do { if (DEBUG) printf(__VA_ARGS__); } while (0)
 
 #define BIT(x)	(1 << (x))
 
