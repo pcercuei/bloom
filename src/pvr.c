@@ -1358,7 +1358,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 		}
 
 		default:
-			pvr_printf("Unhandled GPU CMD: 0x%x\n", cmd);
+			pvr_printf("Unhandled GPU CMD: 0x%lx\n", cmd);
 			break;
 		}
 	}
