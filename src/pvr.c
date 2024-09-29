@@ -476,8 +476,6 @@ static void load_texture_4bpp(struct texture_page_4bpp *page,
 	uint8_t px;
 
 	for (y = 0; y < 256; y++) {
-		memcpy(line, dst, sizeof(line));
-
 		for (x = 0; x < 256; x += 2) {
 			px = src[x / 2];
 			line[x + 0] = px & 0xf;
