@@ -289,7 +289,8 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 	struct texture_page_4bpp *page4 = to_texture_page_4bpp(page);
 	bool bpp4 = page->settings.bpp == TEXTURE_4BPP;
 	unsigned int codebooks = bpp4 ? NB_CODEBOOKS_4BPP : NB_CODEBOOKS_8BPP;
-	unsigned int i, offset_with_space = 0;
+	int offset_with_space = -1;
+	unsigned int i;
 
 	/* We use bit 15 as a the entry valid mark */
 	clut |= BIT(15);
@@ -298,13 +299,19 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 		if (page4->clut[i] == clut)
 			break;
 
-		if (!(page4->clut[i] & BIT(15)))
+		if (offset_with_space < 0 && !(page4->clut[i] & BIT(15)))
 			offset_with_space = i;
 	}
 
 	if (i < codebooks) {
 		pvr_printf("Found CLUT at offset %u\n", i);
 		return i;
+	}
+
+	if (offset_with_space < 0) {
+		/* No space? Let's trash everything and start again */
+		memset(page4->clut, 0, sizeof(page4->clut));
+		offset_with_space = 0;
 	}
 
 	/* We didn't find the CLUT anywere - add it and load the palette */
