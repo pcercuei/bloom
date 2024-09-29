@@ -267,7 +267,9 @@ static inline uint16_t semi_transparent_mask(uint16_t color)
 static void load_palette(pvr_ptr_t palette_addr, pvr_ptr_t mask_addr,
 			 uint16_t clut, unsigned int nb)
 {
-	uint64_t color, mask_data[256], palette_data[256];
+	alignas(32) uint64_t palette_data[256];
+	alignas(32) uint64_t mask_data[256];
+	uint64_t color;
 	uint16_t *palette;
 	unsigned int i;
 
