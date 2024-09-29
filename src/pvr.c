@@ -434,7 +434,8 @@ static inline bool transparent_or_semi(uint16_t pixel)
 static void load_texture_16bpp(struct texture_page_16bpp *page,
 			       const uint16_t *src)
 {
-	uint8_t mask_line[256], *mask;
+	alignas(32) uint8_t mask_line[256];
+	uint8_t *mask;
 	unsigned int x, y;
 	uint16_t *dst;
 
@@ -442,12 +443,12 @@ static void load_texture_16bpp(struct texture_page_16bpp *page,
 	mask = (uint8_t *)page->mask_tex;
 
 	for (y = 0; y < 256; y++) {
-		memcpy(dst, src, 512);
+		pvr_txr_load(src, dst, 512);
 
 		for (x = 0; x < 256; x++)
 			mask_line[x] = transparent_or_semi(src[x]);
 
-		memcpy(mask, mask_line, 256);
+		pvr_txr_load(mask_line, mask, 256);
 
 		dst += 256;
 		src += 1024;
@@ -471,7 +472,7 @@ static void load_texture_4bpp(struct texture_page_4bpp *page,
 			      const uint8_t *src)
 {
 	uint8_t *dst = page->vq->frame;
-	uint8_t line[256];
+	alignas(32) uint8_t line[256];
 	unsigned int x, y;
 	uint8_t px;
 
@@ -482,7 +483,7 @@ static void load_texture_4bpp(struct texture_page_4bpp *page,
 			line[x + 1] = px >> 4;
 		}
 
-		memcpy(dst, line, sizeof(line));
+		pvr_txr_load(line, dst, sizeof(line));
 
 		src += 2048;
 		dst += 256;
