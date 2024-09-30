@@ -155,6 +155,7 @@ add_library(libpcsxcore_gte STATIC
 	deps/pcsx_rearmed/libpcsxcore/gte.c
 )
 target_compile_definitions(libpcsxcore_gte PRIVATE
+	gteNCLIP=old_gteNCLIP
 	gteRTPS=old_gteRTPS
 )
 target_link_libraries(libpcsxcore_gte PUBLIC libpcsxcore)

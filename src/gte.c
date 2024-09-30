@@ -116,3 +116,33 @@ void gteRTPS(psxCP2Regs *regs)
 	regs->CP2D.n.mac0 = sat_s32(tmp);
 	regs->CP2D.n.ir0 = sat((s32)(tmp >> 12), 0, 0x1000);
 }
+
+void gteNCLIP(psxCP2Regs *regs)
+{
+	perf_monitor();
+
+	const int16_t *dsy = (const int16_t[]){
+		regs->CP2D.n.sxy1.y - regs->CP2D.n.sxy2.y,
+		regs->CP2D.n.sxy2.y - regs->CP2D.n.sxy0.y,
+		regs->CP2D.n.sxy0.y - regs->CP2D.n.sxy1.y,
+	};
+	const int16_t *sx = (const int16_t[]){
+		regs->CP2D.n.sxy0.x,
+		regs->CP2D.n.sxy1.x,
+		regs->CP2D.n.sxy2.x,
+	};
+	int32_t *mac1 = &regs->CP2D.n.mac1;
+
+	asm inline("clrmac\n"
+		   "mac.w @%[sx]+,@%[dsy]+\n"
+		   "mac.w @%[sx]+,@%[dsy]+\n"
+		   "sets\n"
+		   "mac.w @%[sx]+,@%[dsy]+\n"
+		   "sts.l MACL,@-%[mac1]\n"
+		   "clrs\n"
+		   : [mac1]"+r"(mac1), [dsy]"+r"(dsy), [sx]"+r"(sx),
+		     "=m"(regs->CP2D.n.mac0)
+		   : "m"(dsy[0]), "m"(dsy[1]), "m"(dsy[2]),
+		     "m"(sx[0]), "m"(sx[1]), "m"(sx[2])
+		   : "macl", "mach");
+}
