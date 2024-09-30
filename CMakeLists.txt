@@ -75,7 +75,6 @@ target_include_directories(lightning PUBLIC
 )
 target_compile_definitions(lightning PRIVATE HAVE_MMAP=0 SH_HAS_FPU=0)
 target_compile_options(lightning PRIVATE -Wno-unused-function -Wno-unused-variable -Wno-parentheses -Wno-format)
-set_target_properties(lightning PROPERTIES LINKER_LANGUAGE C)
 
 # Force these two options to get Bloom to build and work properly
 set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE)
@@ -138,7 +137,6 @@ target_compile_definitions(libpcsxcore PUBLIC
 	LIGHTREC_PROG_NAME="/rd/dummy.elf"
 )
 target_compile_options(libpcsxcore PRIVATE -Wno-format)
-set_target_properties(libpcsxcore PROPERTIES LINKER_LANGUAGE C)
 target_link_libraries(libpcsxcore PUBLIC lightrec zlib)
 
 if (NOT GPU_PLUGIN)
@@ -152,7 +150,6 @@ if (GPU_PLUGIN STREQUAL Unai)
 	add_library(gpu STATIC
 		deps/pcsx_rearmed/plugins/gpu_unai/gpulib_if.cpp
 	)
-	set_target_properties(gpu PROPERTIES LINKER_LANGUAGE CXX)
 	target_compile_definitions(gpu PRIVATE
 		_SDL
 		USE_GPULIB
@@ -162,7 +159,6 @@ elseif(GPU_PLUGIN STREQUAL PVR)
 	add_library(gpu STATIC
 		src/pvr.c
 	)
-	set_target_properties(gpu PROPERTIES LINKER_LANGUAGE C)
 	target_include_directories(gpu PRIVATE deps/pcsx_rearmed/plugins)
 	set(HARDWARE_ACCELERATED ON)
 endif()
@@ -181,10 +177,8 @@ if (SPU_PLUGIN STREQUAL Null)
 	add_library(spu STATIC
 		deps/pcsx_rearmed/plugins/spunull/spunull.c
 	)
-	set_target_properties(spu PROPERTIES LINKER_LANGUAGE C)
 elseif(SPU_PLUGIN STREQUAL AICA)
 	add_library(spu STATIC src/aica.c)
-	set_target_properties(spu PROPERTIES LINKER_LANGUAGE C)
 endif()
 
 add_executable(bloom
@@ -197,7 +191,6 @@ add_executable(bloom
 	src/plugins.c
 	src/vmu.c
 )
-set_target_properties(libpcsxcore PROPERTIES LINKER_LANGUAGE CXX)
 target_link_libraries(bloom PUBLIC libpcsxcore gpu spu tsunami
 	#lightning lightrec libpcsxcore gpu spu
 	#${ZLIB_LIBRARIES} tsunami parallax
@@ -247,7 +240,6 @@ if (WITH_CHD)
 		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/LzmaEnc.c
 		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Sort.c
 	)
-	set_target_properties(lzma PROPERTIES LINKER_LANGUAGE C)
 	target_compile_definitions(lzma PRIVATE _7ZIP_ST Z7_ST)
 	target_compile_definitions(lzma PUBLIC Z7_DECL_Int32_AS_long)
 	target_include_directories(lzma PUBLIC
@@ -268,7 +260,6 @@ if (WITH_CHD)
 		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/decompress/zstd_decompress_block.c
 		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/decompress/zstd_decompress.c
 	)
-	set_target_properties(zstd PROPERTIES LINKER_LANGUAGE C)
 	target_compile_definitions(zstd PRIVATE ZSTD_DISABLE_ASM)
 	target_include_directories(zstd PUBLIC
 		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib
@@ -281,7 +272,6 @@ if (WITH_CHD)
 		deps/pcsx_rearmed/deps/libchdr/src/libchdr_flac.c
 		deps/pcsx_rearmed/deps/libchdr/src/libchdr_huffman.c
 	)
-	set_target_properties(libchdr PROPERTIES LINKER_LANGUAGE C)
 	target_include_directories(libchdr PUBLIC
 		deps/pcsx_rearmed/deps/libchdr/include
 		deps/pcsx_rearmed/deps/libchdr/include/libchdr
