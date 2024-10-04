@@ -49,6 +49,8 @@
 #define sizeof_field(type, member) \
 	sizeof(((type *)0)->member)
 
+#define BITLL(x)	(1ull << (x))
+
 #define CODEBOOK_AREA_SIZE (256 * 256)
 
 #define NB_CODEBOOKS_4BPP   \
@@ -115,6 +117,7 @@ struct texture_page {
 		pvr_ptr_t tex;
 		struct texture_vq *vq;
 	};
+	uint64_t block_mask;
 };
 
 struct texture_page_16bpp {
@@ -441,18 +444,17 @@ static const void * texture_page_get_addr(unsigned int page_offset)
 	return &gpu.vram[page_x * 64 + page_y * 256 * 1024];
 }
 
-static void load_texture_16bpp(struct texture_page_16bpp *page,
-			       const uint16_t *src)
+static void
+load_block_16bpp(struct texture_page_16bpp *page, const uint16_t *src,
+		 unsigned int x, unsigned int y)
 {
-	alignas(32) uint16_t line[256], mask_line[256];
-	uint16_t px, *mask, *dst;
-	unsigned int x, y;
+	pvr_ptr_t dst = (pvr_ptr_t)(uintptr_t)(page->base.tex + y * 32 * 512 + x * 64);
+	pvr_ptr_t mask = (pvr_ptr_t)(uintptr_t)(page->mask_tex + y * 32 * 512 + x * 64);
+	alignas(32) uint16_t line[32], mask_line[32];
+	uint16_t px;
 
-	dst = (uint16_t *)page->base.tex;
-	mask = (uint16_t *)page->mask_tex;
-
-	for (y = 0; y < 256; y++) {
-		for (x = 0; x < 256; x++) {
+	for (y = 0; y < 32; y++) {
+		for (x = 0; x < 32; x++) {
 			px = bgr_to_rgb(src[x]);
 			line[x] = px;
 			mask_line[x] = px ? px ^ 0x8000 : 0;
@@ -461,33 +463,34 @@ static void load_texture_16bpp(struct texture_page_16bpp *page,
 		pvr_txr_load(line, dst, sizeof(line));
 		pvr_txr_load(mask_line, mask, sizeof(mask_line));
 
-		mask += 256;
-		dst += 256;
+		mask += 512;
+		dst += 512;
 		src += 1024;
 	}
 }
 
-static void load_texture_8bpp(struct texture_page *page, const uint8_t *src)
+static void load_block_8bpp(struct texture_page *page, const uint8_t *src,
+			    unsigned int x, unsigned int y)
 {
-	uint8_t *dst = page->vq->frame;
-	unsigned int y;
+	pvr_ptr_t dst = &page->vq->frame[y * 32 * 256 + x * 32];
 
-	for (y = 0; y < 256; y++) {
-		pvr_txr_load(src, dst, 256);
+	for (y = 0; y < 32; y++) {
+		pvr_txr_load(src, dst, 32);
+
 		src += 2048;
 		dst += 256;
 	}
 }
 
-static void load_texture_4bpp(struct texture_page *page, const uint8_t *src)
+static void load_block_4bpp(struct texture_page *page, const uint8_t *src,
+			    unsigned int x, unsigned int y)
 {
-	uint8_t *dst = page->vq->frame;
-	alignas(32) uint8_t line[256];
-	unsigned int x, y;
+	pvr_ptr_t dst = &page->vq->frame[y * 32 * 256 + x * 32];
+	alignas(32) char line[32];
 	uint8_t px;
 
-	for (y = 0; y < 256; y++) {
-		for (x = 0; x < 256; x += 2) {
+	for (y = 0; y < 32; y++) {
+		for (x = 0; x < 32; x += 2) {
 			px = src[x / 2];
 			line[x + 0] = px & 0xf;
 			line[x + 1] = px >> 4;
@@ -500,17 +503,74 @@ static void load_texture_4bpp(struct texture_page *page, const uint8_t *src)
 	}
 }
 
-static void load_texture(struct texture_page *page,
-			 unsigned int page_offset)
+static void load_block(struct texture_page *page, unsigned int page_offset,
+		       unsigned int x, unsigned int y)
 {
 	const void *src = texture_page_get_addr(page_offset);
 
+	src += y * 32 * 2048 + x * (16 << page->settings.bpp);
+
 	if (page->settings.bpp == TEXTURE_4BPP)
-		load_texture_4bpp(page, src);
+		load_block_4bpp(page, src, x, y);
 	else if (page->settings.bpp == TEXTURE_8BPP)
-		load_texture_8bpp(page, src);
+		load_block_8bpp(page, src, x, y);
 	else
-		load_texture_16bpp(to_texture_page_16bpp(page), src);
+		load_block_16bpp(to_texture_page_16bpp(page), src, x, y);
+}
+
+static void maybe_update_texture(struct texture_page *page,
+				 unsigned int page_offset, uint64_t block_mask)
+{
+	unsigned int idx;
+	uint64_t to_load;
+
+	to_load = ~page->block_mask & block_mask;
+
+	if (to_load) {
+		for (idx = 0; idx < 64; idx++) {
+			if (to_load & BITLL(idx)) {
+				load_block(page, page_offset, idx % 8, idx / 8);
+				page->block_mask |= BITLL(idx);
+			}
+		}
+	}
+}
+
+static uint64_t
+get_block_mask(uint16_t umin, uint16_t umax, uint16_t vmin, uint16_t vmax)
+{
+	uint64_t mask = 0, mask_horiz = 0;
+	uint16_t u, v;
+
+	for (u = umin & -32; u < umax; u += 32)
+		mask_horiz |= BIT((u / 32) % 8);
+
+	for (v = vmin & -32; v < vmax; v += 32)
+		mask |= mask_horiz << (8ull * ((v / 32) % 8));
+
+	return mask;
+}
+
+static uint64_t poly_get_block_mask(const struct poly *poly)
+{
+	uint16_t u, v, umin = 0xffff, vmin = 0xffff, umax = 0, vmax = 0;
+	unsigned int i;
+
+	for (i = 0; i < poly->nb; i++) {
+		u = poly->coords[i].u;
+		v = poly->coords[i].v;
+
+		if (u < umin)
+			umin = u;
+		if (u > umax)
+			umax = u;
+		if (v < vmin)
+			vmin = v;
+		if (v > vmax)
+			vmax = v;
+	}
+
+	return get_block_mask(umin, umax, vmin, vmax);
 }
 
 static void pvr_reap_ptr(pvr_ptr_t tex)
@@ -790,8 +850,8 @@ poly_get_texture_page(const struct poly *poly)
 			}
 		}
 
-		/* Load the texture to VRAM */
-		load_texture(page, poly->texpage_id);
+		/* Init the base fields */
+		page->block_mask = 0;
 	}
 
 	return page;
@@ -808,6 +868,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 	bool check_mask = poly->flags & POLY_CHECK_MASK;
 	uint16_t voffset = 0, zoffset = poly->zoffset;
 	struct texture_page *tex_page;
+	uint64_t block_mask;
 	pvr_poly_cxt_t cxt;
 	pvr_ptr_t tex;
 	int txr_en;
@@ -815,6 +876,9 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 
 	if (poly->flags & POLY_TEXTURED) {
 		tex_page = poly_get_texture_page(poly);
+
+		block_mask = poly_get_block_mask(poly);
+		maybe_update_texture(tex_page, poly->texpage_id, block_mask);
 
 		if (poly->bpp == TEXTURE_16BPP) {
 			tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
