@@ -8,6 +8,7 @@
 #define _GNU_SOURCE 1 // strcasestr
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <strings.h>
 #ifdef __MACH__
@@ -49,6 +50,10 @@
 
 #ifdef _3DS
 #include "3ds/3ds_utils.h"
+#endif
+
+#ifndef MAP_FAILED
+#define MAP_FAILED      ((void *)(intptr_t)-1)
 #endif
 
 #define PORTS_NUMBER 8
@@ -179,7 +184,11 @@ static int negcon_linearity = 1;
 static bool axis_bounds_modifier;
 
 /* PSX max resolution is 640x512, but with enhancement it's 1024x512 */
+#ifdef GPU_NEON
 #define VOUT_MAX_WIDTH  1024
+#else
+#define VOUT_MAX_WIDTH  640
+#endif
 #define VOUT_MAX_HEIGHT 512
 
 //Dummy functions
@@ -383,83 +392,133 @@ out:
 }
 
 #ifdef _3DS
-typedef struct
-{
-   void *buffer;
-   uint32_t target_map;
-   size_t size;
-   enum psxMapTag tag;
-} psx_map_t;
+static u32 mapped_addrs[8];
+static u32 mapped_ram, mapped_ram_src;
 
-psx_map_t custom_psx_maps[] = {
-   { NULL, 0x13000000, 0x210000, MAP_TAG_RAM }, // 0x80000000
-   { NULL, 0x12800000, 0x010000, MAP_TAG_OTHER }, // 0x1f800000
-   { NULL, 0x12c00000, 0x080000, MAP_TAG_OTHER }, // 0x1fc00000
-   { NULL, 0x11000000, 0x800000, MAP_TAG_LUTS }, // 0x08000000
-   { NULL, 0x12000000, 0x201000, MAP_TAG_VRAM }, // 0x00000000
-};
-
-void *pl_3ds_mmap(unsigned long addr, size_t size, int is_fixed,
-    enum psxMapTag tag)
+// http://3dbrew.org/wiki/Memory_layout#ARM11_User-land_memory_regions
+static void *pl_3ds_mmap(unsigned long addr, size_t size,
+    enum psxMapTag tag, int *can_retry_addr)
 {
-   (void)is_fixed;
+   void *ret = MAP_FAILED;
+   *can_retry_addr = 0;
    (void)addr;
 
-   if (__ctr_svchax)
+   if (__ctr_svchax) do
    {
-      psx_map_t *custom_map = custom_psx_maps;
+      // idea from fbalpha2012_neogeo
+      s32 addr = 0x10000000 - 0x1000;
+      u32 found_addr = 0;
+      MemInfo mem_info;
+      PageInfo page_info;
+      size_t i;
+      int r;
 
-      for (; custom_map->size; custom_map++)
+      for (i = 0; i < sizeof(mapped_addrs) / sizeof(mapped_addrs[0]); i++)
+         if (mapped_addrs[i] == 0)
+            break;
+      if (i == sizeof(mapped_addrs) / sizeof(mapped_addrs[0]))
+         break;
+
+      size = (size + 0xfff) & ~0xfff;
+
+      while (addr >= 0x08000000)
       {
-         if ((custom_map->size == size) && (custom_map->tag == tag))
-         {
-            uint32_t ptr_aligned, tmp;
-            void *ret;
+         if ((r = svcQueryMemory(&mem_info, &page_info, addr)) < 0) {
+            LogErr("svcQueryMemory failed: %d\n", r);
+            break;
+         }
 
-            custom_map->buffer = malloc(size + 0x1000);
-            ptr_aligned = (((u32)custom_map->buffer) + 0xFFF) & ~0xFFF;
+         if (mem_info.state == MEMSTATE_FREE && mem_info.size >= size) {
+            found_addr = mem_info.base_addr + mem_info.size - size;
+            break;
+         }
 
-            if (svcControlMemory(&tmp, (void *)custom_map->target_map, (void *)ptr_aligned, size, MEMOP_MAP, 0x3) < 0)
-            {
-               LogErr("could not map memory @0x%08X\n", custom_map->target_map);
-               exit(1);
-            }
+         addr = mem_info.base_addr - 0x1000;
+      }
+      if (found_addr == 0) {
+         LogErr("no addr space for %u bytes\n", size);
+         break;
+      }
 
-            ret = (void *)custom_map->target_map;
-            memset(ret, 0, size);
-            return ret;
+      // https://libctru.devkitpro.org/svc_8h.html#a8046e9b23b1b209a4e278cb1c19c7a5a
+      if ((r = svcControlMemory(&mapped_addrs[i], found_addr, 0, size, MEMOP_ALLOC, MEMPERM_READWRITE)) < 0) {
+         LogErr("svcControlMemory failed for %08x %u: %d\n", found_addr, size, r);
+         break;
+      }
+      if (mapped_addrs[i] == 0) // needed?
+         mapped_addrs[i] = found_addr;
+      ret = (void *)mapped_addrs[i];
+
+      // "round" address helps the dynarec slightly, map ram at 0x13000000
+      if (tag == MAP_TAG_RAM && !mapped_ram) {
+         u32 target = 0x13000000;
+         if ((r = svcControlMemory(&mapped_ram, target, mapped_addrs[i], size, MEMOP_MAP, MEMPERM_READWRITE)) < 0)
+            LogErr("could not map ram %08x -> %08x: %d\n", mapped_addrs[i], target, r);
+         else {
+            mapped_ram_src = mapped_addrs[i];
+            mapped_ram = target;
+            ret = (void *)mapped_ram;
          }
       }
+      memset(ret, 0, size);
+      return ret;
    }
+   while (0);
 
-   return calloc(size, 1);
+   ret = calloc(size, 1);
+   return ret ? ret : MAP_FAILED;
 }
 
-void pl_3ds_munmap(void *ptr, size_t size, enum psxMapTag tag)
+static void pl_3ds_munmap(void *ptr, size_t size, enum psxMapTag tag)
 {
    (void)tag;
 
-   if (__ctr_svchax)
+   if (ptr && __ctr_svchax)
    {
-      psx_map_t *custom_map = custom_psx_maps;
+      size_t i;
+      u32 tmp;
 
-      for (; custom_map->size; custom_map++)
-      {
-         if ((custom_map->target_map == (uint32_t)ptr))
-         {
-            uint32_t ptr_aligned, tmp;
+      size = (size + 0xfff) & ~0xfff;
 
-            ptr_aligned = (((u32)custom_map->buffer) + 0xFFF) & ~0xFFF;
-
-            svcControlMemory(&tmp, (void *)custom_map->target_map, (void *)ptr_aligned, size, MEMOP_UNMAP, 0x3);
-
-            free(custom_map->buffer);
-            custom_map->buffer = NULL;
+      if (ptr == (void *)mapped_ram) {
+         svcControlMemory(&tmp, mapped_ram, mapped_ram_src, size, MEMOP_UNMAP, 0);
+         ptr = (void *)mapped_ram_src;
+         mapped_ram = mapped_ram_src = 0;
+      }
+      for (i = 0; i < sizeof(mapped_addrs) / sizeof(mapped_addrs[0]); i++) {
+         if (ptr == (void *)mapped_addrs[i]) {
+            svcControlMemory(&tmp, mapped_addrs[i], 0, size, MEMOP_FREE, 0);
+            mapped_addrs[i] = 0;
             return;
          }
       }
    }
 
+   free(ptr);
+}
+#endif
+
+#ifdef HAVE_LIBNX
+static void *pl_switch_mmap(unsigned long addr, size_t size,
+    enum psxMapTag tag, int *can_retry_addr)
+{
+   void *ret = MAP_FAILED;
+   *can_retry_addr = 0;
+   (void)addr;
+
+   // there's svcMapPhysicalMemory() but user logs show it doesn't hand out
+   // any desired addresses, so don't even bother
+   ret = aligned_alloc(0x1000, size);
+   if (!ret)
+      return MAP_FAILED;
+   memset(ret, 0, size);
+   return ret;
+}
+
+static void pl_switch_munmap(void *ptr, size_t size, enum psxMapTag tag)
+{
+   (void)size;
+   (void)tag;
    free(ptr);
 }
 #endif
@@ -475,7 +534,7 @@ typedef struct
 
 static void *addr = NULL;
 
-psx_map_t custom_psx_maps[] = {
+static psx_map_t custom_psx_maps[] = {
    { NULL, 0x800000, MAP_TAG_LUTS },
    { NULL, 0x080000, MAP_TAG_OTHER },
    { NULL, 0x010000, MAP_TAG_OTHER },
@@ -484,7 +543,7 @@ psx_map_t custom_psx_maps[] = {
    { NULL, 0x210000, MAP_TAG_RAM },
 };
 
-int init_vita_mmap()
+static int init_vita_mmap()
 {
    int n;
    void *tmpaddr;
@@ -507,7 +566,7 @@ int init_vita_mmap()
    return 0;
 }
 
-void deinit_vita_mmap()
+static void deinit_vita_mmap()
 {
    size_t i;
    for (i = 0; i < sizeof(custom_psx_maps) / sizeof(custom_psx_maps[0]); i++) {
@@ -517,11 +576,12 @@ void deinit_vita_mmap()
    free(addr);
 }
 
-void *pl_vita_mmap(unsigned long addr, size_t size, int is_fixed,
-    enum psxMapTag tag)
+static void *pl_vita_mmap(unsigned long addr, size_t size,
+    enum psxMapTag tag, int *can_retry_addr)
 {
-   (void)is_fixed;
+   void *ret;
    (void)addr;
+   *can_retry_addr = 0;
 
    psx_map_t *custom_map = custom_psx_maps;
 
@@ -534,10 +594,11 @@ void *pl_vita_mmap(unsigned long addr, size_t size, int is_fixed,
       }
    }
 
-   return calloc(size, 1);
+   ret = calloc(size, 1);
+   return ret ? ret : MAP_FAILED;
 }
 
-void pl_vita_munmap(void *ptr, size_t size, enum psxMapTag tag)
+static void pl_vita_munmap(void *ptr, size_t size, enum psxMapTag tag)
 {
    (void)tag;
 
@@ -555,6 +616,21 @@ void pl_vita_munmap(void *ptr, size_t size, enum psxMapTag tag)
    free(ptr);
 }
 #endif
+
+static void log_mem_usage(void)
+{
+#ifdef _3DS
+   extern u32 __heap_size, __linear_heap_size, __stacksize__;
+   extern char __end__; // 3dsx.ld
+   u32 app_memory = *((volatile u32 *)0x1FF80040);
+   s64 mem_used = 0;
+   if (__ctr_svchax)
+      svcGetSystemInfo(&mem_used, 0, 1);
+
+   SysPrintf("mem: %d/%d heap: %d linear: %d stack: %d exe: %d\n", (int)mem_used, app_memory,
+         __heap_size, __linear_heap_size, __stacksize__, (int)&__end__ - 0x100000);
+#endif
+}
 
 static void *pl_mmap(unsigned int size)
 {
@@ -1851,17 +1927,21 @@ strcasestr(const char *s, const char *find)
 
 static void set_retro_memmap(void)
 {
-#ifndef NDEBUG
+   uint64_t flags_ram = RETRO_MEMDESC_SYSTEM_RAM;
    struct retro_memory_map retromap = { 0 };
-   struct retro_memory_descriptor mmap = {
-      0, psxM, 0, 0, 0, 0, 0x200000
+   struct retro_memory_descriptor descs[] = {
+      { flags_ram, psxM, 0, 0x00000000, 0x5fe00000, 0, 0x200000 },
+      { flags_ram, psxH, 0, 0x1f800000, 0x7ffffc00, 0, 0x000400 },
+      // not ram but let the frontend patch it if it wants; should be last
+      { flags_ram, psxR, 0, 0x1fc00000, 0x5ff80000, 0, 0x080000 },
    };
 
-   retromap.descriptors = &mmap;
-   retromap.num_descriptors = 1;
+   retromap.descriptors = descs;
+   retromap.num_descriptors = sizeof(descs) / sizeof(descs[0]);
+   if (Config.HLE)
+      retromap.num_descriptors--;
 
    environ_cb(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &retromap);
-#endif
 }
 
 static void show_notification(const char *msg_str,
@@ -1950,8 +2030,7 @@ bool retro_load_game(const struct retro_game_info *info)
 {
    size_t i;
    unsigned int cd_index = 0;
-   bool is_m3u = (strcasestr(info->path, ".m3u") != NULL);
-   bool is_exe = (strcasestr(info->path, ".exe") != NULL);
+   bool is_m3u, is_exe;
    int ret;
 
    struct retro_input_descriptor desc[] = {
@@ -2011,6 +2090,8 @@ bool retro_load_game(const struct retro_game_info *info)
       LogErr("info->path required\n");
       return false;
    }
+   is_m3u = (strcasestr(info->path, ".m3u") != NULL);
+   is_exe = (strcasestr(info->path, ".exe") != NULL);
 
    update_variables(false);
 
@@ -2188,6 +2269,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    set_retro_memmap();
    retro_set_audio_buff_status_cb();
+   log_mem_usage();
 
    if (check_unsatisfied_libcrypt())
       show_notification("LibCrypt protected game with missing SBI detected", 3000, 3);
@@ -2453,7 +2535,7 @@ static void update_variables(bool in_flight)
    }
 
    var.value = NULL;
-   var.key = "pcsx_rearmed_neon_enhancement_tex_adj";
+   var.key = "pcsx_rearmed_neon_enhancement_tex_adj_v2";
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
@@ -3725,6 +3807,8 @@ void retro_init(void)
    struct retro_rumble_interface rumble;
    int ret;
 
+   log_mem_usage();
+
    msg_interface_version = 0;
    environ_cb(RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION, &msg_interface_version);
 
@@ -3733,11 +3817,13 @@ void retro_init(void)
    syscall(SYS_ptrace, 0 /*PTRACE_TRACEME*/, 0, 0, 0);
 #endif
 
-#ifdef _3DS
+#if defined(_3DS)
    psxMapHook = pl_3ds_mmap;
    psxUnmapHook = pl_3ds_munmap;
-#endif
-#ifdef VITA
+#elif defined(HAVE_LIBNX)
+   psxMapHook = pl_switch_mmap;
+   psxUnmapHook = pl_switch_munmap;
+#elif defined(VITA)
    if (init_vita_mmap() < 0)
       abort();
    psxMapHook = pl_vita_mmap;
@@ -3762,12 +3848,17 @@ void retro_init(void)
    vout_buf = linearMemAlign(VOUT_MAX_WIDTH * VOUT_MAX_HEIGHT * 2, 0x80);
 #elif defined(_POSIX_C_SOURCE) && (_POSIX_C_SOURCE >= 200112L) && P_HAVE_POSIX_MEMALIGN
    if (posix_memalign(&vout_buf, 16, VOUT_MAX_WIDTH * VOUT_MAX_HEIGHT * 2) != 0)
-      vout_buf = (void *) 0;
+      vout_buf = NULL;
    else
       memset(vout_buf, 0, VOUT_MAX_WIDTH * VOUT_MAX_HEIGHT * 2);
 #else
    vout_buf = calloc(VOUT_MAX_WIDTH * VOUT_MAX_HEIGHT, 2);
 #endif
+   if (vout_buf == NULL)
+   {
+      LogErr("OOM for vout_buf.\n");
+      // may be able to continue if we get retro_framebuffer access
+   }
 
    vout_buf_ptr = vout_buf;
 

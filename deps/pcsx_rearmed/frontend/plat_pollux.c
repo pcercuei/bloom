@@ -410,13 +410,14 @@ void plat_gvideo_close(void)
 {
 }
 
-static void *pl_emu_mmap(unsigned long addr, size_t size, int is_fixed,
-	enum psxMapTag tag)
+static void *pl_emu_mmap(unsigned long addr, size_t size,
+	enum psxMapTag tag, int *can_retry_addr)
 {
 	unsigned int pbase;
 	void *retval;
 	int ret;
 
+	*can_retry_addr = 1;
 	if (!have_warm)
 		goto basic_map;
 
@@ -474,12 +475,12 @@ static void *pl_emu_mmap(unsigned long addr, size_t size, int is_fixed,
 	}
 
 basic_map:
-	retval = plat_mmap(addr, size, 0, is_fixed);
+	retval = plat_mmap(addr, size, 0, 0);
 
 out:
-	if (tag == MAP_TAG_VRAM)
+	if (tag == MAP_TAG_VRAM && retval)
 		psx_vram = retval;
-	return retval;
+	return retval ? retval : MAP_FAILED;
 }
 
 static void pl_emu_munmap(void *ptr, size_t size, enum psxMapTag tag)
