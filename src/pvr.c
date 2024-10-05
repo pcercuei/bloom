@@ -125,6 +125,7 @@ struct texture_page {
 		struct texture_vq *vq;
 	};
 	uint64_t block_mask;
+	uint64_t inuse_mask;
 };
 
 struct texture_page_16bpp {
@@ -644,31 +645,29 @@ static void pvr_reap_ptr(pvr_ptr_t tex)
 	pvr.reap_list[pvr.reap_bank][idx] = tex;
 }
 
-static void invalidate_textures(unsigned int page_offset)
+static void discard_texture_page(struct texture_page *page)
 {
-	if (pvr.textures16[page_offset].base.tex) {
-		pvr_reap_ptr(pvr.textures16[page_offset].mask_tex);
-		pvr.textures16[page_offset].mask_tex = NULL;
+	if (page->settings.bpp == TEXTURE_16BPP)
+		pvr_reap_ptr(to_texture_page_16bpp(page)->mask_tex);
 
-		pvr_reap_ptr(pvr.textures16[page_offset].base.tex);
-		pvr.textures16[page_offset].base.tex = NULL;
+	pvr_reap_ptr(page->tex);
+	page->tex = NULL;
+}
 
-		pvr.textures16[page_offset].base.inval_counter = pvr.inval_counter;
+static void invalidate_texture(struct texture_page *page, uint64_t block_mask)
+{
+	if (page->block_mask) {
+		page->block_mask &= ~block_mask;
+
+		/* If we cleared all texture blocks, we can toss away the page.
+		 * If we cleared a texture block that was already used for this
+		 * frame, we have to make sure that it won't be overwritten, so
+		 * create a new texture page as well. */
+		if (!page->block_mask || (page->inuse_mask & block_mask))
+			discard_texture_page(page);
 	}
 
-	if (pvr.textures8[page_offset].base.tex) {
-		pvr_reap_ptr(pvr.textures8[page_offset].base.tex);
-		pvr.textures8[page_offset].base.tex = NULL;
-
-		pvr.textures8[page_offset].base.inval_counter = pvr.inval_counter;
-	}
-
-	if (pvr.textures4[page_offset].base.tex) {
-		pvr_reap_ptr(pvr.textures4[page_offset].base.tex);
-		pvr.textures4[page_offset].base.tex = NULL;
-
-		pvr.textures4[page_offset].base.inval_counter = pvr.inval_counter;
-	}
+	page->inval_counter = pvr.inval_counter;
 }
 
 void invalidate_all_textures(void)
@@ -677,8 +676,11 @@ void invalidate_all_textures(void)
 
 	pvr.inval_counter++;
 
-	for (i = 0; i < 32; i++)
-		invalidate_textures(i);
+	for (i = 0; i < 32; i++) {
+		invalidate_texture(&pvr.textures16[i].base, UINT64_MAX);
+		invalidate_texture(&pvr.textures8[i].base, UINT64_MAX);
+		invalidate_texture(&pvr.textures4[i].base, UINT64_MAX);
+	}
 
 	pvr_reap_textures();
 
@@ -686,31 +688,87 @@ void invalidate_all_textures(void)
 	pvr_reap_textures();
 }
 
+static void invalidate_texture4_area(unsigned int page_offset,
+				     uint64_t block_mask)
+{
+	invalidate_texture(&pvr.textures4[page_offset].base, block_mask);
+}
+
+static void invalidate_texture8_area(unsigned int page_offset,
+				     uint64_t block_mask)
+{
+	invalidate_texture(&pvr.textures8[page_offset].base, block_mask);
+
+	if (likely(page_offset > 0)) {
+		/* 8bpp textures overlap; we also need to invalidate the previous page */
+		invalidate_texture(&pvr.textures8[page_offset - 1].base,
+				   block_mask << 4);
+	}
+}
+
+static void invalidate_texture16_area(unsigned int page_offset,
+				      uint64_t block_mask)
+{
+	invalidate_texture(&pvr.textures16[page_offset].base, block_mask);
+
+	if (likely(page_offset > 0)) {
+		/* 16bpp textures overlap; we have to also invalidate the three previous pages */
+		invalidate_texture(&pvr.textures16[page_offset - 1].base,
+				   block_mask << 2);
+	}
+
+	if (likely(page_offset > 1)) {
+		invalidate_texture(&pvr.textures16[page_offset - 2].base,
+				   block_mask << 4);
+	}
+
+	if (likely(page_offset > 2)) {
+		invalidate_texture(&pvr.textures16[page_offset - 3].base,
+				   block_mask << 6);
+	}
+}
+
+static void invalidate_texture_area(unsigned int page_offset,
+				    uint16_t umin, uint16_t umax,
+				    uint16_t vmin, uint16_t vmax)
+{
+	uint64_t block_mask;
+
+	block_mask = get_block_mask(umin, umax, vmin, vmax);
+	invalidate_texture16_area(page_offset, block_mask);
+
+	block_mask = get_block_mask(umin << 1, umax << 1, vmin, vmax);
+	invalidate_texture8_area(page_offset, block_mask);
+
+	block_mask = get_block_mask(umin << 2, umax << 2, vmin, vmax);
+	invalidate_texture4_area(page_offset, block_mask);
+}
+
 void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 {
 	unsigned int x2, y2, dx, dy, page_offset;
+	uint16_t umin, umax, vmin, vmax;
 
 	pvr.inval_counter++;
 
-	/* Compute bottom-right point coordinates, aligned */
-	x2 = (unsigned int)((x + w + 63) & -64);
-	y2 = (unsigned int)((y + h + 255) & -256);
+	/* Compute bottom-right point coordinates */
+	x2 = x + w;
+	y2 = y + h;
 
-	/* Align top-left point coordinates */
-	x &= -64;
-	y &= -256;
-
-	/* Texture pages overlap, so we actually have to invalidate three
-	 * pages before the one pointed by the aligned x/y coordinates */
-	if (unlikely(x < 192))
-		x = 0;
-	else
-		x -= 192;
-
-	for (dy = y; dy < y2; dy += 256) {
-		for (dx = x; dx < x2; dx += 64) {
+	for (dy = y & -256; dy < y2; dy += 256) {
+		for (dx = x & -64; dx < x2; dx += 64) {
+			/* Compute U/V and W/H coordinates of each
+			 * page covered by the update coordinates.
+			 * Note that the coordinates are in 16-bit
+			 * words and not in pixels. */
+			umin = max32(dx, x) & 63;
+			vmin = max32(dy, y) & 255;
+			umax = min32(63, x2 - dx);
+			vmax = min32(255, y2 - dy);
 			page_offset = (dy >> 4) + (dx >> 6);
-			invalidate_textures(page_offset);
+
+			invalidate_texture_area(page_offset,
+						umin, umax, vmin, vmax);
 		}
 	}
 
@@ -918,6 +976,7 @@ poly_get_texture_page(const struct poly *poly)
 
 		/* Init the base fields */
 		page->block_mask = 0;
+		page->inuse_mask = 0;
 	}
 
 	return page;
@@ -994,6 +1053,8 @@ static void poly_draw_now(const struct poly *poly)
 
 		block_mask = poly_get_block_mask(poly);
 		to_load = ~tex_page->block_mask & block_mask;
+
+		tex_page->inuse_mask |= block_mask;
 
 		if (unlikely(to_load))
 			update_texture(tex_page, poly->texpage_id, to_load);
@@ -1942,6 +2003,24 @@ out:
 	return list - list_start;
 }
 
+static void reset_texture_page(struct texture_page *page)
+{
+	if (page->tex) {
+		page->inuse_mask = 0;
+	}
+}
+
+static void reset_texture_pages(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < 32; i++) {
+		reset_texture_page(&pvr.textures16[i].base);
+		reset_texture_page(&pvr.textures8[i].base);
+		reset_texture_page(&pvr.textures4[i].base);
+	}
+}
+
 void hw_render_start(void)
 {
 	pvr.new_frame = 1;
@@ -1950,6 +2029,8 @@ void hw_render_start(void)
 	pvr.inval_counter_at_start = pvr.inval_counter;
 	pvr.cmdbuf_offt = 0;
 	pvr.old_blending_is_none = false;
+
+	reset_texture_pages();
 
 	/* Reset lists */
 	if (WITH_HYBRID_RENDERING) {
