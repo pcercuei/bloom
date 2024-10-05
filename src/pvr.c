@@ -761,7 +761,7 @@ static void load_mask_texture(struct texture_page *page,
 			 tex_fmt, tex_width, tex_height,
 			 mask_tex, PVR_FILTER_NONE);
 
-	mask_cxt.gen.culling = PVR_CULLING_NONE;
+	mask_cxt.gen.culling = PVR_CULLING_SMALL;
 	mask_cxt.depth.write = PVR_DEPTHWRITE_ENABLE;
 
 	if (pvr.check_mask)
@@ -807,7 +807,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 	unsigned int i;
 	int txr_en;
 
-	cxt->gen.culling = PVR_CULLING_NONE;
+	cxt->gen.culling = PVR_CULLING_SMALL;
 	cxt->depth.write = PVR_DEPTHWRITE_ENABLE;
 
 	if (pvr.check_mask)
@@ -1047,7 +1047,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
 
 	cxt.gen.alpha = PVR_ALPHA_DISABLE;
-	cxt.gen.culling = PVR_CULLING_NONE;
+	cxt.gen.culling = PVR_CULLING_SMALL;
 	cxt.depth.write = PVR_DEPTHWRITE_ENABLE;
 
 	if (pvr.check_mask)
@@ -1163,7 +1163,7 @@ static void cmd_clear_image(union PacketBuffer *pbuffer)
 		pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
 
 		cxt.gen.alpha = PVR_ALPHA_DISABLE;
-		cxt.gen.culling = PVR_CULLING_NONE;
+		cxt.gen.culling = PVR_CULLING_SMALL;
 		cxt.depth.write = PVR_DEPTHWRITE_ENABLE;
 		cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
 
@@ -1366,14 +1366,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 			if (textured && !raw_tex && !bright) {
 				for (i = 0; i < nb; i++)
 					colors[i] = get_tex_vertex_color(colors[i]);
-			}
-
-			if (!multiple
-			    && ((xcoords[0] == xcoords[1] && ycoords[0] == ycoords[1])
-				|| (xcoords[0] == xcoords[2] && ycoords[0] == ycoords[2])
-				|| (xcoords[1] == xcoords[2] && ycoords[1] == ycoords[2]))) {
-				/* Cull degenerate polys */
-				break;
 			}
 
 			if (textured) {
