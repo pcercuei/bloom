@@ -15,7 +15,33 @@ if (NOT CMAKE_BUILD_TYPE)
 endif()
 
 if (CMAKE_BUILD_TYPE STREQUAL Debug)
-	set(WITH_GDB ON)
+	option(WITH_GDB "Enable GDB support" OFF)
+	option(WITH_PROFILER "Enable profiler" OFF)
+
+	if (WITH_PROFILER)
+		list(APPEND EXCLUDED_FUNCTIONS
+			get_next_block_func
+			lightrec_execute
+			lightrec_plugin_execute_internal
+			lightrec_plugin_execute_block
+			gen_interupt
+			irq_test
+			schedule_timeslice
+			lightrec_exit_flags
+			lut_read
+			lut_is_32bit
+			lut_address
+			lightrec_tansition_to_pcsx
+			lightrec_reset_cycle_count
+			lightrec_current_cycle_count
+		)
+
+		string(REPLACE ";" "," EXCLUDED_FUNCTIONS "${EXCLUDED_FUNCTIONS}")
+
+		add_compile_options(-g -finstrument-functions
+			-finstrument-functions-exclude-function-list=${EXCLUDED_FUNCTIONS}
+		)
+	endif()
 endif()
 
 find_library(PARALLAX_LIBRARIES parallax REQUIRED)
@@ -229,6 +255,10 @@ target_link_libraries(bloom PUBLIC libpcsxcore gpu spu tsunami
 	#lightning lightrec libpcsxcore gpu spu
 	#${ZLIB_LIBRARIES} tsunami parallax
 )
+
+if (WITH_PROFILER)
+	target_sources(bloom PRIVATE deps/dcprofiler/profiler.c)
+endif()
 
 option(WITH_CDROM_DMA "Read CD-ROM sectors using DMA" ON)
 

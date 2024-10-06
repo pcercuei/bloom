@@ -17,6 +17,7 @@
 #cmakedefine01 WITH_CHD
 #cmakedefine01 WITH_IDE
 #cmakedefine01 WITH_SDCARD
+#cmakedefine01 WITH_PROFILER
 #cmakedefine01 HARDWARE_ACCELERATED
 #cmakedefine01 ENABLE_THREADED_RENDERER
 #cmakedefine01 WITH_GDB
