@@ -109,7 +109,11 @@ int lightrec_init_mmap(void)
 	psxM = (s8 *)(_arch_mem_top + 0xa0000);
 	code_buffer = (void *)(_arch_mem_top + 0x2a0000);
 
-	SET_MMUCR(0x3f, 0, 0, 1, 1, 1);
+	SET_MMUCR(0x3e, 0x3e, 1, 0, 1, 1);
+	map_page(NULL, 0xe0000000, PAGE_SIZE_1M, PAGE_PROT_RW, false);
+	SET_MMUCR(0x3f, 0x3f, 1, 0, 1, 1);
+	map_page(NULL, 0xe0100000, PAGE_SIZE_1M, PAGE_PROT_RW, false);
+	SET_MMUCR(0x3d, 0, 1, 0, 1, 1);
 
 	mmu_reset_itlb();
 
