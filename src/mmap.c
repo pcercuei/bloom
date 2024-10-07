@@ -72,7 +72,7 @@ enum page_prot {
 static const unsigned int page_mask[] = { 0x3ff, 0xfff, 0xffff, 0xfffff };
 
 static int map_page(void *ptr, uint32_t virt_addr,
-		    enum page_size size, enum page_prot prot)
+		    enum page_size size, enum page_prot prot, bool cached)
 {
 	uint32_t phys_addr = (uint32_t)ptr;
 
@@ -80,7 +80,7 @@ static int map_page(void *ptr, uint32_t virt_addr,
 		return -EINVAL;
 
 	SET_PTEH(virt_addr, 0);
-	SET_PTEL(phys_addr, 1, size, prot, 1, 1, 0, 0);
+	SET_PTEL(phys_addr, 1, size, prot, cached, 1, 0, 0);
 	asm inline("ldtlb");
 
 	INCR_URC();
@@ -122,13 +122,15 @@ int lightrec_init_mmap(void)
 
 	for (i = 0; i < 4; i++) {
 		/* Map first 1 MiB page of RAM mirror */
-		err = map_page(psxM, OFFSET + 0x200000 * i, PAGE_SIZE_1M, PAGE_PROT_RW);
+		err = map_page(psxM, OFFSET + 0x200000 * i,
+			       PAGE_SIZE_1M, PAGE_PROT_RW, true);
 		if (err)
 			goto handle_err;
 
 		/* Map second 1 MiB page of RAM mirror */
 		err = map_page(psxM + 0x100000,
-			       OFFSET + 0x200000 * i + 0x100000, PAGE_SIZE_1M, PAGE_PROT_RW);
+			       OFFSET + 0x200000 * i + 0x100000,
+			       PAGE_SIZE_1M, PAGE_PROT_RW, true);
 		if (err)
 			goto handle_err;
 	}
@@ -137,14 +139,16 @@ int lightrec_init_mmap(void)
 
 	/* Map Scratchpad + I/O using one 64 KiB page */
 	err = map_page(psxH,
-		       OFFSET + 0x1f800000, PAGE_SIZE_64K, PAGE_PROT_RW);
+		       OFFSET + 0x1f800000,
+		       PAGE_SIZE_64K, PAGE_PROT_RW, true);
 	if (err)
 		goto handle_err;
 
 	printf("Scratchpad / IO mapped\n");
 
 	/* Map parallel port using one 64 KiB page */
-	err = map_page(psxP, OFFSET + 0x1f000000, PAGE_SIZE_64K, PAGE_PROT_RW);
+	err = map_page(psxP, OFFSET + 0x1f000000,
+		       PAGE_SIZE_64K, PAGE_PROT_RW, true);
 	if (err)
 		goto handle_err;
 
@@ -154,7 +158,7 @@ int lightrec_init_mmap(void)
 	for (i = 0; i < 8; i++) {
 		err = map_page(psxR + i * 0x10000,
 			       OFFSET + 0x1fc00000 + i * 0x10000,
-			       PAGE_SIZE_64K, PAGE_PROT_RW);
+			       PAGE_SIZE_64K, PAGE_PROT_RW, true);
 		if (err)
 			goto handle_err;
 	}
