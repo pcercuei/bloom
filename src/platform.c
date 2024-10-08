@@ -23,7 +23,6 @@
 #include "bloom-config.h"
 #include "emu.h"
 #include "pvr.h"
-#include "vmu.h"
 
 #define BIT(x) (1 << (x))
 
@@ -273,7 +272,8 @@ static void dc_vout_flip(const void *vram, int stride, int bgr24,
 	}
 
 	if (new_timer > (timer_ms + 1000)) {
-		vmu_print_info((float)frames, screen_w, screen_h, screen_bpp);
+		vmu_printf("\n FPS: %5.1f\n\n %ux%u-%u", (float)frames,
+			   screen_w, screen_h, screen_bpp);
 
 		timer_ms = new_timer;
 		frames = 0;
