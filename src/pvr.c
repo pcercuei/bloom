@@ -713,7 +713,7 @@ static void load_mask_texture(struct texture_page *page,
 			      unsigned int codebook,
 			      const float *xcoords, const float *ycoords,
 			      const float *ucoords, const float *vcoords,
-			      unsigned int nb, bool is_sub)
+			      unsigned int nb)
 {
 	unsigned int tex_fmt, tex_width, tex_height;
 	struct texture_vq *vq;
@@ -769,27 +769,15 @@ static void load_mask_texture(struct texture_page *page,
 	else
 		mask_cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
 
-	if (is_sub) {
-		/* If we had a substraction blending, the accumulation buffer's
-		 * alpha bits are all zero. Just blend the source texture
-		 * modulated with 0xff000000 (to clear its RGB bits) 1:1 with
-		 * the accumulation buffer, so that the alpha bits are copied
-		 * there. */
-		mask_cxt.gen.alpha = PVR_ALPHA_DISABLE;
-		mask_cxt.blend.src = PVR_BLEND_ONE;
-		mask_cxt.blend.dst = PVR_BLEND_ONE;
-		mask_cxt.txr.env = PVR_TXRENV_MODULATE;
-	} else {
-		/* Otherwise, the accumulation buffer's alpha bits are all ones.
-		 * Use offset color 0x00ffffff on the source texture and
-		 * multiply the result with the accumulation buffer's pixels,
-		 * so that the source alpha bits are copied there. */
-		mask_cxt.gen.specular = PVR_SPECULAR_ENABLE;
-		mask_cxt.gen.alpha = PVR_ALPHA_DISABLE;
-		mask_cxt.blend.src = PVR_BLEND_DESTCOLOR;
-		mask_cxt.blend.dst = PVR_BLEND_ZERO;
-		mask_cxt.txr.env = PVR_TXRENV_REPLACE;
-	}
+	/* The accumulation buffer's alpha bits are all ones.
+	 * Use offset color 0x00ffffff on the source texture and
+	 * multiply the result with the accumulation buffer's pixels,
+	 * so that the source alpha bits are copied there. */
+	mask_cxt.gen.specular = PVR_SPECULAR_ENABLE;
+	mask_cxt.gen.alpha = PVR_ALPHA_DISABLE;
+	mask_cxt.blend.src = PVR_BLEND_DESTCOLOR;
+	mask_cxt.blend.dst = PVR_BLEND_ZERO;
+	mask_cxt.txr.env = PVR_TXRENV_REPLACE;
 
 	draw_prim(&mask_cxt, xcoords, ycoords,
 		  ucoords, vcoords, colors, nb, 0x00ffffff);
@@ -897,7 +885,8 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
 
-		cxt->blend.src = PVR_BLEND_SRCALPHA;
+		cxt->gen.alpha = PVR_ALPHA_ENABLE;
+		cxt->blend.src = PVR_BLEND_ONE;
 		cxt->blend.dst = PVR_BLEND_ONE;
 		cxt->txr.enable = txr_en;
 
@@ -909,7 +898,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 		}
 
-		cxt->gen.alpha = PVR_ALPHA_ENABLE;
+		cxt->gen.alpha = PVR_ALPHA_DISABLE;
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
 		cxt->txr.enable = PVR_TEXTURE_DISABLE;
@@ -991,8 +980,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 	if (tex_page) {
 		load_mask_texture(tex_page, codebook, xcoords, ycoords,
-				  ucoords, vcoords, nb,
-				  blending_mode == BLENDING_MODE_SUB);
+				  ucoords, vcoords, nb);
 
 		/* Copy back opaque non-semi-transparent pixels from the
 		 * source texture to the destination. */
