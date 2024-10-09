@@ -10,9 +10,6 @@
 #include <stdint.h>
 #include <stdio.h>
 
-/* Currently not working with my CF adapter */
-#define IDE_USE_DMA 0
-
 static kos_blockdev_t rv;
 
 void ide_init(void)
@@ -24,7 +21,7 @@ void ide_init(void)
 	if (err)
 		return;
 
-	err = g1_ata_blockdev_for_partition(0, IDE_USE_DMA, &rv, &type);
+	err = g1_ata_blockdev_for_partition(0, 1, &rv, &type);
 	if (err)
 		return;
 
