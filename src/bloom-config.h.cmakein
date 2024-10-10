@@ -19,5 +19,6 @@
 
 #cmakedefine01 WITH_FSAA
 #cmakedefine01 WITH_24BPP
+#cmakedefine01 WITH_BILINEAR
 
 #endif /* BLOOM_CONFIG_H */

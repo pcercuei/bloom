@@ -17,6 +17,7 @@
 
 #include <kos/string.h>
 
+#include "bloom-config.h"
 #include "pvr.h"
 
 #define FRAME_WIDTH 1024
@@ -40,6 +41,8 @@
 	((CODEBOOK_AREA_SIZE - 2048) / sizeof(struct pvr_vq_codebook_4bpp))
 #define NB_CODEBOOKS_8BPP   \
 	(CODEBOOK_AREA_SIZE / sizeof(struct pvr_vq_codebook_8bpp))
+
+#define FILTER_MODE (WITH_BILINEAR ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE)
 
 union PacketBuffer {
 	uint32_t U4[16];
@@ -759,7 +762,7 @@ static void load_mask_texture(struct texture_page *page,
 
 	pvr_poly_cxt_txr(&mask_cxt, PVR_LIST_TR_POLY,
 			 tex_fmt, tex_width, tex_height,
-			 mask_tex, PVR_FILTER_NONE);
+			 mask_tex, FILTER_MODE);
 
 	mask_cxt.gen.culling = PVR_CULLING_SMALL;
 	mask_cxt.depth.write = PVR_DEPTHWRITE_ENABLE;
@@ -1114,7 +1117,7 @@ static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
 	}
 
 	pvr_poly_cxt_txr(cxt, PVR_LIST_TR_POLY, tex_fmt,
-			 tex_width, tex_height, tex, PVR_FILTER_NONE);
+			 tex_width, tex_height, tex, FILTER_MODE);
 }
 
 static bool overlap_draw_area(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
