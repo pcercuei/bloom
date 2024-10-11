@@ -118,15 +118,22 @@ static pvr_init_params_t pvr_init_params_fsaa = {
 
 int main(int argc, char **argv)
 {
+	enum vid_display_mode_generic video_mode;
+
 	if (WITH_IDE)
 		ide_init();
 	if (WITH_SDCARD)
 		sdcard_init();
 
-	if (WITH_24BPP)
-		vid_set_mode(DM_640x480, PM_RGB888P); /* 24-bit */
+	if (WITH_480P)
+		video_mode = DM_640x480;
 	else
-		vid_set_mode(DM_640x480, PM_RGB565); /* 16-bit */
+		video_mode = DM_320x240;
+
+	if (WITH_24BPP)
+		vid_set_mode(video_mode, PM_RGB888P); /* 24-bit */
+	else
+		vid_set_mode(video_mode, PM_RGB565); /* 16-bit */
 
 	pvr_init_defaults();
 

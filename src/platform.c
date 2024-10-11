@@ -85,16 +85,20 @@ static void dc_vout_close(void)
 
 static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 {
+	float width, height;
+
 	if (!started)
 		return;
 
+	width = WITH_480P ? 640.0f : 320.0f;
+	height = WITH_480P ? 480.0f : 240.0f;
 	screen_w = raw_w;
 	screen_h = raw_h;
 	screen_bpp = bpp;
 
 	/* Use 1280x480 when using FSAA */
-	screen_fw = (float)(640 * (1 + WITH_FSAA)) / (float)raw_w;
-	screen_fh = 480.0f / (float)raw_h;
+	screen_fw = width * (float)(1 + WITH_FSAA) / (float)raw_w;
+	screen_fh = height / (float)raw_h;
 }
 
 static inline void copy15(const uint16_t *vram, int stride, int w, int h)
