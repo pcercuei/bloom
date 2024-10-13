@@ -686,8 +686,6 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 		pvr.new_frame = 0;
 	}
 
-	sq_lock((void *)PVR_TA_INPUT);
-
 	hdr = (void *)pvr_dr_target(pvr.dr_state);
 	pvr_poly_compile(hdr, cxt);
 	pvr_dr_commit(hdr);
@@ -708,8 +706,6 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 
 		pvr_dr_commit(vert);
 	}
-
-	sq_unlock();
 }
 
 static void load_mask_texture(struct texture_page *page,
