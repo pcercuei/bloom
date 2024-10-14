@@ -634,12 +634,12 @@ static inline float y_to_pvr(int16_t y)
 
 static inline float u_to_pvr(uint16_t u)
 {
-	return (float)u / 256.0f;
+	return (float)u / 256.0f + 1.0f / 2048.0f;
 }
 
 static inline float v_to_pvr(uint16_t v)
 {
-	return (float)v / 512.0f;
+	return (float)v / 512.0f + 1.0f / 32768.0f;
 }
 
 static float get_zvalue(void)
