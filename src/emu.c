@@ -161,7 +161,7 @@ int main(int argc, char **argv)
 	else
 		vid_set_mode(video_mode, PM_RGB565); /* 16-bit */
 
-	/* Re-init PVR with translucent polygon autosort, and optional FSAA */
+	/* Re-init PVR without translucent polygon autosort, and optional FSAA */
 	pvr_init(&pvr_init_params_fsaa);
 
 	PVR_SET(PVR_OBJECT_CLIP, 0.00001f);
