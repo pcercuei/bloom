@@ -125,15 +125,7 @@ int main(int argc, char **argv)
 	if (WITH_SDCARD)
 		sdcard_init();
 
-	if (WITH_480P)
-		video_mode = DM_640x480;
-	else
-		video_mode = DM_320x240;
-
-	if (WITH_24BPP)
-		vid_set_mode(video_mode, PM_RGB888P); /* 24-bit */
-	else
-		vid_set_mode(video_mode, PM_RGB565); /* 16-bit */
+	vid_set_mode(DM_640x480, PM_RGB888P);
 
 	pvr_init_defaults();
 
@@ -157,9 +149,19 @@ int main(int argc, char **argv)
 		runMenu();
 
 	ClosePlugins();
+	pvr_shutdown();
+
+	if (WITH_480P)
+		video_mode = DM_640x480;
+	else
+		video_mode = DM_320x240;
+
+	if (WITH_24BPP)
+		vid_set_mode(video_mode, PM_RGB888P); /* 24-bit */
+	else
+		vid_set_mode(video_mode, PM_RGB565); /* 16-bit */
 
 	/* Re-init PVR with translucent polygon autosort, and optional FSAA */
-	pvr_shutdown();
 	pvr_init(&pvr_init_params_fsaa);
 
 	PVR_SET(PVR_OBJECT_CLIP, 0.00001f);
