@@ -172,6 +172,22 @@ elseif(GPU_PLUGIN STREQUAL PVR)
 	set(HARDWARE_ACCELERATED ON)
 endif()
 
+option(ENABLE_THREADED_RENDERER "Threaded renderer" OFF)
+if (ENABLE_THREADED_RENDERER)
+	target_compile_definitions(gpu PUBLIC THREAD_RENDERING)
+	target_sources(libpcsxcore PRIVATE
+		deps/pcsx_rearmed/plugins/gpulib/gpulib_thread_if.c
+	)
+
+	include(FindThreads)
+
+	if (NOT CMAKE_USE_PTHREADS_INIT)
+		message(SEND_ERROR "Could not find compatible threads library")
+	endif()
+
+	target_link_libraries(libpcsxcore PUBLIC Threads::Threads)
+endif()
+
 option(WITH_FSAA "Enable horizontal anti-aliasing" OFF)
 option(WITH_24BPP "Enable 24-bit framebuffer (no dithering)" OFF)
 option(WITH_BILINEAR "Enable bilinear texture filtering" OFF)
