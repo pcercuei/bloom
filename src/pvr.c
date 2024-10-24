@@ -1128,7 +1128,7 @@ static bool overlap_draw_area(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 		&& y + h > pvr.draw_y1;
 }
 
-static void cmd_clear_image(union PacketBuffer *pbuffer)
+static void cmd_clear_image(const union PacketBuffer *pbuffer)
 {
 	int32_t x0, y0, w0, h0;
 	pvr_poly_cxt_t cxt;
@@ -1207,11 +1207,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 	uint32_t cmd = 0, len;
 	uint32_t *list_start = list;
 	uint32_t *list_end = list + list_len;
-	union PacketBuffer pbuffer;
+	const union PacketBuffer *pbuffer;
 	struct texture_page *tex_page;
 	enum blending_mode blending_mode;
 	pvr_poly_cxt_t cxt;
-	unsigned int i, codebook;
+	unsigned int codebook;
 
 	for (; list < list_end; list += 1 + len)
 	{
@@ -1222,8 +1222,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			break;
 		}
 
-		for (i = 0; i <= len; i++)
-			pbuffer.U4[i] = list[i];
+		pbuffer = (const union PacketBuffer *)list;
 
 		multicolor = cmd & 0x10;
 		multiple = cmd & 0x08;
@@ -1238,10 +1237,10 @@ int do_cmd_list(uint32_t *list, int list_len,
 		case 0x0:
 			switch (cmd) {
 			case 0x02:
-				cmd_clear_image(&pbuffer);
+				cmd_clear_image(pbuffer);
 				gput_sum(cpu_cycles_sum, cpu_cycles,
-					 gput_fill(pbuffer.U2[4] & 0x3ff,
-						   pbuffer.U2[5] & 0x1ff));
+					 gput_fill(pbuffer->U2[4] & 0x3ff,
+						   pbuffer->U2[5] & 0x1ff));
 				break;
 
 			default:
@@ -1254,7 +1253,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			switch (cmd) {
 			case 0xe1:
 				/* Set texture page */
-				pvr.gp1 = (pvr.gp1 & ~0x7ff) | (pbuffer.U4[0] & 0x7ff);
+				pvr.gp1 = (pvr.gp1 & ~0x7ff) | (pbuffer->U4[0] & 0x7ff);
 
 				pvr.settings.bpp = (enum texture_bpp)((pvr.gp1 >> 7) & 0x3);
 				pvr.blending_mode = (enum blending_mode)((pvr.gp1 >> 5) & 0x3);
@@ -1265,16 +1264,16 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			case 0xe2:
 				/* TODO: Set texture window */
-				pvr.settings.mask_x = pbuffer.U4[0];
-				pvr.settings.mask_y = pbuffer.U4[0] >> 5;
-				pvr.settings.offt_x = pbuffer.U4[0] >> 10;
-				pvr.settings.offt_y = pbuffer.U4[0] >> 15;
+				pvr.settings.mask_x = pbuffer->U4[0];
+				pvr.settings.mask_y = pbuffer->U4[0] >> 5;
+				pvr.settings.offt_x = pbuffer->U4[0] >> 10;
+				pvr.settings.offt_y = pbuffer->U4[0] >> 15;
 				break;
 
 			case 0xe3:
 				/* Set top-left corner of drawing area */
-				pvr.draw_x1 = pbuffer.U4[0] & 0x3ff;
-				pvr.draw_y1 = (pbuffer.U4[0] >> 10) & 0x1ff;
+				pvr.draw_x1 = pbuffer->U4[0] & 0x3ff;
+				pvr.draw_y1 = (pbuffer->U4[0] >> 10) & 0x1ff;
 				if (0)
 					pvr_printf("Set top-left corner to %ux%u\n",
 						   pvr.draw_x1, pvr.draw_y1);
@@ -1282,8 +1281,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			case 0xe4:
 				/* Set bottom-right corner of drawing area */
-				pvr.draw_x2 = (pbuffer.U4[0] & 0x3ff) + 1;
-				pvr.draw_y2 = ((pbuffer.U4[0] >> 10) & 0x1ff) + 1;
+				pvr.draw_x2 = (pbuffer->U4[0] & 0x3ff) + 1;
+				pvr.draw_y2 = ((pbuffer->U4[0] >> 10) & 0x1ff) + 1;
 				if (0)
 					pvr_printf("Set bottom-right corner to %ux%u\n",
 						   pvr.draw_x2, pvr.draw_y2);
@@ -1291,8 +1290,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			case 0xe5:
 				/* Set drawing offsets */
-				pvr.draw_dx = ((int32_t)pbuffer.U4[0] << 21) >> 21;
-				pvr.draw_dy = ((int32_t)pbuffer.U4[0] << 10) >> 21;
+				pvr.draw_dx = ((int32_t)pbuffer->U4[0] << 21) >> 21;
+				pvr.draw_dy = ((int32_t)pbuffer->U4[0] << 10) >> 21;
 				if (0)
 					pvr_printf("Set drawing offsets to %dx%d\n",
 						   pvr.draw_dx, pvr.draw_dy);
@@ -1300,8 +1299,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			case 0xe6:
 				/* VRAM mask settings */
-				pvr.set_mask = pbuffer.U4[0] & 0x1;
-				pvr.check_mask = (pbuffer.U4[0] & 0x2) >> 1;
+				pvr.set_mask = pbuffer->U4[0] & 0x1;
+				pvr.check_mask = (pbuffer->U4[0] & 0x2) >> 1;
 				break;
 
 			default:
@@ -1318,7 +1317,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 		case 0x1: {
 			/* Monochrome/shaded non-textured polygon */
 			unsigned int i, nb = 3 + !!multiple;
-			uint32_t val, *buf = pbuffer.U4;
+			const uint32_t *buf = pbuffer->U4;
 			float xcoords[4], ycoords[4];
 			float ucoords[4] = {}, vcoords[4] = {};
 			struct texture_settings settings;
@@ -1326,6 +1325,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			unsigned int page_x, page_y;
 			uint16_t texpage, clut;
 			bool bright = false;
+			uint32_t val;
 
 			colors[0] = 0xffffff;
 
@@ -1402,9 +1402,9 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 		case 0x2: {
 			/* Monochrome/shaded line */
-			uint32_t val, *buf = pbuffer.U4;
+			const uint32_t *buf = pbuffer->U4;
 			unsigned int i, nb = 2;
-			uint32_t oldcolor, color;
+			uint32_t oldcolor, color, val;
 			int16_t x, y, oldx, oldy;
 
 			if (multiple) {
@@ -1460,7 +1460,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 				colors[0] = 0xffffff;
 			} else {
 				/* BGR->RGB swap */
-				colors[0] = __builtin_bswap32(pbuffer.U4[0]) >> 8;
+				colors[0] = __builtin_bswap32(pbuffer->U4[0]) >> 8;
 			}
 
 			if (textured && !raw_tex) {
@@ -1474,8 +1474,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			colors[3] = colors[2] = colors[1] = colors[0];
 
-			x0 = (int16_t)pbuffer.U4[1];
-			y0 = (int16_t)(pbuffer.U4[1] >> 16);
+			x0 = (int16_t)pbuffer->U4[1];
+			y0 = (int16_t)(pbuffer->U4[1] >> 16);
 
 			if ((cmd & 0x18) == 0x18) {
 				w = 16;
@@ -1487,8 +1487,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 				w = 1;
 				h = 1;
 			} else {
-				w = pbuffer.U2[4 + 2 * !!textured];
-				h = pbuffer.U2[5 + 2 * !!textured];
+				w = pbuffer->U2[4 + 2 * !!textured];
+				h = pbuffer->U2[5 + 2 * !!textured];
 			}
 
 			x[1] = x[3] = x_to_pvr(x0);
@@ -1497,13 +1497,13 @@ int do_cmd_list(uint32_t *list, int list_len,
 			y[2] = y[3] = y_to_pvr(y0 + h);
 
 			if (textured) {
-				ucoords[1] = ucoords[3] = u_to_pvr(pbuffer.U1[8]);
-				ucoords[0] = ucoords[2] = u_to_pvr(pbuffer.U1[8] + w);
+				ucoords[1] = ucoords[3] = u_to_pvr(pbuffer->U1[8]);
+				ucoords[0] = ucoords[2] = u_to_pvr(pbuffer->U1[8] + w);
 
-				vcoords[0] = vcoords[1] = v_to_pvr(pbuffer.U1[9]);
-				vcoords[2] = vcoords[3] = v_to_pvr(pbuffer.U1[9] + h);
+				vcoords[0] = vcoords[1] = v_to_pvr(pbuffer->U1[9]);
+				vcoords[2] = vcoords[3] = v_to_pvr(pbuffer->U1[9] + h);
 
-				clut = pbuffer.U2[5];
+				clut = pbuffer->U2[5];
 
 				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y, clut,
 								pvr.settings, &codebook);
