@@ -761,7 +761,6 @@ static void load_mask_texture(struct texture_page *page,
 			 mask_tex, FILTER_MODE);
 
 	mask_cxt.gen.culling = PVR_CULLING_SMALL;
-	mask_cxt.depth.write = PVR_DEPTHWRITE_ENABLE;
 
 	if (pvr.check_mask)
 		mask_cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
@@ -795,7 +794,6 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 	int txr_en;
 
 	cxt->gen.culling = PVR_CULLING_SMALL;
-	cxt->depth.write = PVR_DEPTHWRITE_ENABLE;
 
 	if (pvr.check_mask)
 		cxt->depth.comparison = PVR_DEPTHCMP_GEQUAL;
@@ -1035,7 +1033,6 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 
 	cxt.gen.alpha = PVR_ALPHA_DISABLE;
 	cxt.gen.culling = PVR_CULLING_SMALL;
-	cxt.depth.write = PVR_DEPTHWRITE_ENABLE;
 
 	if (pvr.check_mask)
 		cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
@@ -1151,7 +1148,6 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 
 		cxt.gen.alpha = PVR_ALPHA_DISABLE;
 		cxt.gen.culling = PVR_CULLING_SMALL;
-		cxt.depth.write = PVR_DEPTHWRITE_ENABLE;
 		cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
 
 		/* The rectangle fill ignores the mask bit */
