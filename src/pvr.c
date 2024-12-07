@@ -227,21 +227,6 @@ static inline uint16_t bgr_to_rgb(uint16_t bgr)
 		| (bgr & 0x83e0);
 }
 
-static inline uint16_t psx_to_rgb(uint16_t bgr)
-{
-	uint16_t pixel = bgr_to_rgb(bgr);
-
-	/* On PSX, bit 15 is used for semi-transparent blending.
-	 * The transparent pixel is color-coded to value 0x0000.
-	 * For native textures, we will use bit 15 as the opaque/transparent
-	 * bit; at that point, the semi-transparent info has already been saved
-	 * into a mask texture. */
-	if (pixel != 0x0000)
-		pixel |= 0x8000;
-
-	return pixel;
-}
-
 static inline uint32_t min32(uint32_t a, uint32_t b)
 {
 	return a < b ? a : b;
@@ -262,16 +247,12 @@ static inline uint16_t *clut_get_ptr(uint16_t clut)
 	return &gpu.vram[clut_get_offset(clut) / 2];
 }
 
-static inline uint16_t semi_transparent_mask(uint16_t color)
-{
-	return ((color & 0x8000) || (color == 0)) ? 0xffff : 0x0;
-}
-
 static void load_palette(pvr_ptr_t palette_addr, pvr_ptr_t mask_addr,
 			 uint16_t clut, unsigned int nb)
 {
 	alignas(32) uint64_t palette_data[256];
 	alignas(32) uint64_t mask_data[256];
+	uint16_t pixel;
 	uint64_t color;
 	uint16_t *palette;
 	unsigned int i;
@@ -279,15 +260,25 @@ static void load_palette(pvr_ptr_t palette_addr, pvr_ptr_t mask_addr,
 	palette = clut_get_ptr(clut);
 
 	for (i = 0; i < nb; i++) {
-		color = semi_transparent_mask(palette[i]);
-		color |= color << 16;
-		color |= color << 32;
-		mask_data[i] = color;
+		pixel = palette[i];
 
-		color = psx_to_rgb(palette[i]);
-		color |= color << 16;
-		color |= color << 32;
-		palette_data[i] = color;
+		/* On PSX, bit 15 is used for semi-transparent blending.
+		 * The transparent pixel is color-coded to value 0x0000.
+		 * For native textures, bit 15 is the opaque/transparent bit.
+		 * The mask texture will contain opaque non-semi-transparent
+		 * pixels, while the regular texture will contain opaque pixels,
+		 * semi-transparent or not. */
+		if (pixel != 0x0000) {
+			color = bgr_to_rgb(pixel);
+			color |= color << 16;
+			color |= color << 32;
+
+			mask_data[i] = color ^ 0x8000800080008000ull;
+			palette_data[i] = color | 0x8000800080008000ull;
+		} else {
+			mask_data[i] = 0;
+			palette_data[i] = 0;
+		}
 	}
 
 	pvr_txr_load(palette_data, palette_addr, nb * sizeof(color));
@@ -370,7 +361,7 @@ static struct texture_page * alloc_texture_16bpp(void)
 		return NULL;
 	}
 
-	page->mask_tex = pvr_mem_malloc(256 * 256);
+	page->mask_tex = pvr_mem_malloc(256 * 256 * 2);
 	if (!page->mask_tex) {
 		pvr_mem_free(page->tex);
 		free(page);
@@ -437,21 +428,20 @@ static inline bool transparent_or_semi(uint16_t pixel)
 static void load_texture_16bpp(struct texture_page_16bpp *page,
 			       const uint16_t *src)
 {
-	alignas(32) uint8_t mask_line[256];
-	uint8_t *mask;
+	alignas(32) uint16_t mask_line[256];
+	uint16_t *mask, *dst;
 	unsigned int x, y;
-	uint16_t *dst;
 
 	dst = (uint16_t *)page->tex;
-	mask = (uint8_t *)page->mask_tex;
+	mask = (uint16_t *)page->mask_tex;
 
 	for (y = 0; y < 256; y++) {
 		pvr_txr_load(src, dst, 512);
 
 		for (x = 0; x < 256; x++)
-			mask_line[x] = transparent_or_semi(src[x]);
+			mask_line[x] = src[x] ? src[x] ^ 0x8000 : 0;
 
-		pvr_txr_load(mask_line, mask, 256);
+		pvr_txr_load(mask_line, mask, sizeof(mask_line));
 
 		dst += 256;
 		src += 1024;
@@ -712,12 +702,12 @@ static void load_mask_texture(struct texture_page *page,
 			      unsigned int codebook,
 			      const float *xcoords, const float *ycoords,
 			      const float *ucoords, const float *vcoords,
-			      unsigned int nb)
+			      const uint32_t *colors,
+			      unsigned int nb, bool bright)
 {
 	unsigned int tex_fmt, tex_width, tex_height;
 	struct texture_vq *vq;
 	pvr_poly_cxt_t mask_cxt;
-	uint32_t colors[4] = {};
 	pvr_ptr_t mask_tex;
 	float new_vcoords[4];
 	unsigned int i;
@@ -730,7 +720,7 @@ static void load_mask_texture(struct texture_page *page,
 	if (page->settings.bpp == TEXTURE_16BPP) {
 		mask_tex = to_texture_page_16bpp(page)->mask_tex;
 
-		tex_fmt = PVR_TXRFMT_PAL8BPP | PVR_TXRFMT_NONTWIDDLED;
+		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 256;
 		tex_height = 512; /* Really 256, but we use V up to 0.5 */
 	} else {
@@ -767,18 +757,22 @@ static void load_mask_texture(struct texture_page *page,
 	else
 		mask_cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
 
-	/* The accumulation buffer's alpha bits are all ones.
-	 * Use offset color 0x00ffffff on the source texture and
-	 * multiply the result with the accumulation buffer's pixels,
-	 * so that the source alpha bits are copied there. */
-	mask_cxt.gen.specular = PVR_SPECULAR_ENABLE;
 	mask_cxt.gen.alpha = PVR_ALPHA_DISABLE;
-	mask_cxt.blend.src = PVR_BLEND_DESTCOLOR;
-	mask_cxt.blend.dst = PVR_BLEND_ZERO;
-	mask_cxt.txr.env = PVR_TXRENV_REPLACE;
+	mask_cxt.blend.src = PVR_BLEND_SRCALPHA;
+	mask_cxt.blend.dst = PVR_BLEND_INVSRCALPHA;
+	mask_cxt.txr.env = PVR_TXRENV_MODULATE;
 
 	draw_prim(&mask_cxt, xcoords, ycoords,
-		  ucoords, vcoords, colors, nb, 0x00ffffff);
+		  ucoords, vcoords, colors, nb, 0);
+
+	if (bright) {
+		/* If we need to render brighter pixels, just render it
+		 * again. */
+		mask_cxt.blend.dst = PVR_BLEND_ONE;
+
+		draw_prim(&mask_cxt, xcoords, ycoords,
+			  ucoords, vcoords, colors, nb, 0);
+	}
 }
 
 static void draw_poly(pvr_poly_cxt_t *cxt,
@@ -976,35 +970,11 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 	}
 
 	if (tex_page) {
+		/* If we are blending with a texture, copy back opaque
+		 * non-semi-transparent pixels stored in the mask texture to
+		 * the destination. */
 		load_mask_texture(tex_page, codebook, xcoords, ycoords,
-				  ucoords, vcoords, nb);
-
-		/* Copy back opaque non-semi-transparent pixels from the
-		 * source texture to the destination. */
-		cxt->txr.enable = PVR_TEXTURE_ENABLE;
-		cxt->txr.alpha = PVR_TXRALPHA_DISABLE;
-		cxt->gen.alpha = PVR_ALPHA_DISABLE;
-
-		if (bright) {
-			/* If we need brighter colors, compute F*2 into the
-			 * second accumulation buffer, and use it as the source
-			 * for the final blending step. */
-			cxt->blend.dst_enable = PVR_BLEND_ENABLE;
-			cxt->blend.src = PVR_BLEND_SRCALPHA;
-			cxt->blend.dst = PVR_BLEND_ZERO;
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
-
-			cxt->blend.src_enable = PVR_BLEND_ENABLE;
-			cxt->blend.src = PVR_BLEND_SRCALPHA;
-			cxt->blend.dst = PVR_BLEND_ONE;
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
-
-			cxt->blend.dst_enable = PVR_BLEND_DISABLE;
-		}
-
-		cxt->blend.src = PVR_BLEND_INVDESTALPHA;
-		cxt->blend.dst = PVR_BLEND_DESTALPHA;
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
+				  ucoords, vcoords, colors, nb, bright);
 	}
 }
 
