@@ -635,6 +635,7 @@ static float get_zvalue(void)
 		unsigned int vint;
 		float vf;
 	} fint32;
+	unsigned int zoffset = pvr.zoffset++ << 8;
 
 	/* Craft a floating-point value, using a higher exponent for the masked
 	 * bits, and using a mantissa that increases by (1 << 8) for each poly
@@ -648,7 +649,10 @@ static float get_zvalue(void)
 	else
 		fint32.vint = 127 << 23;
 
-	fint32.vint += pvr.zoffset++ << 8;
+	if (pvr.set_mask && pvr.check_mask)
+		fint32.vint -= zoffset;
+	else
+		fint32.vint += zoffset;
 
 	return fint32.vf;
 }
