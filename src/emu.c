@@ -112,8 +112,18 @@ bool emu_check_cd(const char *path)
 
 /* Copy of the default params, but with FSAA enabled */
 static pvr_init_params_t pvr_init_params_fsaa = {
-	{ PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_0 },
-        512 * 1024, 0, WITH_FSAA, 1, 3,
+	.opb_sizes = {
+		HARDWARE_ACCELERATED ? PVR_BINSIZE_0 : PVR_BINSIZE_16,
+		PVR_BINSIZE_0,
+		HARDWARE_ACCELERATED ? PVR_BINSIZE_16 : PVR_BINSIZE_0,
+		PVR_BINSIZE_0,
+		HARDWARE_ACCELERATED ? PVR_BINSIZE_16 : PVR_BINSIZE_0,
+	},
+	.vertex_buf_size = 512 * 1024,
+	.dma_enabled = HARDWARE_ACCELERATED,
+	.fsaa_enabled = WITH_FSAA,
+	.autosort_disabled = 1,
+	.opb_overflow_count = 3,
 };
 
 int main(int argc, char **argv)

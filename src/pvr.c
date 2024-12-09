@@ -142,6 +142,9 @@ struct pvr_renderer {
 
 	uint32_t depthcmp :3;
 
+	uint32_t list :3;
+	uint32_t start_list :3;
+
 	uint32_t page_x :4;
 	uint32_t page_y :1;
 	enum blending_mode blending_mode :3;
@@ -153,6 +156,8 @@ struct pvr_renderer {
 };
 
 static struct pvr_renderer pvr;
+
+alignas(32) static unsigned char vertbuf[0x10000];
 
 int renderer_init(void)
 {
@@ -657,6 +662,40 @@ static float get_zvalue(void)
 	return fint32.vf;
 }
 
+static void draw_prim_dma(pvr_poly_cxt_t *cxt,
+			  const float *x, const float *y,
+			  const float *u, const float *v,
+			  const uint32_t *color, unsigned int nb,
+			  uint32_t oargb)
+{
+	pvr_list_t list = (pvr_list_t)cxt->list_type;
+	pvr_poly_hdr_t *hdr;
+	pvr_vertex_t *vert;
+	unsigned int i;
+	float z = get_zvalue();
+
+	hdr = pvr_vertbuf_tail(list);
+	pvr_poly_compile(hdr, cxt);
+	pvr_vertbuf_written(list, sizeof(*hdr));
+
+	vert = pvr_vertbuf_tail(list);
+
+	for (i = 0; i < nb; i++) {
+		vert[i] = (pvr_vertex_t){
+			.flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
+			.argb = color[i],
+			.oargb = oargb,
+			.x = x[i],
+			.y = y[i],
+			.z = z,
+			.u = u[i],
+			.v = v[i],
+		};
+	}
+
+	pvr_vertbuf_written(list, nb * sizeof(*vert));
+}
+
 static void draw_prim(pvr_poly_cxt_t *cxt,
 		      const float *x, const float *y,
 		      const float *u, const float *v,
@@ -666,16 +705,29 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	pvr_poly_hdr_t *hdr;
 	pvr_vertex_t *vert;
 	unsigned int i;
-	float z = get_zvalue();
+	float z;
 
 	if (pvr.new_frame) {
 		pvr_wait_ready();
 		pvr_reap_textures();
+
+		if (pvr.start_list == PVR_LIST_PT_POLY)
+			pvr_set_vertbuf(PVR_LIST_TR_POLY, vertbuf, sizeof(vertbuf));
+		else
+			pvr_set_vertbuf(PVR_LIST_TR_POLY, NULL, 0);
+
 		pvr_scene_begin();
-		pvr_list_begin(PVR_LIST_TR_POLY);
+		pvr_list_begin(pvr.start_list);
 
 		pvr.new_frame = 0;
 	}
+
+	if (cxt->list_type != pvr.start_list) {
+		draw_prim_dma(cxt, x, y, u, v, color, nb, oargb);
+		return;
+	}
+
+	z = get_zvalue();
 
 	hdr = (void *)pvr_dr_target(pvr.dr_state);
 	pvr_poly_compile(hdr, cxt);
@@ -747,7 +799,7 @@ static void load_mask_texture(struct texture_page *page,
 		vcoords = new_vcoords;
 	}
 
-	pvr_poly_cxt_txr(&mask_cxt, PVR_LIST_TR_POLY,
+	pvr_poly_cxt_txr(&mask_cxt, pvr.list,
 			 tex_fmt, tex_width, tex_height,
 			 mask_tex, FILTER_MODE);
 
@@ -765,6 +817,7 @@ static void load_mask_texture(struct texture_page *page,
 		/* If we need to render brighter pixels, just render it
 		 * again. */
 		mask_cxt.blend.dst = PVR_BLEND_ONE;
+		mask_cxt.list_type = PVR_LIST_TR_POLY;
 
 		draw_prim(&mask_cxt, xcoords, ycoords,
 			  ucoords, vcoords, colors, nb, 0);
@@ -798,6 +851,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 			 * again. */
 			cxt->blend.src = PVR_BLEND_SRCALPHA;
 			cxt->blend.dst = PVR_BLEND_ONE;
+			cxt->list_type = PVR_LIST_TR_POLY;
 
 			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 		}
@@ -823,6 +877,8 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		/* Regular additive blending */
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
+		cxt->list_type = PVR_LIST_TR_POLY;
+
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
 
 		break;
@@ -836,6 +892,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
+		cxt->list_type = PVR_LIST_TR_POLY;
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
 
@@ -865,6 +922,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
 		cxt->txr.enable = PVR_TEXTURE_DISABLE;
+		cxt->list_type = PVR_LIST_TR_POLY;
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
 
@@ -903,6 +961,8 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		colors_alt = alloca(sizeof(*colors_alt) * nb);
 
 		txr_en = cxt->txr.enable;
+
+		cxt->list_type = PVR_LIST_TR_POLY;
 
 		if (txr_en) {
 			for (i = 0; i < nb; i++)
@@ -991,7 +1051,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	ycoords[3] = ycoords[5] = y_to_pvr(y1 + !up);
 	ycoords[4] = y_to_pvr(y1 + up);
 
-	pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+	pvr_poly_cxt_col(&cxt, pvr.list);
 
 	cxt.gen.alpha = PVR_ALPHA_DISABLE;
 	cxt.gen.culling = PVR_CULLING_SMALL;
@@ -1067,7 +1127,7 @@ static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
 		}
 	}
 
-	pvr_poly_cxt_txr(cxt, PVR_LIST_TR_POLY, tex_fmt,
+	pvr_poly_cxt_txr(cxt, pvr.list, tex_fmt,
 			 tex_width, tex_height, tex, FILTER_MODE);
 }
 
@@ -1162,6 +1222,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 	enum blending_mode blending_mode;
 	pvr_poly_cxt_t cxt;
 	unsigned int codebook;
+	bool new_set, new_check;
 
 	for (; list < list_end; list += 1 + len)
 	{
@@ -1249,13 +1310,24 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			case 0xe6:
 				/* VRAM mask settings */
-				pvr.set_mask = pbuffer->U4[0] & 0x1;
-				pvr.check_mask = (pbuffer->U4[0] & 0x2) >> 1;
+				new_set = pbuffer->U4[0] & 0x1;
+				new_check = (pbuffer->U4[0] & 0x2) >> 1;
 
-				if (pvr.check_mask)
-					pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
-				else
-					pvr.depthcmp = PVR_DEPTHCMP_ALWAYS;
+				if (!new_set && pvr.set_mask) {
+					/* We have to switch to using TR polys
+					 * exclusively now. */
+					pvr.list = PVR_LIST_TR_POLY;
+				}
+
+				if (pvr.list == PVR_LIST_TR_POLY) {
+					if (new_check)
+						pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
+					else
+						pvr.depthcmp = PVR_DEPTHCMP_ALWAYS;
+				}
+
+				pvr.set_mask = new_set;
+				pvr.check_mask = new_check;
 				break;
 
 			default:
@@ -1332,7 +1404,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 				if (semi_trans)
 					blending_mode = (enum blending_mode)((texpage >> 5) & 0x3);
 			} else {
-				pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+				pvr_poly_cxt_col(&cxt, pvr.list);
 			}
 
 			/* We don't actually use the alpha channel of the vertex
@@ -1466,7 +1538,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 				adjust_vcoords(vcoords, 4, pvr.settings.bpp, codebook);
 			} else {
-				pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+				pvr_poly_cxt_col(&cxt, pvr.list);
 			}
 
 			/* We don't actually use the alpha channel of the vertex
@@ -1501,11 +1573,14 @@ void hw_render_start(void)
 {
 	pvr.new_frame = 1;
 	pvr.zoffset = 0;
+	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
 
-	if (pvr.check_mask)
-		pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
+	if (pvr.set_mask && pvr.check_mask)
+		pvr.start_list = PVR_LIST_TR_POLY;
 	else
-		pvr.depthcmp = PVR_DEPTHCMP_ALWAYS;
+		pvr.start_list = PVR_LIST_PT_POLY;
+
+	pvr.list = pvr.start_list;
 }
 
 void hw_render_stop(void)
