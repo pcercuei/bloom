@@ -140,6 +140,8 @@ struct pvr_renderer {
 	uint32_t set_mask :1;
 	uint32_t check_mask :1;
 
+	uint32_t depthcmp :3;
+
 	uint32_t page_x :4;
 	uint32_t page_y :1;
 	enum blending_mode blending_mode :3;
@@ -746,12 +748,7 @@ static void load_mask_texture(struct texture_page *page,
 			 mask_tex, FILTER_MODE);
 
 	mask_cxt.gen.culling = PVR_CULLING_SMALL;
-
-	if (pvr.check_mask)
-		mask_cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
-	else
-		mask_cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
-
+	mask_cxt.depth.comparison = pvr.depthcmp;
 	mask_cxt.gen.alpha = PVR_ALPHA_DISABLE;
 	mask_cxt.blend.src = PVR_BLEND_SRCALPHA;
 	mask_cxt.blend.dst = PVR_BLEND_INVSRCALPHA;
@@ -783,11 +780,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 	int txr_en;
 
 	cxt->gen.culling = PVR_CULLING_SMALL;
-
-	if (pvr.check_mask)
-		cxt->depth.comparison = PVR_DEPTHCMP_GEQUAL;
-	else
-		cxt->depth.comparison = PVR_DEPTHCMP_ALWAYS;
+	cxt->depth.comparison = pvr.depthcmp;
 
 	switch (blending_mode) {
 	case BLENDING_MODE_NONE:
@@ -998,11 +991,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 
 	cxt.gen.alpha = PVR_ALPHA_DISABLE;
 	cxt.gen.culling = PVR_CULLING_SMALL;
-
-	if (pvr.check_mask)
-		cxt.depth.comparison = PVR_DEPTHCMP_GEQUAL;
-	else
-		cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
+	cxt.depth.comparison = pvr.depthcmp;
 
 	/* Pass xcoords/ycoords as U/V, since we don't use a texture, we don't
 	 * care what the U/V values are */
@@ -1258,6 +1247,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 				/* VRAM mask settings */
 				pvr.set_mask = pbuffer->U4[0] & 0x1;
 				pvr.check_mask = (pbuffer->U4[0] & 0x2) >> 1;
+
+				if (pvr.check_mask)
+					pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
+				else
+					pvr.depthcmp = PVR_DEPTHCMP_ALWAYS;
 				break;
 
 			default:
@@ -1503,6 +1497,11 @@ void hw_render_start(void)
 {
 	pvr.new_frame = 1;
 	pvr.zoffset = 0;
+
+	if (pvr.check_mask)
+		pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
+	else
+		pvr.depthcmp = PVR_DEPTHCMP_ALWAYS;
 }
 
 void hw_render_stop(void)
