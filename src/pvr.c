@@ -420,11 +420,6 @@ static struct texture_page * alloc_texture(struct texture_settings settings)
 	return alloc_texture_4bpp();
 }
 
-static inline bool transparent_or_semi(uint16_t pixel)
-{
-	return !pixel || !!(pixel >> 15);
-}
-
 static void load_texture_16bpp(struct texture_page_16bpp *page,
 			       const uint16_t *src)
 {
