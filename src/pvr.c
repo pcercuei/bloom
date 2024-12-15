@@ -434,6 +434,13 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 	return i;
 }
 
+static const void * texture_page_get_addr(unsigned int page_offset)
+{
+	unsigned int page_x = page_offset & 0xf, page_y = page_offset / 16;
+
+	return &gpu.vram[page_x * 64 + page_y * 256 * 1024];
+}
+
 static void load_texture_16bpp(struct texture_page_16bpp *page,
 			       const uint16_t *src)
 {
@@ -491,13 +498,6 @@ static void load_texture_4bpp(struct texture_page *page, const uint8_t *src)
 		src += 2048;
 		dst += 256;
 	}
-}
-
-static const uint16_t * texture_page_get_addr(unsigned int page_offset)
-{
-	unsigned int page_x = page_offset & 0xf, page_y = page_offset / 16;
-
-	return &gpu.vram[page_x * 64 + page_y * 256 * 1024];
 }
 
 static void load_texture(struct texture_page *page,
