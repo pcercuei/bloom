@@ -60,6 +60,8 @@
 
 #define FILTER_MODE (WITH_BILINEAR ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE)
 
+#define CLUT_IS_MASK BIT(15)
+
 union PacketBuffer {
 	uint32_t U4[16];
 	uint16_t U2[32];
@@ -174,6 +176,10 @@ struct pvr_renderer {
 	struct texture_page *reap_list[2];
 };
 
+/* Forward declarations */
+static void adjust_vcoords(float *vcoords, unsigned int nb,
+			   enum texture_bpp bpp, unsigned int codebook);
+
 static struct pvr_renderer pvr;
 
 alignas(32) static unsigned char vertbuf[0x20000];
@@ -273,11 +279,9 @@ static inline uint16_t *clut_get_ptr(uint16_t clut)
 	return &gpu.vram[clut_get_offset(clut) / 2];
 }
 
-static void load_palette(pvr_ptr_t palette_addr, pvr_ptr_t mask_addr,
-			 uint16_t clut, unsigned int nb)
+static void load_palette(pvr_ptr_t palette_addr, uint16_t clut, unsigned int nb)
 {
 	alignas(32) uint64_t palette_data[256];
-	alignas(32) uint64_t mask_data[256];
 	uint16_t pixel;
 	uint64_t color;
 	uint16_t *palette;
@@ -299,16 +303,16 @@ static void load_palette(pvr_ptr_t palette_addr, pvr_ptr_t mask_addr,
 			color |= color << 16;
 			color |= color << 32;
 
-			mask_data[i] = color ^ 0x8000800080008000ull;
-			palette_data[i] = color | 0x8000800080008000ull;
+			if (clut & CLUT_IS_MASK)
+				palette_data[i] = color ^ 0x8000800080008000ull;
+			else
+				palette_data[i] = color | 0x8000800080008000ull;
 		} else {
-			mask_data[i] = 0;
 			palette_data[i] = 0;
 		}
 	}
 
 	pvr_txr_load(palette_data, palette_addr, nb * sizeof(color));
-	pvr_txr_load(mask_data, mask_addr, nb * sizeof(color));
 }
 
 static void
@@ -316,7 +320,7 @@ load_palette_bpp4(struct texture_page *page, unsigned int offset, uint16_t clut)
 {
 	struct pvr_vq_codebook_4bpp *codebook4 = &page->vq->codebook4[offset];
 
-	load_palette(codebook4->palette, codebook4->mask, clut, 16);
+	load_palette(codebook4->palette, clut, 16);
 }
 
 static void
@@ -324,7 +328,7 @@ load_palette_bpp8(struct texture_page *page, unsigned int offset, uint16_t clut)
 {
 	struct pvr_vq_codebook_8bpp *codebook8 = &page->vq->codebook8[offset];
 
-	load_palette(codebook8->palette, codebook8->mask, clut, 256);
+	load_palette(codebook8->palette, clut, 256);
 }
 
 static unsigned int
@@ -341,7 +345,8 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 	}
 
 	if (i < page4->nb_cluts) {
-		pvr_printf("Found CLUT at offset %u\n", i);
+		pvr_printf("Found %s CLUT at offset %u\n",
+			   (clut & CLUT_IS_MASK) ? "mask" : "normal", i);
 		return i;
 	}
 
@@ -790,7 +795,7 @@ static pvr_ptr_t pvr_get_texture(const struct texture_page *page,
 }
 
 static void load_mask_texture(struct texture_page *page,
-			      unsigned int codebook,
+			      uint16_t clut,
 			      const float *xcoords, const float *ycoords,
 			      const float *ucoords, const float *vcoords,
 			      const uint32_t *colors,
@@ -800,7 +805,7 @@ static void load_mask_texture(struct texture_page *page,
 	pvr_poly_cxt_t mask_cxt;
 	pvr_ptr_t mask_tex;
 	float new_vcoords[4];
-	unsigned int i;
+	unsigned int codebook;
 
 	/* If we are blending with a texture, we need to check the transparent
 	 * and semi-transparent bits. These are stored inside a separate 4bpp
@@ -814,19 +819,15 @@ static void load_mask_texture(struct texture_page *page,
 		tex_width = 256;
 		tex_height = 512; /* Really 256, but we use V up to 0.5 */
 	} else {
+
 		/* Get a pointer to the mask codebook, and adjust V coordinates
 		 * as we are not using the same base. */
-		if (page->settings.bpp == TEXTURE_8BPP) {
-			for (i = 0; i < nb; i++)
-				new_vcoords[i] = vcoords[i] - 8.0f / 512.0f;
+		codebook = find_texture_codebook(page, clut | CLUT_IS_MASK);
 
-			mask_tex = (pvr_ptr_t)page->vq->codebook8[codebook].mask;
-		} else {
-			for (i = 0; i < nb; i++)
-				new_vcoords[i] = vcoords[i] - 1.0f / 512.0f;
+		memcpy(new_vcoords, vcoords, nb * sizeof(*vcoords));
 
-			mask_tex = (pvr_ptr_t)page->vq->codebook4[codebook].mask;
-		}
+		adjust_vcoords(new_vcoords, nb, page->settings.bpp, codebook);
+		mask_tex = pvr_get_texture(page, codebook);
 
 		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 1024;
@@ -865,8 +866,9 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		      const uint32_t *colors, unsigned int nb,
 		      enum blending_mode blending_mode, bool bright,
 		      struct texture_page *tex_page,
-		      unsigned int codebook)
+		      unsigned int codebook, uint16_t clut)
 {
+	const float *old_vcoords = vcoords;
 	float new_vcoords[4];
 	uint32_t *colors_alt;
 	unsigned int i;
@@ -1068,8 +1070,8 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		/* If we are blending with a texture, copy back opaque
 		 * non-semi-transparent pixels stored in the mask texture to
 		 * the destination. */
-		load_mask_texture(tex_page, codebook, xcoords, ycoords,
-				  ucoords, vcoords, colors, nb, bright);
+		load_mask_texture(tex_page, clut, xcoords, ycoords,
+				  ucoords, old_vcoords, colors, nb, bright);
 	}
 }
 
@@ -1103,7 +1105,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	/* Pass xcoords/ycoords as U/V, since we don't use a texture, we don't
 	 * care what the U/V values are */
 	draw_poly(&cxt, xcoords, ycoords, xcoords, ycoords,
-		  colors, 6, blending_mode, false, NULL, 0);
+		  colors, 6, blending_mode, false, NULL, 0, 0);
 }
 
 static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded)
@@ -1208,7 +1210,7 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 		pvr.check_mask = 0;
 
 		draw_poly(&cxt, x, y, x, y,
-			  colors, 4, BLENDING_MODE_NONE, false, NULL, 0);
+			  colors, 4, BLENDING_MODE_NONE, false, NULL, 0, 0);
 
 		pvr.set_mask = set_mask;
 		pvr.check_mask = check_mask;
@@ -1383,7 +1385,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			struct texture_settings settings;
 			uint32_t colors[4], texcoord[4];
 			unsigned int page_x, page_y;
-			uint16_t texpage, clut;
+			uint16_t texpage, clut = 0;
 			bool bright = false;
 			uint32_t val;
 
@@ -1449,7 +1451,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			draw_poly(&cxt, xcoords, ycoords, ucoords,
 				  vcoords, colors, nb, blending_mode,
-				  bright, tex_page, codebook);
+				  bright, tex_page, codebook, clut);
 
 			if (multicolor && textured)
 				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
@@ -1516,7 +1518,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			float x[4], y[4];
 			float ucoords[4] = {}, vcoords[4] = {};
 			uint32_t colors[4];
-			uint16_t w, h, x0, y0, clut;
+			uint16_t w, h, x0, y0, clut = 0;
 			bool bright = false;
 
 			if (raw_tex) {
@@ -1581,7 +1583,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			draw_poly(&cxt, x, y, ucoords, vcoords,
 				  colors, 4, blending_mode, bright,
-				  tex_page, codebook);
+				  tex_page, codebook, clut);
 
 			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
 			break;
