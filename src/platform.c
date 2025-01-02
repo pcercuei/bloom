@@ -109,9 +109,7 @@ static inline void copy15(const uint16_t *vram, int stride, int w, int h)
 	unsigned int x, y, i;
 
 	for (y = 0; y < h; y++) {
-		line = SQ_MASK_DEST(dest);
-
-		sq_lock(dest);
+		line = sq_lock(dest);
 
 		for (x = 0; x < w; x += 16) {
 			for (i = 0; i < 8; i++) {
@@ -151,9 +149,7 @@ static inline void copy24(const uint16_t *vram, int stride, int w, int h)
 	uint16_t px0, px1;
 
 	for (y = 0; y < h; y++) {
-		sq_lock(dest);
-
-		line = SQ_MASK_DEST(dest);
+		line = sq_lock(dest);
 
 		for (x = 0; x < w; x += 16) {
 			for (i = 0; i < 8; i += 2) {
