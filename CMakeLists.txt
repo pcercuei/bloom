@@ -87,8 +87,11 @@ set(LIBLIGHTNING_INCLUDE_DIR $<TARGET_PROPERTY:lightning,INTERFACE_INCLUDE_DIREC
 # Include Lightrec's own CMake file
 add_subdirectory(deps/pcsx_rearmed/deps/lightrec)
 
-set(CODE_BUFFER_SIZE 0x300000 CACHE STRING "Code buffer size")
-math(EXPR CODEBUF_SIZE "${CODE_BUFFER_SIZE}" OUTPUT_FORMAT HEXADECIMAL)
+set(CODE_BUFFER_SIZE_MB 3 CACHE STRING "Code buffer size in MiB")
+math(EXPR CODEBUF_SIZE "0x100000 * ${CODE_BUFFER_SIZE_MB}")
+if (NOT CODEBUF_SIZE)
+	message(SEND_ERROR "Invalid buffer size.")
+endif()
 
 add_library(libpcsxcore STATIC
 	deps/pcsx_rearmed/libpcsxcore/cdriso.c
