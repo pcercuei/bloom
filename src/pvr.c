@@ -5,6 +5,7 @@
  * Copyright (C) 2024 Paul Cercueil <paul@crapouillou.net>
  */
 
+#include <arch/cache.h>
 #include <dc/pvr.h>
 #include <gpulib/gpu.h>
 #include <gpulib/gpu_timing.h>
@@ -469,38 +470,57 @@ load_block_16bpp(struct texture_page_16bpp *page, const uint16_t *src,
 	}
 }
 
+static uint32_t *pvr_ptr_get_sq_addr(pvr_ptr_t ptr)
+{
+	return (uint32_t *)(((uintptr_t)ptr & 0xffffff) | PVR_TA_TEX_MEM);
+}
+
 static void load_block_8bpp(struct texture_page *page, const uint8_t *src,
 			    unsigned int x, unsigned int y)
 {
 	pvr_ptr_t dst = &page->vq->frame[y * 32 * 256 + x * 32];
+	uint32_t *sq;
+
+	sq = sq_lock(pvr_ptr_get_sq_addr(dst));
 
 	for (y = 0; y < 32; y++) {
-		pvr_txr_load(src, dst, 32);
+		copy32(sq, src);
+		dcache_wback_sq(sq);
 
 		src += 2048;
-		dst += 256;
+		sq += 256 / sizeof(*sq);
 	}
+
+	sq_unlock();
 }
 
 static void load_block_4bpp(struct texture_page *page, const uint8_t *src,
 			    unsigned int x, unsigned int y)
 {
 	pvr_ptr_t dst = &page->vq->frame[y * 32 * 256 + x * 32];
-	alignas(32) char line[32];
-	uint8_t px;
+	uint8_t px1, px2;
+	uint32_t *sq;
+
+	sq = sq_lock(pvr_ptr_get_sq_addr(dst));
 
 	for (y = 0; y < 32; y++) {
-		for (x = 0; x < 32; x += 2) {
-			px = src[x / 2];
-			line[x + 0] = px & 0xf;
-			line[x + 1] = px >> 4;
+		for (x = 0; x < 8; x++) {
+			px1 = *src++;
+			px2 = *src++;
+
+			sq[x] = (uint32_t)(px1 & 0xf)
+				| (uint32_t)(px1 >> 4) << 8
+				| (uint32_t)(px2 & 0xf) << 16
+				| (uint32_t)(px2 >> 4) << 24;
 		}
 
-		pvr_txr_load(line, dst, sizeof(line));
+		sq_flush(sq);
 
-		src += 2048;
-		dst += 256;
+		sq += 256 / sizeof(*sq);
+		src += 2048 - 32 / 2;
 	}
+
+	sq_unlock();
 }
 
 static void load_block(struct texture_page *page, unsigned int page_offset,
