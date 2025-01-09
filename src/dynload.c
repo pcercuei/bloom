@@ -45,20 +45,6 @@ long GPUfreeze(unsigned long,void *);
 void GPUrearmedCallbacks(const void **cbs);
 
 
-/* PAD */
-//typedef long (* PADopen)(unsigned long *);
-extern long PAD__init(long);
-extern long PAD__shutdown(void);
-extern long PAD__open(void);
-extern long PAD__close(void);
-extern long PAD1__readPort1(PadDataS *pad);
-extern long PAD2__readPort2(PadDataS *pad);
-unsigned char CALLBACK PAD1__poll(unsigned char value, int *more_data);
-unsigned char CALLBACK PAD2__poll(unsigned char value, int *more_data);
-unsigned char CALLBACK PAD1__startPoll(int pad);
-unsigned char CALLBACK PAD2__startPoll(int pad);
-
-
 /* DFSound Plugin */
 int CALLBACK SPUplayCDDAchannel(short *pcm, int nbytes, unsigned int cycle, int is_start);
 void CALLBACK SPUplayADPCMchannel(void *xap, unsigned int cycle, int is_start);
@@ -78,56 +64,6 @@ long CALLBACK SPUclose(void);
 long CALLBACK SPUfreeze(uint32_t ulFreezeMode, void * pF, uint32_t cycles);
 void CALLBACK SPUsetCDvol(unsigned char ll, unsigned char lr,
 			  unsigned char rl, unsigned char rr, unsigned int cycle);
-
-struct CdrStat;
-long CALLBACK DC_init(void);
-long CALLBACK DC_shutdown(void);
-long CALLBACK DC_open(void);
-long CALLBACK DC_close(void);
-long CALLBACK DC_getTN(unsigned char *_);
-long CALLBACK DC_getTD(unsigned char _, unsigned char *__);
-_Bool CALLBACK DC_readTrack(unsigned char *_);
-unsigned char * CALLBACK DC_getBuffer(void);
-unsigned char * CALLBACK DC_getBufferSub(int sector);
-long CALLBACK DC_configure(void);
-long CALLBACK DC_test(void);
-void CALLBACK DC_about(void);
-long CALLBACK DC_play(unsigned char *_);
-long CALLBACK DC_stop(void);
-long CALLBACK DC_setfilename(char *_);
-long CALLBACK DC_getStatus(struct CdrStat *_);
-char * CALLBACK DC_getDriveLetter(void);
-long CALLBACK DC_readCDDA(unsigned char _, unsigned char __, unsigned char ___, unsigned char *____);
-long CALLBACK DC_getTE(unsigned char _, unsigned char *__, unsigned char *___, unsigned char *____);
-long CALLBACK DC_prefetch(unsigned char m, unsigned char s, unsigned char f);
-
-static const struct sym pad_syms[] = {
-	BIND_SYM_NAMED("PADinit", PAD__init),
-	BIND_SYM_NAMED("PADshutdown", PAD__shutdown),
-	BIND_SYM_NAMED("PADopen", PAD__open),
-	BIND_SYM_NAMED("PADclose", PAD__close),
-	BIND_SYM_NAMED("PADreadPort1", PAD1__readPort1),
-	BIND_SYM_NAMED("PADstartPoll", PAD1__startPoll),
-	BIND_SYM_NAMED("PADpoll", PAD1__poll),
-	/*
-	BIND_SYM_NAMED("PADconfigure", PAD1__configure),
-	BIND_SYM_NAMED("PADabout", PAD1__about),
-	BIND_SYM_NAMED("PADtest", PAD1__test),
-	BIND_SYM_NAMED("PADquery", PAD1__query),
-	BIND_SYM_NAMED("PADkeypressed", PAD1__keypressed),
-	BIND_SYM_NAMED("PADsetSensitive", PAD1__setSensitive),
-	*/
-};
-
-static const struct sym pad2_syms[] = {
-	BIND_SYM_NAMED("PADinit", PAD__init),
-	BIND_SYM_NAMED("PADshutdown", PAD__shutdown),
-	BIND_SYM_NAMED("PADopen", PAD__open),
-	BIND_SYM_NAMED("PADclose", PAD__close),
-	BIND_SYM_NAMED("PADreadPort2", PAD2__readPort2),
-	BIND_SYM_NAMED("PADstartPoll", PAD2__startPoll),
-	BIND_SYM_NAMED("PADpoll", PAD2__poll),
-};
 
 static const struct sym spu_syms[] = {
 	BIND_SYM(SPUinit),
@@ -165,40 +101,7 @@ static const struct sym gpu_syms[] = {
 	BIND_SYM(GPUrearmedCallbacks),
 };
 
-static const struct sym cdr_syms[] = {
-	BIND_SYM_NAMED("CDRinit", DC_init),
-	BIND_SYM_NAMED("CDRshutdown", DC_shutdown),
-	BIND_SYM_NAMED("CDRopen", DC_open),
-	BIND_SYM_NAMED("CDRclose", DC_close),
-	BIND_SYM_NAMED("CDRgetTN", DC_getTN),
-	BIND_SYM_NAMED("CDRgetTD", DC_getTD),
-	BIND_SYM_NAMED("CDRreadTrack", DC_readTrack),
-	BIND_SYM_NAMED("CDRgetBuffer", DC_getBuffer),
-	BIND_SYM_NAMED("CDRgetBufferSub", DC_getBufferSub),
-	BIND_SYM_NAMED("CDRplay", DC_play),
-	BIND_SYM_NAMED("CDRstop", DC_stop),
-	BIND_SYM_NAMED("CDRgetStatus", DC_getStatus),
-	BIND_SYM_NAMED("CDRgetDriveLetter", DC_getDriveLetter),
-	BIND_SYM_NAMED("CDRconfigure", DC_configure),
-	BIND_SYM_NAMED("CDRtest", DC_test),
-	BIND_SYM_NAMED("CDRabout", DC_about),
-	BIND_SYM_NAMED("CDRsetfilename", DC_setfilename),
-	BIND_SYM_NAMED("CDRreadCDDA", DC_readCDDA),
-	BIND_SYM_NAMED("CDRgetTE", DC_getTE),
-	BIND_SYM_NAMED("CDRprefetch", DC_prefetch),
-};
-
 static const struct sym_table plugin_table[] = {
-	{
-		.lib = "plugins/builtin_pad",
-		.syms = pad_syms,
-		.num_syms = ARRAY_SIZE(pad_syms),
-	},
-	{
-		.lib = "plugins/builtin_pad2",
-		.syms = pad2_syms,
-		.num_syms = ARRAY_SIZE(pad2_syms),
-	},
 	{
 		.lib = "plugins/builtin_spu",
 		.syms = spu_syms,
@@ -208,11 +111,6 @@ static const struct sym_table plugin_table[] = {
 		.lib = "plugins/builtin_gpu",
 		.syms = gpu_syms,
 		.num_syms = ARRAY_SIZE(gpu_syms),
-	},
-	{
-		.lib = "plugins/builtin_cdr",
-		.syms = cdr_syms,
-		.num_syms = ARRAY_SIZE(cdr_syms),
 	},
 };
 

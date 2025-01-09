@@ -15,6 +15,7 @@
 #include <libpcsxcore/plugins.h>
 #include <libpcsxcore/psxcommon.h>
 #include <libpcsxcore/psxmem.h>
+#include <libpcsxcore/r3000a.h>
 #include <libpcsxcore/sio.h>
 #include <psemu_plugin_defs.h>
 
@@ -33,7 +34,6 @@ void fs_fat_shutdown(void);
 
 static bool is_exe;
 
-extern int stop;
 extern uint32_t _arch_mem_top;
 
 bool started;
@@ -76,9 +76,6 @@ static void init_config(void)
 	strcpy(Config.PluginsDir, "plugins");
 	strcpy(Config.Gpu, "builtin_gpu");
 	strcpy(Config.Spu, "builtin_spu");
-	strcpy(Config.Pad1, "builtin_pad");
-	strcpy(Config.Pad2, "builtin_pad2");
-	strcpy(Config.Cdr, "builtin_cdr");
 }
 
 static unsigned int screenshot_num;
@@ -101,7 +98,7 @@ static void emu_screenshot(uint8_t port, uint32_t)
 
 static void emu_exit(uint8_t, uint32_t)
 {
-	stop = 1;
+	psxRegs.stop = 1;
 }
 
 bool emu_check_cd(const char *path)
@@ -154,6 +151,8 @@ int main(int argc, char **argv)
 		ide_init();
 	if (WITH_SDCARD)
 		sdcard_init();
+
+	input_init();
 
 	init_config();
 
@@ -225,10 +224,10 @@ int main(int argc, char **argv)
 
 		mcd_fs_init();
 
-		stop = 0;
+		psxRegs.stop = 0;
 
-		while (!stop)
-			psxCpu->Execute();
+		while (!psxRegs.stop)
+			psxCpu->Execute(&psxRegs);
 
 		ClosePlugins();
 
@@ -242,6 +241,8 @@ int main(int argc, char **argv)
 	printf("Exit...\n");
 	EmuShutdown();
 	ReleasePlugins();
+
+	input_shutdown();
 
 	if (WITH_SDCARD)
 		sdcard_shutdown();

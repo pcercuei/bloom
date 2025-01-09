@@ -28,6 +28,8 @@ else()
 	set(BLOOM_VERSION bloom)
 endif()
 
+file(GENERATE OUTPUT revision.h CONTENT "#define REV \"${BLOOM_VERSION}\"\n")
+
 option(WITH_GDB "Enable support for GDB" OFF)
 
 find_library(PARALLAX_LIBRARIES parallax REQUIRED)
@@ -73,7 +75,7 @@ endif(WITH_FASTMEM)
 set(LIGHTNING_DIR deps/lightning CACHE STRING "GNU Lightning directory")
 file(REAL_PATH ${LIGHTNING_DIR} LIGHTNING_REAL_DIR EXPAND_TILDE)
 
-set(LIGHTREC_DIR deps/pcsx_rearmed/deps/lightrec CACHE STRING "Lightrec directory")
+set(LIGHTREC_DIR deps/lightrec CACHE STRING "Lightrec directory")
 file(REAL_PATH ${LIGHTREC_DIR} LIGHTREC_REAL_DIR EXPAND_TILDE)
 
 set(PCSX_DIR deps/pcsx_rearmed CACHE STRING "PCSX directory")
@@ -121,6 +123,7 @@ endif()
 add_library(libpcsxcore STATIC
 	${PCSX_REAL_DIR}/libpcsxcore/cdriso.c
 	${PCSX_REAL_DIR}/libpcsxcore/cdrom.c
+	${PCSX_REAL_DIR}/libpcsxcore/cdrom-async.c
 	${PCSX_REAL_DIR}/libpcsxcore/cheat.c
 	${PCSX_REAL_DIR}/libpcsxcore/database.c
 	${PCSX_REAL_DIR}/libpcsxcore/decode_xa.c
@@ -147,6 +150,7 @@ add_library(libpcsxcore STATIC
 	${PCSX_REAL_DIR}/libpcsxcore/new_dynarec/emu_if.c
 	${PCSX_REAL_DIR}/libpcsxcore/lightrec/plugin.c
 	${PCSX_REAL_DIR}/plugins/gpulib/gpu.c
+	${PCSX_REAL_DIR}/plugins/gpulib/prim.c
 	${PCSX_REAL_DIR}/plugins/gpulib/vout_pl.c
 )
 set_source_files_properties(
@@ -167,6 +171,9 @@ target_compile_definitions(libpcsxcore PUBLIC
 	DISABLE_MEM_LUTS
 	CODE_BUFFER_SIZE=${CODEBUF_SIZE}
 	LIGHTREC_PROG_NAME="/rd/dummy.elf"
+	USE_ASYNC_CDROM
+	USE_C11_THREADS
+	HAVE_CDROM
 )
 target_compile_options(libpcsxcore PRIVATE -Wno-format)
 target_link_libraries(libpcsxcore PUBLIC lightrec zlib)
@@ -185,7 +192,9 @@ if (GPU_PLUGIN STREQUAL Unai)
 	target_compile_definitions(gpu PRIVATE
 		_SDL
 		USE_GPULIB
+		GPU_UNAI_NO_OLD
 	)
+	target_link_libraries(gpu PUBLIC libpcsxcore)
 	set(HARDWARE_ACCELERATED OFF)
 elseif(GPU_PLUGIN STREQUAL PVR)
 	add_library(gpu STATIC
@@ -284,52 +293,52 @@ if (WITH_CHD)
 	set(ZSTD_VERSION 1.5.6)
 
 	add_library(lzma STATIC
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Alloc.c
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Bra86.c
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/BraIA64.c
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/CpuArch.c
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Delta.c
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/LzFind.c
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Lzma86Dec.c
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/LzmaDec.c
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/LzmaEnc.c
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Sort.c
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Alloc.c
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Bra86.c
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/src/BraIA64.c
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/src/CpuArch.c
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Delta.c
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/src/LzFind.c
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Lzma86Dec.c
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/src/LzmaDec.c
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/src/LzmaEnc.c
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/src/Sort.c
 	)
 	target_compile_definitions(lzma PRIVATE _7ZIP_ST Z7_ST)
 	target_compile_definitions(lzma PUBLIC Z7_DECL_Int32_AS_long)
 	target_include_directories(lzma PUBLIC
-		deps/pcsx_rearmed/deps/libchdr/deps/lzma-${LZMA_VERSION}/include
+		deps/libchdr/deps/lzma-${LZMA_VERSION}/include
 	)
 
 	add_library(zstd STATIC
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/debug.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/entropy_common.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/error_private.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/fse_decompress.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/pool.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/threading.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/xxhash.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/zstd_common.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/decompress/huf_decompress.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/decompress/zstd_ddict.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/decompress/zstd_decompress_block.c
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/decompress/zstd_decompress.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/debug.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/entropy_common.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/error_private.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/fse_decompress.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/pool.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/threading.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/xxhash.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/common/zstd_common.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/decompress/huf_decompress.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/decompress/zstd_ddict.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/decompress/zstd_decompress_block.c
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib/decompress/zstd_decompress.c
 	)
 	target_compile_definitions(zstd PRIVATE ZSTD_DISABLE_ASM)
 	target_include_directories(zstd PUBLIC
-		deps/pcsx_rearmed/deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib
+		deps/libchdr/deps/zstd-${ZSTD_VERSION}/lib
 	)
 
 	add_library(libchdr STATIC
-		deps/pcsx_rearmed/deps/libchdr/src/libchdr_bitstream.c
-		deps/pcsx_rearmed/deps/libchdr/src/libchdr_cdrom.c
-		deps/pcsx_rearmed/deps/libchdr/src/libchdr_chd.c
-		deps/pcsx_rearmed/deps/libchdr/src/libchdr_flac.c
-		deps/pcsx_rearmed/deps/libchdr/src/libchdr_huffman.c
+		deps/libchdr/src/libchdr_bitstream.c
+		deps/libchdr/src/libchdr_cdrom.c
+		deps/libchdr/src/libchdr_chd.c
+		deps/libchdr/src/libchdr_flac.c
+		deps/libchdr/src/libchdr_huffman.c
 	)
 	target_include_directories(libchdr PUBLIC
-		deps/pcsx_rearmed/deps/libchdr/include
-		deps/pcsx_rearmed/deps/libchdr/include/libchdr
+		deps/libchdr/include
+		deps/libchdr/include/libchdr
 	)
 	target_compile_definitions(libchdr INTERFACE HAVE_CHD)
 	target_link_libraries(libchdr PUBLIC lzma zstd zlib)

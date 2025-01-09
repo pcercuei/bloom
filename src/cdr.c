@@ -9,6 +9,8 @@
 #include <stddef.h>
 #include <arch/cache.h>
 #include <dc/cdrom.h>
+#include <kos/mutex.h>
+#include <libpcsxcore/cdrom-async.h>
 #include <libpcsxcore/plugins.h>
 
 #include "bloom-config.h"
@@ -21,11 +23,12 @@
 
 #define cache_line_aligned(sz) (((sz) + 31) & -32)
 
-static CDROM_TOC cdrom_toc;
+#define SECTOR_SIZE 2352
 
-static alignas(32) unsigned char sector[cache_line_aligned(2352)];
+static mutex_t lock;
+
+static CDROM_TOC cdrom_toc;
 static unsigned int curr_lba;
-static struct SubQ subq;
 
 static inline void lba_to_msf(unsigned int lba, unsigned char *min,
 			      unsigned char *sec, unsigned char *frame)
@@ -37,45 +40,32 @@ static inline void lba_to_msf(unsigned int lba, unsigned char *min,
 	*min = lba;
 }
 
-static inline unsigned int msf_to_lba(unsigned char min,
-				      unsigned char sec, unsigned char frame)
-{
-	return ((min * 60) + sec) * 75 + frame;
-}
-
-long DC_init(void)
-{
-	return 0;
-}
-
-long DC_shutdown(void)
-{
-	return 0;
-}
-
-long DC_open(void)
+void *rcdrom_open(const char *name, uint32_t *total_lba, uint32_t *have_sub)
 {
 	int ret;
 
-	ret = cdrom_reinit_ex(CDROM_READ_WHOLE_SECTOR, -1, 2352);
+	ret = cdrom_reinit_ex(CDROM_READ_WHOLE_SECTOR, -1, SECTOR_SIZE);
 	if (ret)
-		return ret;
+		return NULL;
 
 	ret = cdrom_read_toc(&cdrom_toc, 0);
 	if (ret)
-		return ret;
+		return NULL;
+
+	*total_lba = TOC_LBA(cdrom_toc.leadout_sector);
+	*have_sub = 1;
 
 	printf("CD-Rom initialized successfully.\n");
 
-	return 0;
+	/* return >0 for success */
+	return (void *)1;
 }
 
-long DC_close(void)
+void rcdrom_close(void *hdl)
 {
-	return 0;
 }
 
-long DC_getTN(unsigned char *tn)
+int rcdrom_getTN(void *hdl, uint8_t *tn)
 {
 	tn[0] = TOC_TRACK(cdrom_toc.first);
 	tn[1] = TOC_TRACK(cdrom_toc.last);
@@ -85,7 +75,7 @@ long DC_getTN(unsigned char *tn)
 	return 0;
 }
 
-long DC_getTD(unsigned char track, unsigned char *rt)
+int rcdrom_getTD(void *hdl, uint32_t total_lba, uint8_t track, uint8_t *rt)
 {
 	unsigned int lba;
 
@@ -101,55 +91,44 @@ long DC_getTD(unsigned char track, unsigned char *rt)
 	return 0;
 }
 
-static inline unsigned char from_bcd(unsigned char val)
+int rcdrom_readSector(void *stream, unsigned int lba, void *buffer)
 {
-	return (val / 16) * 10 + (val % 16);
-}
+	int ret;
 
-_Bool DC_readTrack(unsigned char *time)
-{
-	unsigned char m = from_bcd(time[0]);
-	unsigned char s = from_bcd(time[1]);
-	unsigned char f = from_bcd(time[2]);
-	unsigned int lba = msf_to_lba(m, s, f);
-
-	cdr_printf("Read track for MSF: %hhu:%hhu:%hhu, LBA: 0x%x\n", m, s, f, lba);
+	if (WITH_CDROM_DMA)
+		dcache_inval_range((uintptr_t)buffer, 2352);
 
 	curr_lba = lba;
 
-	if (WITH_CDROM_DMA)
-		dcache_inval_range((uintptr_t)sector, sizeof(sector));
+	ret = cdrom_read_sectors_ex(buffer, lba + 150, 1, WITH_CDROM_DMA);
+	if (ret) {
+		printf("Unable to read sector: %d\n", ret);
+		return ret;
+	}
 
-	return !cdrom_read_sectors_ex(sector, lba, 1, WITH_CDROM_DMA);
+	return 0;
 }
 
-unsigned char * DC_getBuffer(void)
+int rcdrom_readSub(void *stream, unsigned int lba, void *buffer)
 {
-	return sector + 12;
-}
-
-unsigned char * DC_getBufferSub(int sec)
-{
-	unsigned char val = 0, *ptr = &subq.ControlAndADR;
-	alignas(32) unsigned char dummy_sector[cache_line_aligned(2352)];
-	unsigned char subq_buf[102];
+	alignas(32) unsigned char dummy_sector[cache_line_aligned(SECTOR_SIZE)];
+	uint8_t *ptr = buffer, val = 0, subq_buf[102];
 	unsigned int i, j;
 	int ret;
 
-	if (sec + 150 != curr_lba) {
-		if (WITH_CDROM_DMA)
-			dcache_inval_range((uintptr_t)dummy_sector, sizeof(dummy_sector));
+	mutex_lock_scoped(&lock);
 
+	if (lba != curr_lba) {
 		/* We need to read the sector to be able to get the subchannel data... */
-		cdrom_read_sectors_ex(dummy_sector, sec + 150, 1, WITH_CDROM_DMA);
-
-		curr_lba = sec + 150;
+		ret = rcdrom_readSector(stream, lba, dummy_sector);
+		if (ret)
+			return ret;
 	}
 
 	ret = cdrom_get_subcode(subq_buf, sizeof(subq_buf), CD_SUB_Q_ALL);
 	if (ret) {
-		printf("Unable to read Q subchannel: %d\n", ret);
-		return NULL;
+		printf("Unable to get subcode: %d\n", ret);
+		return ret;
 	}
 
 	/* The 96 bits of Q subchannel data are located on bit 6 of each of the
@@ -158,43 +137,13 @@ unsigned char * DC_getBufferSub(int sec)
 		for (j = 0; j < 8; j++)
 			val = (val << 1) |  !!(subq_buf[4 + i * 8 + j] & (1 << 6));
 
-		ptr[i] = val;
+		ptr[12 + i] = val;
 	}
 
-	return (unsigned char *)&subq;
-}
-
-long DC_configure(void)
-{
 	return 0;
 }
 
-long DC_test(void)
-{
-	return 0;
-}
-
-void DC_about(void)
-{
-	return;
-}
-
-long DC_play(unsigned char *_)
-{
-	return 0;
-}
-
-long DC_stop(void)
-{
-	return 0;
-}
-
-long DC_setfilename(char *_)
-{
-	return 0;
-}
-
-long DC_getStatus(struct CdrStat *stat)
+int rcdrom_getStatus(void *stream, struct CdrStat *stat)
 {
 	int ret, status, type;
 
@@ -202,31 +151,18 @@ long DC_getStatus(struct CdrStat *stat)
 	if (ret < 0)
 		return ret;
 
-	CDR__getStatus(stat);
-
 	stat->Type = type == CD_CDDA ? 2 : 1;
 
 	return 0;
 }
 
-char * DC_getDriveLetter(void)
+int rcdrom_isMediaInserted(void *stream)
 {
-	return NULL;
-}
+	int ret, status, type;
 
-long DC_readCDDA(unsigned char _, unsigned char __,
-			  unsigned char ___, unsigned char *____)
-{
-	return 0;
-}
+	ret = cdrom_get_status(&status, &type);
+	if (ret < 0)
+		return ret;
 
-long DC_getTE(unsigned char _, unsigned char *__,
-		       unsigned char *___, unsigned char *____)
-{
-	return 0;
-}
-
-long DC_prefetch(unsigned char m, unsigned char s, unsigned char f)
-{
-	return 1;
+	return status != CD_STATUS_NO_DISC;
 }

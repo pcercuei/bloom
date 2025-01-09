@@ -72,7 +72,7 @@ static void emu_attach_mouse_cb(maple_device_t *dev)
 	in_type[dev->port] = PSE_PAD_TYPE_MOUSE;
 }
 
-long PAD__init(long flags) {
+void input_init(void) {
         maple_device_t *dev;
 	unsigned int i;
 
@@ -91,17 +91,13 @@ long PAD__init(long flags) {
 		if (dev)
 			emu_attach_mouse_cb(dev);
 	}
-
-	return PSE_PAD_ERR_SUCCESS;
 }
 
-long PAD__shutdown(void) {
+void input_shutdown(void) {
 	maple_attach_callback(MAPLE_FUNC_CONTROLLER, NULL);
 	maple_detach_callback(MAPLE_FUNC_CONTROLLER, NULL);
 	maple_attach_callback(MAPLE_FUNC_MOUSE, NULL);
 	maple_detach_callback(MAPLE_FUNC_MOUSE, NULL);
-
-	return PSE_PAD_ERR_SUCCESS;
 }
 
 long PAD__open(void)
@@ -145,7 +141,7 @@ static inline uint8_t analog_scale(uint8_t val)
 	return clamp8((uint32_t)val * SCALE_FACTOR / 128 + 128 - SCALE_FACTOR);
 }
 
-long PAD1__readPort1(PadDataS *pad) {
+long PAD1_readPort(PadDataS *pad) {
         maple_device_t *dev;
 	cont_state_t *state;
 	uint16_t buttons = 0;
@@ -216,8 +212,8 @@ long PAD1__readPort1(PadDataS *pad) {
 	return 0;
 }
 
-long PAD2__readPort2(PadDataS *pad) {
-	return PAD1__readPort1(pad);
+long PAD2_readPort(PadDataS *pad) {
+	return PAD1_readPort(pad);
 }
 
 void plat_trigger_vibrate(int pad, int low, int high) {

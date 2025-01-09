@@ -410,6 +410,7 @@ void pvr_renderer_init(void)
 
 	memset(&pvr, 0, sizeof(pvr));
 	pvr.gp1 = 0x14802000;
+	pvr.new_gp1 = 0x14802000;
 
 	for (i = 0; i < 32; i++) {
 		pvr.textures16_mask[i].base.settings.bpp = TEXTURE_16BPP;
@@ -2317,7 +2318,6 @@ static void process_gpu_commands(void)
 				pvr.blending_mode = (enum blending_mode)((pvr.gp1 >> 5) & 0x3);
 				pvr.page_x = pvr.gp1 & 0xf;
 				pvr.page_y = pvr.gp1 >> 4;
-
 				break;
 
 			case 0xe2:
@@ -2681,6 +2681,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 		case 0x7:
 			if (cmd == 0xe1)
 				pvr.new_gp1 = (pvr.new_gp1 & ~0x7ff) | (pbuffer->U4[0] & 0x7ff);
+			gpu.ex_regs[cmd & 0x7] = *(unsigned int *)pbuffer;
 			break;
 
 		case 4:

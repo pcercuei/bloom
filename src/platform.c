@@ -185,7 +185,7 @@ static inline void copy24(const uint16_t *vram, int w, int h)
 	}
 }
 
-static void dc_vout_flip(const void *vram, int stride, int bgr24,
+static void dc_vout_flip(const void *vram, int offset, int bgr24,
 			 int x, int y, int w, int h, int dims_changed)
 {
 	uint64_t new_timer;
@@ -215,6 +215,7 @@ static void dc_vout_flip(const void *vram, int stride, int bgr24,
 		/* Prepare the next frame */
 		hw_render_start();
 	} else {
+		vram = (void *)((uintptr_t)vram + offset);
 		assert(!((unsigned int)vram & 0x3));
 
 		/* We transfer 16 pixels at a time, so align width to 32 bytes.
