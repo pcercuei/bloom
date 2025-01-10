@@ -157,7 +157,7 @@ struct pvr_renderer {
 
 static struct pvr_renderer pvr;
 
-alignas(32) static unsigned char vertbuf[0x10000];
+alignas(32) static unsigned char vertbuf[0x20000];
 
 int renderer_init(void)
 {
