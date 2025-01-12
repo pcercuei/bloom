@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.21)
 project(bloom VERSION 0.1 LANGUAGES C CXX ASM)
 
 include(dreamcast)
@@ -54,24 +54,30 @@ if (WITH_FASTMEM)
 	link_libraries(fastmem)
 endif(WITH_FASTMEM)
 
+set(LIGHTNING_DIR deps/lightning CACHE STRING "GNU Lightning directory")
+file(REAL_PATH ${LIGHTNING_DIR} LIGHTNING_REAL_DIR EXPAND_TILDE)
+
+set(LIGHTREC_DIR deps/pcsx_rearmed/deps/lightrec CACHE STRING "Lightrec directory")
+file(REAL_PATH ${LIGHTREC_DIR} LIGHTREC_REAL_DIR EXPAND_TILDE)
+
 set(MAYBE_INCLUDE_STDINT_H "#include <stdint.h>")
-configure_file(deps/lightning/include/lightning.h.in include/lightning.h @ONLY)
+configure_file(${LIGHTNING_REAL_DIR}/include/lightning.h.in include/lightning.h @ONLY)
 
 add_library(lightning STATIC
-	deps/lightning/lib/lightning.c
-	deps/lightning/lib/jit_disasm.c
-	deps/lightning/lib/jit_fallback.c
-	deps/lightning/lib/jit_memory.c
-	deps/lightning/lib/jit_names.c
-	deps/lightning/lib/jit_note.c
-	deps/lightning/lib/jit_print.c
-	deps/lightning/lib/jit_rewind.c
-	deps/lightning/lib/jit_size.c
+	${LIGHTNING_REAL_DIR}/lib/lightning.c
+	${LIGHTNING_REAL_DIR}/lib/jit_disasm.c
+	${LIGHTNING_REAL_DIR}/lib/jit_fallback.c
+	${LIGHTNING_REAL_DIR}/lib/jit_memory.c
+	${LIGHTNING_REAL_DIR}/lib/jit_names.c
+	${LIGHTNING_REAL_DIR}/lib/jit_note.c
+	${LIGHTNING_REAL_DIR}/lib/jit_print.c
+	${LIGHTNING_REAL_DIR}/lib/jit_rewind.c
+	${LIGHTNING_REAL_DIR}/lib/jit_size.c
 	${CMAKE_BINARY_DIR}/include/lightning.h
 )
 target_include_directories(lightning PUBLIC
 	${CMAKE_BINARY_DIR}/include
-	deps/lightning/include
+	${LIGHTNING_REAL_DIR}/include
 )
 target_compile_definitions(lightning PRIVATE HAVE_MMAP=0 SH_HAS_FPU=0)
 target_compile_options(lightning PRIVATE -Wno-unused-function -Wno-unused-variable -Wno-parentheses -Wno-format)
@@ -85,7 +91,7 @@ set(LIBLIGHTNING lightning)
 set(LIBLIGHTNING_INCLUDE_DIR $<TARGET_PROPERTY:lightning,INTERFACE_INCLUDE_DIRECTORIES>)
 
 # Include Lightrec's own CMake file
-add_subdirectory(deps/pcsx_rearmed/deps/lightrec)
+add_subdirectory(${LIGHTREC_REAL_DIR} ${CMAKE_BINARY_DIR}/lightrec)
 
 set(CODE_BUFFER_SIZE_MB 3 CACHE STRING "Code buffer size in MiB")
 math(EXPR CODEBUF_SIZE "0x100000 * ${CODE_BUFFER_SIZE_MB}")
@@ -128,7 +134,7 @@ target_include_directories(libpcsxcore PUBLIC
 	deps/pcsx_rearmed/include
 	deps/pcsx_rearmed
 )
-target_include_directories(libpcsxcore PRIVATE deps/pcsx_rearmed/deps/lightrec)
+target_include_directories(libpcsxcore PRIVATE ${LIGHTREC_REAL_DIR})
 target_include_directories(libpcsxcore INTERFACE deps/pcsx_rearmed)
 target_compile_definitions(libpcsxcore PUBLIC
 	LIGHTREC
