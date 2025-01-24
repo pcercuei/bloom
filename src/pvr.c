@@ -711,10 +711,13 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 		pvr_wait_ready();
 		pvr_reap_textures();
 
-		if (pvr.start_list == PVR_LIST_PT_POLY)
-			pvr_set_vertbuf(PVR_LIST_TR_POLY, vertbuf, sizeof(vertbuf));
-		else
-			pvr_set_vertbuf(PVR_LIST_TR_POLY, NULL, 0);
+		if (WITH_HYBRID_RENDERING) {
+			if (pvr.start_list == PVR_LIST_PT_POLY)
+				pvr_set_vertbuf(PVR_LIST_TR_POLY,
+						vertbuf, sizeof(vertbuf));
+			else
+				pvr_set_vertbuf(PVR_LIST_TR_POLY, NULL, 0);
+		}
 
 		pvr_scene_begin();
 		pvr_list_begin(pvr.start_list);
@@ -722,7 +725,7 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 		pvr.new_frame = 0;
 	}
 
-	if (cxt->list_type != pvr.start_list) {
+	if (WITH_HYBRID_RENDERING && cxt->list_type != pvr.start_list) {
 		draw_prim_dma(cxt, x, y, u, v, color, nb, oargb);
 		return;
 	}
@@ -1575,7 +1578,7 @@ void hw_render_start(void)
 	pvr.zoffset = 0;
 	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
 
-	if (pvr.set_mask && pvr.check_mask)
+	if (!WITH_HYBRID_RENDERING || (pvr.set_mask && pvr.check_mask))
 		pvr.start_list = PVR_LIST_TR_POLY;
 	else
 		pvr.start_list = PVR_LIST_PT_POLY;
