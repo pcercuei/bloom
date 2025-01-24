@@ -113,7 +113,7 @@ bool emu_check_cd(const char *path)
 /* Copy of the default params, but with FSAA enabled */
 static pvr_init_params_t pvr_init_params_fsaa = {
 	.opb_sizes = {
-		HARDWARE_ACCELERATED ? PVR_BINSIZE_0 : PVR_BINSIZE_16,
+		PVR_BINSIZE_16,
 		PVR_BINSIZE_0,
 		HARDWARE_ACCELERATED ? PVR_BINSIZE_16 : PVR_BINSIZE_0,
 		PVR_BINSIZE_0,

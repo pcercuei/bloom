@@ -35,11 +35,16 @@
 #define TEX_WIDTH  1024
 #define TEX_HEIGHT 512
 
+#define SCREEN_WIDTH	((float)((WITH_480P ? 640 : 320) << WITH_FSAA))
+#define SCREEN_HEIGHT	(WITH_480P ? 480.0f : 240.0f)
+
 static unsigned int frames;
 static uint64_t timer_ms;
 
 static pvr_ptr_t pvram;
 static uint32_t *pvram_sq;
+
+static bool frame_was_24bpp;
 
 float screen_fw, screen_fh;
 static unsigned int screen_w, screen_h, screen_bpp;
@@ -53,21 +58,27 @@ int in_type[8] = {
    PSE_PAD_TYPE_NONE, PSE_PAD_TYPE_NONE
 };
 
+static void dc_alloc_pvram(void)
+{
+	pvram = pvr_mem_malloc(TEX_WIDTH * TEX_HEIGHT * 2);
+
+	assert(!!pvram);
+	assert(!((unsigned int)pvram & 0x1f));
+
+	pvram_sq = (uint32_t *)(((uintptr_t)pvram & 0xffffff) | PVR_TA_TEX_MEM);
+}
+
 static int dc_vout_open(void)
 {
 	if (!started)
 		return 0;
 
-	if (HARDWARE_ACCELERATED) {
+	frame_was_24bpp = false;
+
+	if (HARDWARE_ACCELERATED)
 		hw_render_start();
-	} else {
-		pvram = pvr_mem_malloc(TEX_WIDTH * TEX_HEIGHT * 2);
-
-		assert(!!pvram);
-		assert(!((unsigned int)pvram & 0x1f));
-
-		pvram_sq = (uint32_t *)(((uintptr_t)pvram & 0xffffff) | PVR_TA_TEX_MEM);
-	}
+	else
+		dc_alloc_pvram();
 
 	return 0;
 }
@@ -79,26 +90,23 @@ static void dc_vout_close(void)
 
 	if (HARDWARE_ACCELERATED)
 		hw_render_stop();
-	else
+
+	if (!HARDWARE_ACCELERATED || frame_was_24bpp)
 		pvr_mem_free(pvram);
 }
 
 static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 {
-	float width, height;
-
 	if (!started)
 		return;
 
-	width = WITH_480P ? 640.0f : 320.0f;
-	height = WITH_480P ? 480.0f : 240.0f;
 	screen_w = raw_w;
 	screen_h = raw_h;
 	screen_bpp = bpp;
 
 	/* Use 1280x480 when using FSAA */
-	screen_fw = width * (float)(1 + WITH_FSAA) / (float)raw_w;
-	screen_fh = height / (float)raw_h;
+	screen_fw = SCREEN_WIDTH / (float)raw_w;
+	screen_fh = SCREEN_HEIGHT / (float)raw_h;
 }
 
 static inline void copy15(const uint16_t *vram, int stride, int w, int h)
@@ -190,9 +198,21 @@ static void dc_vout_flip(const void *vram, int stride, int bgr24,
 	if (!started || !vram)
 		return;
 
-	if (HARDWARE_ACCELERATED) {
+	if (HARDWARE_ACCELERATED && !frame_was_24bpp) {
 		/* Render the old frame */
 		hw_render_stop();
+
+		if (bgr24) {
+			invalidate_all_textures();
+			dc_alloc_pvram();
+		}
+	}
+
+	frame_was_24bpp = bgr24;
+
+	if (HARDWARE_ACCELERATED && !bgr24) {
+		if (frame_was_24bpp)
+			pvr_mem_free(pvram);
 
 		/* Prepare the next frame */
 		hw_render_start();
