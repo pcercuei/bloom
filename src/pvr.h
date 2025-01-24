@@ -15,4 +15,6 @@ extern float screen_fw, screen_fh;
 void hw_render_start(void);
 void hw_render_stop(void);
 
+void invalidate_all_textures(void);
+
 #endif /* __BLOOM_PVR_H */

@@ -561,6 +561,19 @@ static void invalidate_textures(unsigned int page_offset)
 	pvr.textures[page_offset] = NULL;
 }
 
+void invalidate_all_textures(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < 32; i++)
+		invalidate_textures(i);
+
+	pvr_reap_textures();
+
+	pvr_wait_render_done();
+	pvr_reap_textures();
+}
+
 void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 {
 	unsigned int x2, y2, dx, dy, page_offset;
