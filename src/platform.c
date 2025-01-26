@@ -208,8 +208,6 @@ static void dc_vout_flip(const void *vram, int stride, int bgr24,
 		}
 	}
 
-	frame_was_24bpp = bgr24;
-
 	if (HARDWARE_ACCELERATED && !bgr24) {
 		if (frame_was_24bpp)
 			pvr_mem_free(pvram);
@@ -281,6 +279,8 @@ static void dc_vout_flip(const void *vram, int stride, int bgr24,
 		pvr_list_finish();
 		pvr_scene_finish();
 	}
+
+	frame_was_24bpp = bgr24;
 
 	new_timer = timer_ms_gettime64();
 
