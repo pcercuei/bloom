@@ -1388,6 +1388,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			colors[0] = 0xffffff;
 
+			if (textured && raw_tex) {
+				/* Skip color */
+				buf++;
+			}
+
 			for (i = 0; i < nb; i++) {
 				if (!(textured && raw_tex) && (i == 0 || multicolor)) {
 					/* BGR->RGB swap */
