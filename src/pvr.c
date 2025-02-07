@@ -698,28 +698,27 @@ static void draw_prim_dma(pvr_poly_cxt_t *cxt,
 	pvr_poly_hdr_t *hdr;
 	pvr_vertex_t *vert;
 	unsigned int i;
+	uint32_t flags;
 	float z = get_zvalue();
 
 	hdr = pvr_vertbuf_tail(list);
 	pvr_poly_compile(hdr, cxt);
-	pvr_vertbuf_written(list, sizeof(*hdr));
-
-	vert = pvr_vertbuf_tail(list);
+	vert = (pvr_vertex_t *)&hdr[1];
 
 	for (i = 0; i < nb; i++) {
-		vert[i] = (pvr_vertex_t){
-			.flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
-			.argb = color[i],
-			.oargb = oargb,
-			.x = x[i],
-			.y = y[i],
-			.z = z,
-			.u = u[i],
-			.v = v[i],
-		};
+		flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+
+		dcache_alloc_block(&vert[i], flags);
+		vert[i].x = x[i];
+		vert[i].y = y[i];
+		vert[i].z = z;
+		vert[i].u = u[i];
+		vert[i].v = v[i];
+		vert[i].argb = color[i];
+		vert[i].oargb = oargb;
 	}
 
-	pvr_vertbuf_written(list, nb * sizeof(*vert));
+	pvr_vertbuf_written(list, sizeof(*hdr) + nb * sizeof(*vert));
 }
 
 static void draw_prim(pvr_poly_cxt_t *cxt,
