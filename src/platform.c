@@ -346,7 +346,7 @@ long PAD__init(long flags) {
 	maple_detach_callback(MAPLE_FUNC_CONTROLLER, emu_detach_cont_cb);
 
 	for (i = 0; i < 4; i++) {
-		dev = maple_enum_dev(i, 0);
+		dev = maple_enum_type(i, MAPLE_FUNC_CONTROLLER);
 		if (dev) {
 			printf("Found a controller in port %u\n", dev->port);
 			in_type[dev->port] = PSE_PAD_TYPE_STANDARD;
