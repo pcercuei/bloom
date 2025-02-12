@@ -122,11 +122,13 @@ struct texture_page_16bpp {
 
 struct texture_page_8bpp {
 	struct texture_page base;
+	unsigned int nb_cluts;
 	uint16_t clut[NB_CODEBOOKS_8BPP];
 };
 
 struct texture_page_4bpp {
 	struct texture_page base;
+	unsigned int nb_cluts;
 	uint16_t clut[NB_CODEBOOKS_4BPP];
 };
 
@@ -331,42 +333,36 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 	struct texture_page_4bpp *page4 = to_texture_page_4bpp(page);
 	bool bpp4 = page->settings.bpp == TEXTURE_4BPP;
 	unsigned int codebooks = bpp4 ? NB_CODEBOOKS_4BPP : NB_CODEBOOKS_8BPP;
-	int offset_with_space = -1;
 	unsigned int i;
 
-	/* We use bit 15 as a the entry valid mark */
-	clut |= BIT(15);
-
-	for (i = 0; i < codebooks; i++) {
+	for (i = 0; i < page4->nb_cluts; i++) {
 		if (page4->clut[i] == clut)
 			break;
-
-		if (offset_with_space < 0 && !(page4->clut[i] & BIT(15)))
-			offset_with_space = i;
 	}
 
-	if (i < codebooks) {
+	if (i < page4->nb_cluts) {
 		pvr_printf("Found CLUT at offset %u\n", i);
 		return i;
 	}
 
-	if (offset_with_space < 0) {
+	if (i == codebooks) {
 		/* No space? Let's trash everything and start again */
+		i = 0;
 		memset(page4->clut, 0, codebooks * sizeof(*page4->clut));
-		offset_with_space = 0;
 	}
 
 	/* We didn't find the CLUT anywere - add it and load the palette */
-	page4->clut[offset_with_space] = clut;
+	page4->clut[i] = clut;
+	page4->nb_cluts = i + 1;
 
-	pvr_printf("Load CLUT 0x%04hx at offset %u\n", clut, offset_with_space);
+	pvr_printf("Load CLUT 0x%04hx at offset %u\n", clut, i);
 
 	if (bpp4)
-		load_palette_bpp4(page, offset_with_space, clut);
+		load_palette_bpp4(page, i, clut);
 	else
-		load_palette_bpp8(page, offset_with_space, clut);
+		load_palette_bpp8(page, i, clut);
 
-	return offset_with_space;
+	return i;
 }
 
 static struct texture_page * alloc_texture_16bpp(void)
@@ -407,6 +403,7 @@ static struct texture_page * alloc_texture_8bpp(void)
 		return NULL;
 	}
 
+	page->nb_cluts = 0;
 	memset(page->clut, 0, sizeof(page->clut));
 
 	return &page->base;
@@ -426,6 +423,7 @@ static struct texture_page * alloc_texture_4bpp(void)
 		return NULL;
 	}
 
+	page->nb_cluts = 0;
 	memset(page->clut, 0, sizeof(page->clut));
 
 	return &page->base;
@@ -1419,7 +1417,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			}
 
 			if (textured) {
-				clut = texcoord[0] >> 16;
+				clut = (texcoord[0] >> 16) & 0x7fff;
 				texpage = texcoord[1] >> 16;
 				settings = pvr.settings;
 
@@ -1562,7 +1560,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 				vcoords[0] = vcoords[1] = v_to_pvr(pbuffer->U1[9]);
 				vcoords[2] = vcoords[3] = v_to_pvr(pbuffer->U1[9] + h);
 
-				clut = pbuffer->U2[5];
+				clut = pbuffer->U2[5] & 0x7fff;
 
 				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y, clut,
 								pvr.settings, &codebook);
