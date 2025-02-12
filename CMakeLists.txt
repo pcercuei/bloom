@@ -232,6 +232,18 @@ option(WITH_480P "Enable high-resolution 480p mode" ON)
 option(WITH_HYBRID_RENDERING "Enable hybrid rendering" OFF)
 option(WITH_MAGENTA_BG "Enable magenta background to detect painting issues" OFF)
 
+if (WITH_HYBRID_RENDERING)
+	set(WITH_POLYBUF_SIZE_KB 128 CACHE STRING "Poly buffer size for hybrid rendering, in KiB")
+	math(EXPR POLY_BUFFER_SIZE "0x400 * ${WITH_POLYBUF_SIZE_KB}")
+	if (NOT POLY_BUFFER_SIZE)
+		message(SEND_ERROR "Invalid poly buffer size.")
+	endif()
+else()
+	set(POLY_BUFFER_SIZE 0) # the buffer will be discarded anyway
+endif()
+
+target_compile_definitions(gpu PRIVATE POLY_BUFFER_SIZE=${POLY_BUFFER_SIZE})
+
 if (NOT SPU_PLUGIN)
 	set(SPU_PLUGIN AICA CACHE STRING "SPU plugin" FORCE)
 	set_property(CACHE SPU_PLUGIN PROPERTY

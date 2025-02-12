@@ -278,7 +278,7 @@ static void poly_enqueue(pvr_list_t list, const struct poly *poly);
 
 static struct pvr_renderer pvr;
 
-static struct poly polybuf[2048];
+static struct poly polybuf[POLY_BUFFER_SIZE / sizeof(struct poly)];
 
 static uint32_t cmdbuf[32768];
 
