@@ -109,23 +109,24 @@ struct texture_settings {
 struct texture_page {
 	struct texture_page *next;
 	struct texture_settings settings;
+	union {
+		pvr_ptr_t tex;
+		struct texture_vq *vq;
+	};
 };
 
 struct texture_page_16bpp {
 	struct texture_page base;
-	pvr_ptr_t tex;
 	pvr_ptr_t mask_tex;
 };
 
 struct texture_page_8bpp {
 	struct texture_page base;
-	struct texture_vq *vq;
 	uint16_t clut[NB_CODEBOOKS_8BPP];
 };
 
 struct texture_page_4bpp {
 	struct texture_page base;
-	struct texture_vq *vq;
 	uint16_t clut[NB_CODEBOOKS_4BPP];
 };
 
@@ -223,10 +224,10 @@ static void pvr_reap_textures(void)
 		next = page->next;
 
 		if (page->settings.bpp == TEXTURE_16BPP) {
-			pvr_mem_free(to_texture_page_16bpp(page)->tex);
+			pvr_mem_free(page->tex);
 			pvr_mem_free(to_texture_page_16bpp(page)->mask_tex);
 		} else {
-			pvr_mem_free(to_texture_page_8bpp(page)->vq);
+			pvr_mem_free(page->vq);
 		}
 
 		free(page);
@@ -311,8 +312,7 @@ static void load_palette(pvr_ptr_t palette_addr, pvr_ptr_t mask_addr,
 static void
 load_palette_bpp4(struct texture_page *page, unsigned int offset, uint16_t clut)
 {
-	struct texture_page_4bpp *page4 = to_texture_page_4bpp(page);
-	struct pvr_vq_codebook_4bpp *codebook4 = &page4->vq->codebook4[offset];
+	struct pvr_vq_codebook_4bpp *codebook4 = &page->vq->codebook4[offset];
 
 	load_palette(codebook4->palette, codebook4->mask, clut, 16);
 }
@@ -320,8 +320,7 @@ load_palette_bpp4(struct texture_page *page, unsigned int offset, uint16_t clut)
 static void
 load_palette_bpp8(struct texture_page *page, unsigned int offset, uint16_t clut)
 {
-	struct texture_page_8bpp *page8 = to_texture_page_8bpp(page);
-	struct pvr_vq_codebook_8bpp *codebook8 = &page8->vq->codebook8[offset];
+	struct pvr_vq_codebook_8bpp *codebook8 = &page->vq->codebook8[offset];
 
 	load_palette(codebook8->palette, codebook8->mask, clut, 256);
 }
@@ -378,15 +377,15 @@ static struct texture_page * alloc_texture_16bpp(void)
 	if (!page)
 		return NULL;
 
-	page->tex = pvr_mem_malloc(256 * 256 * 2);
-	if (!page->tex) {
+	page->base.tex = pvr_mem_malloc(256 * 256 * 2);
+	if (!page->base.tex) {
 		free(page);
 		return NULL;
 	}
 
 	page->mask_tex = pvr_mem_malloc(256 * 256 * 2);
 	if (!page->mask_tex) {
-		pvr_mem_free(page->tex);
+		pvr_mem_free(page->base.tex);
 		free(page);
 		return NULL;
 	}
@@ -402,8 +401,8 @@ static struct texture_page * alloc_texture_8bpp(void)
 	if (!page)
 		return NULL;
 
-	page->vq = pvr_mem_malloc(sizeof(*page->vq));
-	if (!page->vq) {
+	page->base.vq = pvr_mem_malloc(sizeof(*page->base.vq));
+	if (!page->base.vq) {
 		free(page);
 		return NULL;
 	}
@@ -421,8 +420,8 @@ static struct texture_page * alloc_texture_4bpp(void)
 	if (!page)
 		return NULL;
 
-	page->vq = pvr_mem_malloc(sizeof(*page->vq));
-	if (!page->vq) {
+	page->base.vq = pvr_mem_malloc(sizeof(*page->base.vq));
+	if (!page->base.vq) {
 		free(page);
 		return NULL;
 	}
@@ -450,7 +449,7 @@ static void load_texture_16bpp(struct texture_page_16bpp *page,
 	uint16_t *mask, *dst;
 	unsigned int x, y;
 
-	dst = (uint16_t *)page->tex;
+	dst = (uint16_t *)page->base.tex;
 	mask = (uint16_t *)page->mask_tex;
 
 	for (y = 0; y < 256; y++) {
@@ -466,8 +465,7 @@ static void load_texture_16bpp(struct texture_page_16bpp *page,
 	}
 }
 
-static void load_texture_8bpp(struct texture_page_8bpp *page,
-			      const uint8_t *src)
+static void load_texture_8bpp(struct texture_page *page, const uint8_t *src)
 {
 	uint8_t *dst = page->vq->frame;
 	unsigned int y;
@@ -479,8 +477,7 @@ static void load_texture_8bpp(struct texture_page_8bpp *page,
 	}
 }
 
-static void load_texture_4bpp(struct texture_page_4bpp *page,
-			      const uint8_t *src)
+static void load_texture_4bpp(struct texture_page *page, const uint8_t *src)
 {
 	uint8_t *dst = page->vq->frame;
 	alignas(32) uint8_t line[256];
@@ -516,9 +513,9 @@ static void load_texture(struct texture_page *page,
 	if (page->settings.bpp == TEXTURE_16BPP)
 		load_texture_16bpp(to_texture_page_16bpp(page), src);
 	else if (page->settings.bpp == TEXTURE_8BPP)
-		load_texture_8bpp(to_texture_page_8bpp(page), src);
+		load_texture_8bpp(page, src);
 	else
-		load_texture_4bpp(to_texture_page_4bpp(page), src);
+		load_texture_4bpp(page, src);
 }
 
 static struct texture_page *
@@ -791,7 +788,6 @@ static void load_mask_texture(struct texture_page *page,
 			      unsigned int nb, bool bright)
 {
 	unsigned int tex_fmt, tex_width, tex_height;
-	struct texture_vq *vq;
 	pvr_poly_cxt_t mask_cxt;
 	pvr_ptr_t mask_tex;
 	float new_vcoords[4];
@@ -815,14 +811,12 @@ static void load_mask_texture(struct texture_page *page,
 			for (i = 0; i < nb; i++)
 				new_vcoords[i] = vcoords[i] - 8.0f / 512.0f;
 
-			vq = to_texture_page_8bpp(page)->vq;
-			mask_tex = (pvr_ptr_t)vq->codebook8[codebook].mask;
+			mask_tex = (pvr_ptr_t)page->vq->codebook8[codebook].mask;
 		} else {
 			for (i = 0; i < nb; i++)
 				new_vcoords[i] = vcoords[i] - 1.0f / 512.0f;
 
-			vq = to_texture_page_4bpp(page)->vq;
-			mask_tex = (pvr_ptr_t)vq->codebook4[codebook].mask;
+			mask_tex = (pvr_ptr_t)page->vq->codebook4[codebook].mask;
 		}
 
 		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
@@ -1137,25 +1131,22 @@ static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
 				     unsigned int codebook)
 {
 	unsigned int tex_fmt, tex_width, tex_height;
-	struct texture_vq *vq;
 	pvr_ptr_t tex;
 
 	if (page->settings.bpp == TEXTURE_16BPP) {
 		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 256;
 		tex_height = 256;
-		tex = to_texture_page_16bpp(page)->tex;
+		tex = page->tex;
 	} else {
 		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 1024;
 		tex_height = 512;
 
 		if (page->settings.bpp == TEXTURE_8BPP) {
-			vq = to_texture_page_8bpp(page)->vq;
-			tex = (pvr_ptr_t)&vq->codebook8[codebook];
+			tex = (pvr_ptr_t)&page->vq->codebook8[codebook];
 		} else {
-			vq = to_texture_page_4bpp(page)->vq;
-			tex = (pvr_ptr_t)&vq->codebook4[codebook];
+			tex = (pvr_ptr_t)&page->vq->codebook4[codebook];
 		}
 	}
 
