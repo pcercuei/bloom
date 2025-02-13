@@ -779,6 +779,18 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	}
 }
 
+static pvr_ptr_t pvr_get_texture(const struct texture_page *page,
+				 unsigned int codebook)
+{
+	if (page->settings.bpp == TEXTURE_16BPP)
+		return page->tex;
+
+	if (page->settings.bpp == TEXTURE_8BPP)
+		return (pvr_ptr_t)&page->vq->codebook8[codebook];
+
+	return (pvr_ptr_t)&page->vq->codebook4[codebook];
+}
+
 static void load_mask_texture(struct texture_page *page,
 			      unsigned int codebook,
 			      const float *xcoords, const float *ycoords,
@@ -1130,23 +1142,16 @@ static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
 				     unsigned int codebook)
 {
 	unsigned int tex_fmt, tex_width, tex_height;
-	pvr_ptr_t tex;
+	pvr_ptr_t tex = pvr_get_texture(page, codebook);
 
 	if (page->settings.bpp == TEXTURE_16BPP) {
 		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 256;
 		tex_height = 256;
-		tex = page->tex;
 	} else {
 		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 1024;
 		tex_height = 512;
-
-		if (page->settings.bpp == TEXTURE_8BPP) {
-			tex = (pvr_ptr_t)&page->vq->codebook8[codebook];
-		} else {
-			tex = (pvr_ptr_t)&page->vq->codebook4[codebook];
-		}
 	}
 
 	pvr_poly_cxt_txr(cxt, pvr.list, tex_fmt,
