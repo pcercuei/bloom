@@ -867,9 +867,17 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		      struct texture_page *tex_page,
 		      unsigned int codebook)
 {
+	float new_vcoords[4];
 	uint32_t *colors_alt;
 	unsigned int i;
 	int txr_en;
+
+	if (tex_page) {
+		memcpy(new_vcoords, vcoords, nb * sizeof(*vcoords));
+		adjust_vcoords(new_vcoords, nb, tex_page->settings.bpp, codebook);
+
+		vcoords = new_vcoords;
+	}
 
 	cxt->gen.culling = PVR_CULLING_SMALL;
 	cxt->depth.comparison = pvr.depthcmp;
@@ -1429,8 +1437,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 								settings, &codebook);
 				pvr_prepare_poly_cxt_txr(&cxt, tex_page, codebook);
 
-				adjust_vcoords(vcoords, nb, settings.bpp, codebook);
-
 				if (semi_trans)
 					blending_mode = (enum blending_mode)((texpage >> 5) & 0x3);
 			} else {
@@ -1565,8 +1571,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y, clut,
 								pvr.settings, &codebook);
 				pvr_prepare_poly_cxt_txr(&cxt, tex_page, codebook);
-
-				adjust_vcoords(vcoords, 4, pvr.settings.bpp, codebook);
 			} else {
 				pvr_poly_cxt_col(&cxt, pvr.list);
 			}
