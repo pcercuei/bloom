@@ -352,7 +352,7 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 
 	if (offset_with_space < 0) {
 		/* No space? Let's trash everything and start again */
-		memset(page4->clut, 0, sizeof(page4->clut));
+		memset(page4->clut, 0, codebooks * sizeof(*page4->clut));
 		offset_with_space = 0;
 	}
 
