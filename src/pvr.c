@@ -54,7 +54,7 @@
 #define CODEBOOK_AREA_SIZE (256 * 256)
 
 #define NB_CODEBOOKS_4BPP   \
-	((CODEBOOK_AREA_SIZE - 2048) / sizeof(struct pvr_vq_codebook_4bpp))
+	((CODEBOOK_AREA_SIZE - 1792) / sizeof(struct pvr_vq_codebook_4bpp))
 #define NB_CODEBOOKS_8BPP   \
 	(CODEBOOK_AREA_SIZE / sizeof(struct pvr_vq_codebook_8bpp))
 
@@ -70,28 +70,25 @@ union PacketBuffer {
 
 struct pvr_vq_codebook_4bpp {
 	uint64_t palette[16];
-	uint64_t pad1[16];
-	uint64_t mask[16];
-	uint64_t pad2[16];
+	uint64_t _[16];
 };
 
 struct pvr_vq_codebook_8bpp {
 	uint64_t palette[256];
-	uint64_t mask[256];
 };
 
 struct texture_vq {
 	union {
 		struct {
 			struct pvr_vq_codebook_4bpp codebook4[NB_CODEBOOKS_4BPP];
-			char _pad[2048];
+			char _pad[1792];
 		};
 		struct pvr_vq_codebook_8bpp codebook8[NB_CODEBOOKS_8BPP];
 	};
 	uint8_t frame[256 * 256];
 };
 
-_Static_assert(sizeof_field(struct texture_vq, codebook4) + 2048
+_Static_assert(sizeof_field(struct texture_vq, codebook4) + 1792
 	       == sizeof_field(struct texture_vq, codebook8));
 
 enum texture_bpp {
@@ -1228,10 +1225,10 @@ static void adjust_vcoords(float *vcoords, unsigned int nb,
 
 	switch (bpp) {
 	case TEXTURE_8BPP:
-		lines = (NB_CODEBOOKS_8BPP - 1 - codebook) * 16 + 8;
+		lines = (NB_CODEBOOKS_8BPP - 1 - codebook) * 8;
 		break;
 	case TEXTURE_4BPP:
-		lines = (NB_CODEBOOKS_4BPP - 1 - codebook) * 2 + 2;
+		lines = NB_CODEBOOKS_4BPP - 1 - codebook;
 		break;
 	default:
 		/* Nothing to do */
