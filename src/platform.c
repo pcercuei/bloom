@@ -24,8 +24,6 @@
 #include "emu.h"
 #include "pvr.h"
 
-#define BIT(x) (1 << (x))
-
 #define MAX_LAG_FRAMES 3
 
 #define tvdiff(tv, tv_old) \

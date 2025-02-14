@@ -49,8 +49,6 @@
 #define sizeof_field(type, member) \
 	sizeof(((type *)0)->member)
 
-#define BIT(x)	(1u << (x))
-
 #define CODEBOOK_AREA_SIZE (256 * 256)
 
 #define NB_CODEBOOKS_4BPP   \
