@@ -109,7 +109,6 @@ struct texture_settings {
 };
 
 struct texture_page {
-	struct texture_page *next;
 	struct texture_settings settings;
 	union {
 		pvr_ptr_t tex;
@@ -204,8 +203,12 @@ struct pvr_renderer {
 
 	struct texture_settings settings;
 
-	struct texture_page *textures[32];
-	struct texture_page *reap_list[2];
+	struct texture_page_16bpp textures16[32];
+	struct texture_page_8bpp textures8[32];
+	struct texture_page_4bpp textures4[32];
+
+	pvr_ptr_t reap_list[2][32 * 4];
+	unsigned int reap_bank, to_reap[2];
 
 	unsigned int polybuf_cnt_start;
 };
@@ -216,12 +219,20 @@ static struct poly polybuf[2048];
 
 int renderer_init(void)
 {
+	unsigned int i;
+
 	pvr_printf("PVR renderer init\n");
 
 	gpu.vram = aligned_alloc(32, 1024 * 1024);
 
 	memset(&pvr, 0, sizeof(pvr));
 	pvr.gp1 = 0x14802000;
+
+	for (i = 0; i < 32; i++) {
+		pvr.textures16[i].base.settings.bpp = TEXTURE_16BPP;
+		pvr.textures8[i].base.settings.bpp = TEXTURE_8BPP;
+		pvr.textures4[i].base.settings.bpp = TEXTURE_4BPP;
+	}
 
 	pvr_set_pal_format(PVR_PAL_ARGB1555);
 	pvr_set_pal_entry(0, 0x0000);
@@ -256,23 +267,15 @@ to_texture_page_16bpp(struct texture_page *page)
 
 static void pvr_reap_textures(void)
 {
-	struct texture_page *page, *next;
+	unsigned int i, list;
 
-	for (page = pvr.reap_list[1]; page; page = next) {
-		next = page->next;
+	pvr.reap_bank ^= 1;
+	list = pvr.reap_bank;
 
-		if (page->settings.bpp == TEXTURE_16BPP) {
-			pvr_mem_free(page->tex);
-			pvr_mem_free(to_texture_page_16bpp(page)->mask_tex);
-		} else {
-			pvr_mem_free(page->vq);
-		}
+	for (i = 0; i < pvr.to_reap[list]; i++)
+		pvr_mem_free(pvr.reap_list[list][i]);
 
-		free(page);
-	}
-
-	pvr.reap_list[1] = pvr.reap_list[0];
-	pvr.reap_list[0] = NULL;
+	pvr.to_reap[list] = 0;
 }
 
 void renderer_finish(void)
@@ -407,81 +410,6 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 	return i;
 }
 
-static struct texture_page * alloc_texture_16bpp(void)
-{
-	struct texture_page_16bpp *page;
-
-	page = malloc(sizeof(*page));
-	if (!page)
-		return NULL;
-
-	page->base.tex = pvr_mem_malloc(256 * 256 * 2);
-	if (!page->base.tex) {
-		free(page);
-		return NULL;
-	}
-
-	page->mask_tex = pvr_mem_malloc(256 * 256 * 2);
-	if (!page->mask_tex) {
-		pvr_mem_free(page->base.tex);
-		free(page);
-		return NULL;
-	}
-
-	return &page->base;
-}
-
-static struct texture_page * alloc_texture_8bpp(void)
-{
-	struct texture_page_8bpp *page;
-
-	page = malloc(sizeof(*page));
-	if (!page)
-		return NULL;
-
-	page->base.vq = pvr_mem_malloc(sizeof(*page->base.vq));
-	if (!page->base.vq) {
-		free(page);
-		return NULL;
-	}
-
-	page->nb_cluts = 0;
-	memset(page->clut, 0, sizeof(page->clut));
-
-	return &page->base;
-}
-
-static struct texture_page * alloc_texture_4bpp(void)
-{
-	struct texture_page_4bpp *page;
-
-	page = malloc(sizeof(*page));
-	if (!page)
-		return NULL;
-
-	page->base.vq = pvr_mem_malloc(sizeof(*page->base.vq));
-	if (!page->base.vq) {
-		free(page);
-		return NULL;
-	}
-
-	page->nb_cluts = 0;
-	memset(page->clut, 0, sizeof(page->clut));
-
-	return &page->base;
-}
-
-static struct texture_page * alloc_texture(enum texture_bpp bpp)
-{
-	if (bpp == TEXTURE_4BPP)
-		return alloc_texture_4bpp();
-
-	if (bpp == TEXTURE_8BPP)
-		return alloc_texture_8bpp();
-
-	return alloc_texture_16bpp();
-}
-
 static void load_texture_16bpp(struct texture_page_16bpp *page,
 			       const uint16_t *src)
 {
@@ -553,30 +481,39 @@ static void load_texture(struct texture_page *page,
 {
 	const void *src = texture_page_get_addr(page_offset);
 
-	if (page->settings.bpp == TEXTURE_16BPP)
-		load_texture_16bpp(to_texture_page_16bpp(page), src);
+	if (page->settings.bpp == TEXTURE_4BPP)
+		load_texture_4bpp(page, src);
 	else if (page->settings.bpp == TEXTURE_8BPP)
 		load_texture_8bpp(page, src);
 	else
-		load_texture_4bpp(page, src);
+		load_texture_16bpp(to_texture_page_16bpp(page), src);
 }
 
-static void pvr_reap_texture(struct texture_page *page)
+static void pvr_reap_ptr(pvr_ptr_t tex)
 {
-	page->next = pvr.reap_list[0];
-	pvr.reap_list[0] = page;
+	unsigned int idx = pvr.to_reap[pvr.reap_bank]++;
+	pvr.reap_list[pvr.reap_bank][idx] = tex;
 }
 
 static void invalidate_textures(unsigned int page_offset)
 {
-	struct texture_page *page, *next;
+	if (pvr.textures16[page_offset].base.tex) {
+		pvr_reap_ptr(pvr.textures16[page_offset].mask_tex);
+		pvr.textures16[page_offset].mask_tex = NULL;
 
-	for (page = pvr.textures[page_offset]; page; page = next) {
-		next = page->next;
-		pvr_reap_texture(page);
+		pvr_reap_ptr(pvr.textures16[page_offset].base.tex);
+		pvr.textures16[page_offset].base.tex = NULL;
 	}
 
-	pvr.textures[page_offset] = NULL;
+	if (pvr.textures8[page_offset].base.tex) {
+		pvr_reap_ptr(pvr.textures8[page_offset].base.tex);
+		pvr.textures8[page_offset].base.tex = NULL;
+	}
+
+	if (pvr.textures4[page_offset].base.tex) {
+		pvr_reap_ptr(pvr.textures4[page_offset].base.tex);
+		pvr.textures4[page_offset].base.tex = NULL;
+	}
 }
 
 void invalidate_all_textures(void)
@@ -776,26 +713,48 @@ static inline struct texture_page *
 poly_get_texture_page(const struct poly *poly)
 {
 	struct texture_page *page;
+	struct texture_page_16bpp *page16;
+	struct texture_page_8bpp *page8;
+	struct texture_page_4bpp *page4;
 
-	for (page = pvr.textures[poly->texpage_id]; page; page = page->next) {
-		/* The bpp must match. */
-		if (page->settings.bpp == poly->bpp)
-			break;
-	}
+	if (poly->bpp == TEXTURE_4BPP)
+		page = &pvr.textures4[poly->texpage_id].base;
+	else if (poly->bpp == TEXTURE_8BPP)
+		page = &pvr.textures8[poly->texpage_id].base;
+	else
+		page = &pvr.textures16[poly->texpage_id].base;
 
-	if (!page) {
-		pvr_printf("Creating new %ubpp texture for page %u\n",
-			   4 << poly->bpp, poly->texpage_id);
+	if (!page->tex) {
+		/* Texture page not loaded */
 
-		/* No valid texture page found - create a new one */
-		page = alloc_texture(poly->bpp);
+		if (poly->bpp == TEXTURE_16BPP) {
+			page16 = to_texture_page_16bpp(page);
 
-		/* Init the base fields */
-		page->settings = (struct texture_settings){ .bpp = poly->bpp };
+			page16->base.tex = pvr_mem_malloc(256 * 256 * 2);
+			if (!page16->base.tex)
+				return NULL;
 
-		/* Add it to our linked list */
-		page->next = pvr.textures[poly->texpage_id];
-		pvr.textures[poly->texpage_id] = page;
+			page16->mask_tex = pvr_mem_malloc(256 * 256 * 2);
+			if (!page16->mask_tex) {
+				pvr_mem_free(page16->base.tex);
+				page16->base.tex = NULL;
+				return NULL;
+			}
+		} else {
+			page->vq = pvr_mem_malloc(sizeof(*page->vq));
+			if (!page->vq)
+				return NULL;
+
+			if (poly->bpp == TEXTURE_8BPP) {
+				page8 = to_texture_page_8bpp(page);
+				page8->nb_cluts = 0;
+				memset(page8->clut, 0, sizeof(page8->clut));
+			} else {
+				page4 = to_texture_page_4bpp(page);
+				page4->nb_cluts = 0;
+				memset(page4->clut, 0, sizeof(page4->clut));
+			}
+		}
 
 		/* Load the texture to VRAM */
 		load_texture(page, poly->texpage_id);
