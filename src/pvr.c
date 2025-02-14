@@ -110,6 +110,7 @@ struct texture_settings {
 
 struct texture_page {
 	struct texture_settings settings;
+	uint16_t inval_counter;
 	union {
 		pvr_ptr_t tex;
 		struct texture_vq *vq;
@@ -121,16 +122,21 @@ struct texture_page_16bpp {
 	pvr_ptr_t mask_tex;
 };
 
+struct texture_clut {
+	uint16_t clut;
+	uint16_t inval_counter;
+};
+
 struct texture_page_8bpp {
 	struct texture_page base;
 	unsigned int nb_cluts;
-	uint16_t clut[NB_CODEBOOKS_8BPP];
+	struct texture_clut clut[NB_CODEBOOKS_8BPP];
 };
 
 struct texture_page_4bpp {
 	struct texture_page base;
 	unsigned int nb_cluts;
-	uint16_t clut[NB_CODEBOOKS_4BPP];
+	struct texture_clut clut[NB_CODEBOOKS_4BPP];
 };
 
 enum blending_mode {
@@ -200,6 +206,8 @@ struct pvr_renderer {
 	uint32_t page_x :4;
 	uint32_t page_y :1;
 	enum blending_mode blending_mode :3;
+
+	uint16_t inval_counter;
 
 	struct texture_settings settings;
 
@@ -309,6 +317,13 @@ static inline uint32_t max32(uint32_t a, uint32_t b)
 	return a < b ? b : a;
 }
 
+static inline struct texture_page_4bpp * clut_get_page4(uint16_t clut)
+{
+	unsigned int offt = ((clut & 0x4000) >> 10) | ((clut & 0x3f) >> 2);
+
+	return &pvr.textures4[offt];
+}
+
 static inline unsigned int clut_get_offset(uint16_t clut)
 {
 	return ((clut >> 6) & 0x1ff) * 2048 + (clut & 0x3f) * 32;
@@ -374,31 +389,40 @@ load_palette_bpp8(struct texture_page *page, unsigned int offset, uint16_t clut)
 static unsigned int
 find_texture_codebook(struct texture_page *page, uint16_t clut)
 {
-	struct texture_page_4bpp *page4 = to_texture_page_4bpp(page);
+	struct texture_page_4bpp *other, *page4 = to_texture_page_4bpp(page);
 	bool bpp4 = page->settings.bpp == TEXTURE_4BPP;
 	unsigned int codebooks = bpp4 ? NB_CODEBOOKS_4BPP : NB_CODEBOOKS_8BPP;
 	unsigned int i;
 
 	for (i = 0; i < page4->nb_cluts; i++) {
-		if (page4->clut[i] == clut)
+		if (page4->clut[i].clut == clut)
 			break;
 	}
 
 	if (i < page4->nb_cluts) {
 		pvr_printf("Found %s CLUT at offset %u\n",
 			   (clut & CLUT_IS_MASK) ? "mask" : "normal", i);
-		return i;
+
+		other = clut_get_page4(clut);
+
+		if (page4->clut[i].inval_counter >= other->base.inval_counter)
+			return i;
+
+		/* We found the palette but it's outdated - we need to reload it. */
 	}
 
 	if (i == codebooks) {
 		/* No space? Let's trash everything and start again */
 		i = 0;
+		page4->nb_cluts = 1;
 		memset(page4->clut, 0, codebooks * sizeof(*page4->clut));
+	} else if (i == page4->nb_cluts) {
+		page4->nb_cluts++;
 	}
 
 	/* We didn't find the CLUT anywere - add it and load the palette */
-	page4->clut[i] = clut;
-	page4->nb_cluts = i + 1;
+	page4->clut[i].clut = clut;
+	page4->clut[i].inval_counter = pvr.inval_counter;
 
 	pvr_printf("Load CLUT 0x%04hx at offset %u\n", clut, i);
 
@@ -503,22 +527,30 @@ static void invalidate_textures(unsigned int page_offset)
 
 		pvr_reap_ptr(pvr.textures16[page_offset].base.tex);
 		pvr.textures16[page_offset].base.tex = NULL;
+
+		pvr.textures16[page_offset].base.inval_counter = pvr.inval_counter;
 	}
 
 	if (pvr.textures8[page_offset].base.tex) {
 		pvr_reap_ptr(pvr.textures8[page_offset].base.tex);
 		pvr.textures8[page_offset].base.tex = NULL;
+
+		pvr.textures8[page_offset].base.inval_counter = pvr.inval_counter;
 	}
 
 	if (pvr.textures4[page_offset].base.tex) {
 		pvr_reap_ptr(pvr.textures4[page_offset].base.tex);
 		pvr.textures4[page_offset].base.tex = NULL;
+
+		pvr.textures4[page_offset].base.inval_counter = pvr.inval_counter;
 	}
 }
 
 void invalidate_all_textures(void)
 {
 	unsigned int i;
+
+	pvr.inval_counter++;
 
 	for (i = 0; i < 32; i++)
 		invalidate_textures(i);
@@ -532,6 +564,8 @@ void invalidate_all_textures(void)
 void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 {
 	unsigned int x2, y2, dx, dy, page_offset;
+
+	pvr.inval_counter++;
 
 	/* Compute bottom-right point coordinates, aligned */
 	x2 = (unsigned int)((x + w + 63) & -64);
