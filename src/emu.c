@@ -17,6 +17,8 @@
 #include <libpcsxcore/sio.h>
 #include <psemu_plugin_defs.h>
 
+#include <dc/video.h>
+
 #include <sys/stat.h>
 
 #include "bloom-config.h"
@@ -81,6 +83,24 @@ static void init_config(void)
 	strcpy(Config.Pad1, "builtin_pad");
 	strcpy(Config.Pad2, "builtin_pad2");
 	strcpy(Config.Cdr, "builtin_cdr");
+}
+
+static unsigned int screenshot_num;
+
+static void emu_screenshot(uint8_t port, uint32_t)
+{
+	maple_device_t *dev;
+	cont_state_t *state;
+	char buf[1024];
+
+	dev = maple_enum_dev(port, 0);
+	state = maple_dev_status(dev);
+
+	if (state->start) {
+		snprintf(buf, sizeof(buf), "/pc/screenshot%03u.ppm",
+			 ++screenshot_num);
+		vid_screen_shot(buf);
+	}
 }
 
 static void emu_exit(uint8_t, uint32_t)
@@ -186,6 +206,7 @@ int main(int argc, char **argv)
 		LoadCdrom();
 
 	cont_btn_callback(0, CONT_RESET_BUTTONS, emu_exit);
+	cont_btn_callback(0, CONT_START | CONT_DPAD_UP, emu_screenshot);
 
 	while (!stop)
 		psxCpu->Execute();
