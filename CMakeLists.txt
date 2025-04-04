@@ -217,6 +217,7 @@ add_executable(bloom
 	src/mmap.c
 	src/platform.c
 	src/plugins.c
+	src/mcd.c
 )
 target_link_libraries(bloom PUBLIC libpcsxcore gpu spu tsunami
 	#lightning lightrec libpcsxcore gpu spu

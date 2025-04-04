@@ -11,6 +11,8 @@
 #include <sys/cdefs.h>
 __BEGIN_DECLS
 
+struct maple_device;
+
 extern _Bool started;
 
 void runMenu(void);
@@ -24,6 +26,10 @@ void ide_shutdown(void);
 
 void sdcard_init(void);
 void sdcard_shutdown(void);
+
+void mcd_fs_init(void);
+void mcd_fs_shutdown(void);
+void mcd_fs_hotplug_vmu(struct maple_device *dev);
 
 __END_DECLS
 #endif /* __BLOOM_EMU_H */
