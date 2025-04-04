@@ -10,6 +10,8 @@
 
 #define WITH_BIOS_PATH "@WITH_BIOS_PATH@"
 #define WITH_GAME_PATH "@WITH_GAME_PATH@"
+#define WITH_MCD1_PATH "@WITH_MCD1_PATH@"
+#define WITH_MCD2_PATH "@WITH_MCD2_PATH@"
 
 #cmakedefine01 WITH_CDROM_DMA
 #cmakedefine01 WITH_CHD

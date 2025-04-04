@@ -217,6 +217,7 @@ add_executable(bloom
 	src/mmap.c
 	src/platform.c
 	src/plugins.c
+	src/mcd.c
 )
 target_link_libraries(bloom PUBLIC libpcsxcore gpu spu tsunami
 	#lightning lightrec libpcsxcore gpu spu
@@ -311,6 +312,9 @@ endif(WITH_CHD)
 
 set(WITH_BIOS_PATH "" CACHE PATH "Runtime path to the (optional) BIOS file")
 set(WITH_GAME_PATH "" CACHE PATH "If set, auto-boot the CD image at the given path")
+
+set(WITH_MCD1_PATH "/dev/mcd0" CACHE PATH "Runtime path to the first memory card image")
+set(WITH_MCD2_PATH "/dev/mcd1" CACHE PATH "Runtime path to the second memory card image")
 
 if (LOG_LEVEL STREQUAL "Debug")
 	find_library(OPCODES_LIBRARIES opcodes REQUIRED)

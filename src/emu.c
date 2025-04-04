@@ -73,9 +73,8 @@ static void init_config(void)
 		strcpy(Config.Bios, "HLE");
 	}
 
-	strcpy(Config.Mcd1, "/ram/mcd1.mcd");
-	strcpy(Config.Mcd2, "/ram/mcd2.mcd");
-	LoadMcds(Config.Mcd1, Config.Mcd2);
+	strcpy(Config.Mcd1, WITH_MCD1_PATH);
+	strcpy(Config.Mcd2, WITH_MCD2_PATH);
 
 	strcpy(Config.PluginsDir, "plugins");
 	strcpy(Config.Gpu, "builtin_gpu");
@@ -205,6 +204,8 @@ int main(int argc, char **argv)
 	else
 		LoadCdrom();
 
+	mcd_fs_init();
+
 	cont_btn_callback(0, CONT_RESET_BUTTONS, emu_exit);
 	cont_btn_callback(0, CONT_START | CONT_DPAD_UP, emu_screenshot);
 
@@ -215,6 +216,7 @@ int main(int argc, char **argv)
 	ClosePlugins();
 	EmuShutdown();
 	ReleasePlugins();
+	mcd_fs_shutdown();
 
 	if (WITH_SDCARD)
 		sdcard_shutdown();
