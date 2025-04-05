@@ -241,6 +241,12 @@ void mcd_fs_init(void)
 	McdDisable[0] = !strcmp(Config.Mcd1, "/dev/mcd0");
 	McdDisable[1] = !strcmp(Config.Mcd2, "/dev/mcd1");
 
+	/* If they don't point to VMUs, load the memcard images */
+	if (!McdDisable[0])
+		LoadMcd(1, Config.Mcd1);
+	if (!McdDisable[1])
+		LoadMcd(2, Config.Mcd2);
+
 	maple_attach_callback(MAPLE_FUNC_MEMCARD, mcd_hotplug_vmu_cb);
 	maple_detach_callback(MAPLE_FUNC_MEMCARD, mcd_hotplug_vmu_cb);
 
