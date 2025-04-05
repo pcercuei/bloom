@@ -30,7 +30,7 @@ void sdcard_init(void)
 	if (err)
 		return;
 
-	err = fs_fat_mount("/sd", &rv, FS_FAT_MOUNT_READONLY);
+	err = fs_fat_mount("/sd", &rv, FS_FAT_MOUNT_READWRITE);
 	if (err)
 		return;
 
