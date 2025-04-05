@@ -31,7 +31,7 @@ void ide_init(void)
 	if (err)
 		return;
 
-	err = fs_fat_mount("/ide", &rv, FS_FAT_MOUNT_READONLY);
+	err = fs_fat_mount("/ide", &rv, FS_FAT_MOUNT_READWRITE);
 	if (err)
 		return;
 
