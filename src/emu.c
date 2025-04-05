@@ -17,6 +17,7 @@
 #include <libpcsxcore/sio.h>
 #include <psemu_plugin_defs.h>
 
+#include <dc/cdrom.h>
 #include <dc/video.h>
 
 #include <sys/stat.h>
@@ -199,6 +200,10 @@ int main(int argc, char **argv)
 	OpenPlugins();
 
 	EmuReset();
+
+	if (UsingIso() && !!strncmp(GetIsoFile(), "/cd", sizeof("/cd") - 1))
+		cdrom_spin_down();
+
 	if (is_exe)
 		Load(GetIsoFile());
 	else
