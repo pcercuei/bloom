@@ -120,15 +120,6 @@ static ssize_t mcd_write(void *hnd, const void *buffer, size_t cnt)
 	return gzwrite(mcd->hnd, buffer, cnt);
 }
 
-static off_t mcd_seek(void *hnd, off_t offset, int whence)
-{
-	struct mcd_data *mcd = hnd;
-
-	mutex_lock_scoped(&mcd->lock);
-
-	return gzseek(mcd->hnd, offset, whence);
-}
-
 static void mcd_flush(void *d)
 {
 	struct mcd_data *data = d;
@@ -144,12 +135,6 @@ static void mcd_flush(void *d)
 	}
 }
 
-static int mcd_stat(struct vfs_handler *vfs, const char *path,
-		    struct stat *buf, int flag)
-{
-	return -1;
-}
-
 static struct vfs_handler mcd0 = {
 	.nmmgr = {
 		.pathname = "/dev/mcd0",
@@ -163,8 +148,6 @@ static struct vfs_handler mcd0 = {
 	.close = mcd_close,
 	.read = mcd_read,
 	.write = mcd_write,
-	.seek = mcd_seek,
-	.stat = mcd_stat,
 };
 
 static struct vfs_handler mcd1 = {
@@ -180,8 +163,6 @@ static struct vfs_handler mcd1 = {
 	.close = mcd_close,
 	.read = mcd_read,
 	.write = mcd_write,
-	.seek = mcd_seek,
-	.stat = mcd_stat,
 };
 
 static void mcd_fs_hotplug_vmu(void *d)
