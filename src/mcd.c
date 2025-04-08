@@ -19,12 +19,13 @@ struct mcd_data {
 	char vmu_port;
 	bool opened;
 	void *hnd;
+	void *data;
 	int fd;
 	mutex_t lock;
 };
 
 static struct mcd_data mcd_data[2] = {
-	{ .vmu_port = 'a' }, { .vmu_port = 'b' },
+	{ .vmu_port = 'a', .data = Mcd1Data }, { .vmu_port = 'b', .data = Mcd2Data },
 };
 
 /* 500ms timer, to delay closing the VMU file.
@@ -41,19 +42,46 @@ static bool mcd_valid(const char *data)
 	return data[0] == 'M' && data[1] == 'C';
 }
 
+static int mcd_get_file(const char *data)
+{
+	int i;
+
+	/* Skip over memcard header */
+	data += 128;
+
+	for (i = 1; i < 16; i++, data += 128) {
+		if (*data == 0x51) {
+			/* We have a file */
+			return i;
+		}
+	}
+
+	return -1;
+}
+
 static void * mcd_open(vfs_handler_t *vfs, const char *path, int mode)
 {
 	struct mcd_data *mcd = vfs->privdata;
 	char buf[20];
 	void *hnd;
 	bool wr = mode & O_WRONLY;
-	int fd;
+	int fd, block;
 
 	if (((mode & O_RDWR) == O_RDWR)
 	    || (mode & O_APPEND)
 	    || ((wr && !(mode & O_TRUNC)))) {
 		errno = EINVAL;
 		return NULL;
+	}
+
+	if (wr) {
+		block = mcd_get_file(mcd->data);
+		if (block < 0) {
+			/* Refuse to open for write if the PSX memcard does not
+			 * have a file yet */
+			errno = EPERM;
+			return NULL;
+		}
 	}
 
 	mutex_lock_scoped(&mcd->lock);
