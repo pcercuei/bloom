@@ -213,9 +213,10 @@ static void mcd_fs_hotplug_vmu(void *d)
 
 		printf("No VMU file found, loading dummy memcard\n");
 		hnd = gzopen("/rd/dummy.mcd.gz", "rb");
+	} else {
+		printf("Loading memcard from %s\n", buf);
 	}
 
-	printf("Loading memcard from %s\n", buf);
 	gzread(hnd, dev->port ? Mcd2Data : Mcd1Data, MCD_SIZE);
 	gzclose(hnd);
 
