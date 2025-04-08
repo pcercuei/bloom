@@ -18,6 +18,7 @@
 struct mcd_data {
 	char vmu_port;
 	bool opened;
+	bool written;
 	void *hnd;
 	void *data;
 	int fd;
@@ -114,6 +115,7 @@ static void * mcd_open(vfs_handler_t *vfs, const char *path, int mode)
 	}
 
 	mcd->hnd = hnd;
+	mcd->written = wr;
 
 	return mcd;
 }
@@ -148,6 +150,149 @@ static ssize_t mcd_write(void *hnd, const void *buffer, size_t cnt)
 	return gzwrite(mcd->hnd, buffer, cnt);
 }
 
+static inline uint16_t bgr1555_to_argb4444(uint16_t px)
+{
+	if (px == 0x0)
+		return 0x0; /* Transparent */
+
+	return ((px & 0x7800) >> 11)
+		| ((px & 0x03c0) >> 2)
+		| ((px & 0x001e) << 7)
+		| 0xf000; /* opaque */
+}
+
+static void mcd_convert_icon(unsigned char *dest, const unsigned char *src)
+{
+	// Variable declarations
+	unsigned int x, y;
+	uint8_t px, px1, px2;
+
+	for (y = 0; y < 16; y++) {
+		for (x = 0; x < 16; x += 2) {
+			px = src[y * 8 + x / 2];
+
+			px1 = (px << 4) | (px & 0x0f);
+			px2 = (px >> 4) | (px & 0xf0);
+
+			dest[y * 32 + x] = px1;
+			dest[y * 32 + 16 + x] = px1;
+
+			dest[y * 32 + x + 1] = px2;
+			dest[y * 32 + 16 + x + 1] = px2;
+		}
+	}
+}
+
+static const char jis_b2_chars[] = " ,.,. :;?!";
+
+void shift_jis_to_ascii(char *dest, const char *src)
+{
+	unsigned int i;
+	uint8_t b1, b2;
+
+	for (i = 0; i < 64; i += 2) {
+		b1 = (uint8_t)src[i];
+		b2 = (uint8_t)src[i + 1];
+
+		switch (b1) {
+		case 0x00:
+			*dest++ = '\0';
+			return;
+
+		case 0x20 ... 0x7d:
+			*dest++ = b1;
+			i--; /* ugly, I know */
+			continue;
+
+		case 0x81:
+			if (b2 >= 0x40 && b2 <= 0x49) {
+				*dest++ = jis_b2_chars[b2 - 0x40];
+				continue;
+			}
+
+			if (b2 == 0x7c) {
+				*dest++ = '-';
+				continue;
+			}
+
+			break;
+
+		case 0x82:
+			if (b2 >= 0x4f && b2 <= 0x58)
+				*dest++ = (char)(b2 - 0x4f) + '0';
+			else if (b2 >= 0x60 && b2 <= 0x79)
+				*dest++ = (char)(b2 - 0x60) + 'A';
+			else if (b2 >= 0x81 && b2 <= 0x9a)
+				*dest++ = (char)(b2 - 0x81) + 'a';
+			else
+				break;
+
+			continue;
+
+		default:
+			break;
+		}
+
+		/* Don't know? Complain about it and convert to a space */
+		printf("Unhandled characted in Shift-JIS string: 0x%02hhx%02hhx\n",
+		       b1, b2);
+		*dest++ = ' ';
+	}
+}
+
+static void mcd_set_header(file_t fd, const char *data)
+{
+	uint8_t icon_data[512 * 3];
+	struct vmu_pkg pkg = {
+		.desc_short = "Bloom",
+		.app_id = "BLOOM",
+		.icon_data = icon_data,
+	};
+	unsigned int i;
+	const char *ptr;
+	uint16_t color;
+	int block;
+
+	if (!mcd_valid(data)) {
+		printf("Unexpected MCD header\n");
+		return;
+	}
+
+	block = mcd_get_file(data);
+	ptr = data + 0x2000 * block;
+
+	if (ptr[0] != 'S' || ptr[1] != 'C') {
+		printf("Unexpected PSX file header\n");
+		return;
+	}
+
+	/* Load the title as the savefile's description */
+	shift_jis_to_ascii(pkg.desc_long, ptr + 4);
+
+	pkg.icon_cnt = ptr[2] - 0x10;
+
+	/* Copy the palette */
+	for (i = 0; i < 16; i++) {
+		memcpy(&color, ptr + 0x60 + i * 2, sizeof(color));
+		pkg.icon_pal[i] = bgr1555_to_argb4444(color);
+	}
+
+	for (i = 0; i < pkg.icon_cnt; i++)
+		mcd_convert_icon(&icon_data[512 * i], (uint8_t *)(ptr + 128 * (i + 1)));
+
+	/* TODO: Figure out the right speed values */
+	if (pkg.icon_cnt == 2)
+		pkg.icon_anim_speed = 16;
+	else if (pkg.icon_cnt == 3)
+		pkg.icon_anim_speed = 11;
+
+	/* We're done, assign the header to our VMU file */
+
+	printf("Setting VMU header, %u icons, description: \'%s\'\n",
+	       pkg.icon_cnt, pkg.desc_long);
+	fs_vmu_set_header(fd, &pkg);
+}
+
 static void mcd_flush(void *d)
 {
 	struct mcd_data *data = d;
@@ -157,6 +302,9 @@ static void mcd_flush(void *d)
 		mutex_lock_scoped(&data[i].lock);
 
 		if (data[i].opened) {
+			if (data[i].written)
+				mcd_set_header(data[i].fd, data[i].data);
+
 			close(data[i].fd);
 			data[i].opened = false;
 		}
