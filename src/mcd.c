@@ -36,6 +36,11 @@ static oneshot_timer_t *timer;
  * to the VMU hot-plug handler function from an interrupt context. */
 static oneshot_timer_t *vmu_hotplug_timer;
 
+static bool mcd_valid(const char *data)
+{
+	return data[0] == 'M' && data[1] == 'C';
+}
+
 static void * mcd_open(vfs_handler_t *vfs, const char *path, int mode)
 {
 	struct mcd_data *mcd = vfs->privdata;
@@ -210,11 +215,14 @@ static void mcd_fs_hotplug_vmu(void *d)
 		hnd = gzopen("/rd/dummy.mcd.gz", "rb");
 	}
 
-	McdDisable[dev->port] = 0;
-
 	printf("Loading memcard from %s\n", buf);
 	gzread(hnd, dev->port ? Mcd2Data : Mcd1Data, MCD_SIZE);
 	gzclose(hnd);
+
+	if (mcd_valid(dev->port ? Mcd2Data : Mcd1Data))
+		McdDisable[dev->port] = 0;
+	else
+		printf("Unexpected MCD header in VMU file\n");
 }
 
 static void mcd_hotplug_vmu_cb(maple_device_t *dev)
