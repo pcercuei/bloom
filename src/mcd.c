@@ -28,7 +28,7 @@ static struct mcd_data mcd_data[2] = {
 	{ .vmu_port = 'a', .data = Mcd1Data }, { .vmu_port = 'b', .data = Mcd2Data },
 };
 
-/* 500ms timer, to delay closing the VMU file.
+/* 2s timer, to delay closing the VMU file.
  * This is because the emulator might open/modify/close often, and we want the
  * VMU VFS driver to only write to the VMU once we're done modifying the file. */
 static oneshot_timer_t *timer;
@@ -249,7 +249,7 @@ void mcd_fs_init(void)
         maple_device_t *dev;
 	unsigned int i;
 
-	timer = oneshot_timer_create(mcd_flush, mcd_data, 500);
+	timer = oneshot_timer_create(mcd_flush, mcd_data, 2000);
 	vmu_hotplug_timer = oneshot_timer_create(NULL, NULL, 0);
 
 	nmmgr_handler_add(&mcd0.nmmgr);
