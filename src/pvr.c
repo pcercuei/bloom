@@ -1217,6 +1217,8 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 
 	clear_framebuffer(x0, y0, w0, h0, color);
 
+	renderer_update_caches(x0, y0, w0, h0, 0);
+
 	if (overlap_draw_area(x0, y0, w0, h0)) {
 		x[1] = x[3] = x_to_pvr(max32(x0, pvr.draw_x1));
 		y[0] = y[1] = y_to_pvr(max32(y0, pvr.draw_y1));
@@ -1244,9 +1246,6 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 		pvr.set_mask = set_mask;
 		pvr.check_mask = check_mask;
 	}
-
-	/* TODO: Invalidate anything in the framebuffer, texture and palette
-	 * caches that are covered by this rectangle */
 }
 
 static void adjust_vcoords(float *vcoords, unsigned int nb,
