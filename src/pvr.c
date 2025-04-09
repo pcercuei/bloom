@@ -247,6 +247,13 @@ void renderer_finish(void)
 	free(gpu.vram);
 }
 
+static inline uint16_t bgr24_to_bgr15(uint32_t bgr)
+{
+	return ((bgr & 0xf80000) >> 9)
+		| ((bgr & 0xf800) >> 6)
+		| ((bgr & 0xf8) >> 3);
+}
+
 static inline uint16_t bgr_to_rgb(uint16_t bgr)
 {
 	return ((bgr & 0x7c00) >> 10)
@@ -1169,9 +1176,28 @@ static bool overlap_draw_area(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 		&& y + h > pvr.draw_y1;
 }
 
+static void clear_framebuffer(uint16_t x0, uint16_t y0,
+			      uint16_t w0, uint16_t h0, uint16_t c)
+{
+	uint32_t *px32 = (uint32_t *)(gpu.vram + y0 * 1024 + x0);
+	uint32_t color = c | ((uint32_t)c << 16);
+	unsigned int i, j, k;
+
+	for (i = 0; i < h0; i++) {
+		for (j = 0; j < w0 / 16; j++) {
+			dcache_alloc_block(px32++, color);
+
+			for (k = 1; k < 8; k++)
+				*px32++ = color;
+		}
+
+		px32 += 512 - w0 / 2;
+	}
+}
+
 static void cmd_clear_image(const union PacketBuffer *pbuffer)
 {
-	int32_t x0, y0, w0, h0;
+	uint16_t x0, y0, w0, h0, color;
 	pvr_poly_cxt_t cxt;
 	float x[4], y[4];
 	uint32_t colors[4];
@@ -1182,6 +1208,14 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 	y0 = pbuffer->U2[3] & 0x1ff;
 	w0 = ((pbuffer->U2[4] & 0x3f0) + 0xf) & ~0xf;
 	h0 = pbuffer->U2[5] & 0x1ff;
+	color = bgr24_to_bgr15(pbuffer->U4[0]);
+
+	if (w0 + x0 > 1024)
+		w0 = 1024 - x0;
+	if (h0 + y0 > 512)
+		h0 = 512 - y0;
+
+	clear_framebuffer(x0, y0, w0, h0, color);
 
 	if (overlap_draw_area(x0, y0, w0, h0)) {
 		x[1] = x[3] = x_to_pvr(max32(x0, pvr.draw_x1));
