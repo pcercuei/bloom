@@ -199,6 +199,9 @@ struct pvr_renderer {
 /* Forward declarations */
 static void adjust_vcoords(float *vcoords, unsigned int nb,
 			   enum texture_bpp bpp, unsigned int codebook);
+static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
+				     pvr_list_t list,
+				     const struct poly *poly);
 
 static struct pvr_renderer pvr;
 
@@ -882,28 +885,13 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		      const float *ucoords, const float *vcoords,
 		      const uint32_t *colors, unsigned int nb,
 		      enum blending_mode blending_mode, bool bright,
-		      struct texture_page *tex_page,
-		      unsigned int codebook, uint16_t clut)
+		      bool set_mask, bool check_mask, uint16_t zoffset)
 {
-	const float *old_vcoords = vcoords;
-	float z, new_vcoords[4];
 	uint32_t *colors_alt;
 	unsigned int i;
 	int txr_en;
-	uint16_t zoffset = pvr.zoffset;
-	bool set_mask = pvr.set_mask, check_mask = pvr.check_mask;
+	float z;
 
-	pvr.zoffset += blending_mode == BLENDING_MODE_NONE ? 1 : 4;
-
-	if (tex_page) {
-		memcpy(new_vcoords, vcoords, nb * sizeof(*vcoords));
-		adjust_vcoords(new_vcoords, nb, tex_page->settings.bpp, codebook);
-
-		vcoords = new_vcoords;
-	}
-
-	cxt->gen.culling = PVR_CULLING_SMALL;
-	cxt->depth.comparison = pvr.depthcmp;
 	z = get_zvalue(zoffset, set_mask, check_mask);
 
 	switch (blending_mode) {
@@ -913,19 +901,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, z, 0);
 
-		if (bright) {
-			/* Make the source texture twice as bright by adding it
-			 * again. */
-			cxt->blend.src = PVR_BLEND_SRCALPHA;
-			cxt->blend.dst = PVR_BLEND_ONE;
-			cxt->list_type = PVR_LIST_TR_POLY;
-			z = get_zvalue(zoffset + 1, set_mask, check_mask);
-
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, z, 0);
-		}
-
-		/* We're done here */
-		return;
+		break;
 
 	case BLENDING_MODE_QUARTER:
 		/* B + F/4 blending.
@@ -945,7 +921,6 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		/* Regular additive blending */
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
-		cxt->list_type = PVR_LIST_TR_POLY;
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, z, 0);
 
@@ -960,7 +935,6 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
-		cxt->list_type = PVR_LIST_TR_POLY;
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, z, 0);
 
@@ -992,7 +966,6 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
 		cxt->txr.enable = PVR_TEXTURE_DISABLE;
-		cxt->list_type = PVR_LIST_TR_POLY;
 
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, z, 0);
 
@@ -1036,8 +1009,6 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		colors_alt = alloca(sizeof(*colors_alt) * nb);
 
 		txr_en = cxt->txr.enable;
-
-		cxt->list_type = PVR_LIST_TR_POLY;
 
 		if (txr_en) {
 			for (i = 0; i < nb; i++)
@@ -1097,13 +1068,96 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, z, 0);
 		break;
 	}
+}
 
-	if (tex_page) {
-		/* If we are blending with a texture, copy back opaque
-		 * non-semi-transparent pixels stored in the mask texture to
-		 * the destination. */
-		load_mask_texture(tex_page, clut, xcoords, ycoords,
-				  ucoords, old_vcoords, colors, nb, bright);
+static void poly_draw_now(pvr_list_t list, const struct poly *poly)
+{
+	unsigned int i, nb = poly->nb, voffset = 0;
+	float xcoords[4];
+	float ycoords[4];
+	float ucoords[4];
+	float vcoords[4];
+	pvr_poly_cxt_t cxt;
+
+	for (i = 0; i < nb; i++) {
+		xcoords[i] = x_to_pvr(poly->x[i]);
+		ycoords[i] = y_to_pvr(poly->y[i]);
+	}
+
+	if (poly->tex_page) {
+		voffset = poly_get_voffset(poly);
+		pvr_prepare_poly_cxt_txr(&cxt, list, poly);
+
+		for (i = 0; i < nb; i++) {
+			ucoords[i] = u_to_pvr(poly->u[i]);
+			vcoords[i] = v_to_pvr(poly->v[i] + voffset);
+		}
+	} else {
+		pvr_poly_cxt_col(&cxt, list);
+	}
+
+	cxt.gen.alpha = PVR_ALPHA_DISABLE;
+	cxt.gen.culling = PVR_CULLING_SMALL;
+	cxt.depth.comparison = poly->depthcmp;
+
+	draw_poly(&cxt, xcoords, ycoords, ucoords, vcoords,
+		  poly->colors, nb, poly->blending_mode,
+		  poly->flags & POLY_BRIGHT,
+		  poly->flags & POLY_SET_MASK,
+		  poly->flags & POLY_CHECK_MASK,
+		  poly->zoffset);
+}
+
+static void poly_enqueue(pvr_list_t list, const struct poly *poly)
+{
+	/* TODO: deferred rendering */
+	poly_draw_now(list, poly);
+}
+
+static void process_poly(struct poly *poly)
+{
+	if (!(poly->flags & POLY_IGN_MASK)) {
+		if (pvr.set_mask)
+			poly->flags |= POLY_SET_MASK;
+		if (pvr.check_mask)
+			poly->flags |= POLY_CHECK_MASK;
+	}
+
+	if (poly->blending_mode == BLENDING_MODE_NONE) {
+		poly->zoffset = pvr.zoffset++;
+
+		/* TODO: support opaque polys */
+		poly_enqueue(pvr.list, poly);
+
+		if (poly->flags & POLY_BRIGHT) {
+			/* Process a bright poly as a regular poly with additive
+			 * blending */
+			poly->flags &= ~POLY_BRIGHT;
+			poly->blending_mode = BLENDING_MODE_ADD;
+			poly->zoffset = pvr.zoffset++;
+
+			poly_enqueue(PVR_LIST_TR_POLY, poly);
+		}
+	} else {
+		/* For blended polys, incease the Z offset by 4, since we will
+		 * render up to 4 polygons */
+		poly->zoffset = pvr.zoffset;
+		pvr.zoffset += 4;
+
+		poly_enqueue(PVR_LIST_TR_POLY, poly);
+
+		/* Mask poly */
+		if (poly->tex_page) {
+			poly->blending_mode = BLENDING_MODE_NONE;
+			poly->clut |= CLUT_IS_MASK;
+
+			/* Update codebook to the mask one */
+			if (poly->tex_page->settings.bpp != TEXTURE_16BPP)
+				poly->codebook = find_texture_codebook(poly->tex_page, poly->clut);
+
+			/* Process the mask poly as a regular one */
+			process_poly(poly);
+		}
 	}
 }
 
@@ -1112,32 +1166,43 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 		      enum blending_mode blending_mode)
 {
 	unsigned int up = y1 < y0;
-	float xcoords[6], ycoords[6];
-	uint32_t colors[6] = {
-		color0, color0, color0, color1, color1, color1,
+	struct poly poly;
+
+	/*   down:             up:
+	 *
+	 *   0  2                    3  5
+	 *
+	 *   1                          4
+	 *             4       1
+	 *
+	 *          3  5       0  2
+	 */
+
+	poly_alloc_cache(&poly);
+
+	poly = (struct poly){
+		.blending_mode = blending_mode,
+		.depthcmp = pvr.depthcmp,
+		.nb = 4,
+		.colors = { color0, color0, color0, color1 },
+		.x = { x0, x0, x0 + 1, x1 },
+		.y = { y0 + up, y0 + !up, y0 + up, y1 + !up },
 	};
-	pvr_poly_cxt_t cxt;
 
-	xcoords[0] = xcoords[1] = x_to_pvr(x0);
-	xcoords[2] = x_to_pvr(x0 + 1);
-	xcoords[3] = x_to_pvr(x1);
-	xcoords[4] = xcoords[5] = x_to_pvr(x1 + 1);
+	process_poly(&poly);
 
-	ycoords[0] = ycoords[2] = y_to_pvr(y0 + up);
-	ycoords[1] = y_to_pvr(y0 + !up);
-	ycoords[3] = ycoords[5] = y_to_pvr(y1 + !up);
-	ycoords[4] = y_to_pvr(y1 + up);
+	poly_alloc_cache(&poly);
 
-	pvr_poly_cxt_col(&cxt, pvr.list);
+	poly = (struct poly){
+		.blending_mode = blending_mode,
+		.depthcmp = pvr.depthcmp,
+		.nb = 4,
+		.colors = { color0, color1, color1, color1 },
+		.x = { x0 + 1, x1, x1 + 1, x1 + 1 },
+		.y = { y0 + up, y1 + !up, y1 + up, y1 + !up },
+	};
 
-	cxt.gen.alpha = PVR_ALPHA_DISABLE;
-	cxt.gen.culling = PVR_CULLING_SMALL;
-	cxt.depth.comparison = pvr.depthcmp;
-
-	/* Pass xcoords/ycoords as U/V, since we don't use a texture, we don't
-	 * care what the U/V values are */
-	draw_poly(&cxt, xcoords, ycoords, xcoords, ycoords,
-		  colors, 6, blending_mode, false, NULL, 0, 0);
+	process_poly(&poly);
 }
 
 static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded)
@@ -1179,13 +1244,12 @@ static uint32_t get_tex_vertex_color(uint32_t color)
 
 static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
 				     pvr_list_t list,
-				     struct texture_page *page,
-				     unsigned int codebook)
+				     const struct poly *poly)
 {
 	unsigned int tex_fmt, tex_width, tex_height;
-	pvr_ptr_t tex = pvr_get_texture(page, codebook);
+	pvr_ptr_t tex = poly_get_texture(poly);
 
-	if (page->settings.bpp == TEXTURE_16BPP) {
+	if (poly->tex_page->settings.bpp == TEXTURE_16BPP) {
 		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 256;
 		tex_height = 512; /* Really 256, but we use V up to 0.5 */
@@ -1229,10 +1293,8 @@ static void clear_framebuffer(uint16_t x0, uint16_t y0,
 static void cmd_clear_image(const union PacketBuffer *pbuffer)
 {
 	uint16_t x0, y0, w0, h0, color;
-	pvr_poly_cxt_t cxt;
-	float x[4], y[4];
-	uint32_t colors[4];
-	bool set_mask, check_mask;
+	uint32_t color32, x13, y01, x02, y23;
+	struct poly poly;
 
 	/* horizontal position / size work in 16-pixel blocks */
 	x0 = pbuffer->U2[2] & 0x3f0;
@@ -1251,31 +1313,26 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 	renderer_update_caches(x0, y0, w0, h0, 0);
 
 	if (overlap_draw_area(x0, y0, w0, h0)) {
-		x[1] = x[3] = x_to_pvr(max32(x0, pvr.draw_x1));
-		y[0] = y[1] = y_to_pvr(max32(y0, pvr.draw_y1));
-		x[0] = x[2] = x_to_pvr(min32(x0 + w0, pvr.draw_x2));
-		y[2] = y[3] = y_to_pvr(min32(y0 + h0, pvr.draw_y2));
+		color32 = __builtin_bswap32(pbuffer->U4[0]) >> 8;
 
-		colors[0] = __builtin_bswap32(pbuffer->U4[0]) >> 8;
-		colors[3] = colors[2] = colors[1] = colors[0];
+		x13 = max32(x0, pvr.draw_x1);
+		y01 = max32(y0, pvr.draw_y1);
+		x02 = min32(x0 + w0, pvr.draw_x2);
+		y23 = min32(y0 + h0, pvr.draw_y2);
 
-		pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+		poly_alloc_cache(&poly);
 
-		cxt.gen.alpha = PVR_ALPHA_DISABLE;
-		cxt.gen.culling = PVR_CULLING_SMALL;
-		cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
+		poly = (struct poly){
+			.blending_mode = BLENDING_MODE_NONE,
+			.depthcmp = PVR_DEPTHCMP_ALWAYS,
+			.nb = 4,
+			.flags = POLY_IGN_MASK,
+			.colors = { color32, color32, color32, color32 },
+			.x = { x02, x13, x02, x13 },
+			.y = { y01, y01, y23, y23 },
+		};
 
-		/* The rectangle fill ignores the mask bit */
-		set_mask = pvr.set_mask;
-		check_mask = pvr.check_mask;
-		pvr.set_mask = 0;
-		pvr.check_mask = 0;
-
-		draw_poly(&cxt, x, y, x, y,
-			  colors, 4, BLENDING_MODE_NONE, false, NULL, 0, 0);
-
-		pvr.set_mask = set_mask;
-		pvr.check_mask = check_mask;
+		process_poly(&poly);
 	}
 }
 
@@ -1314,9 +1371,9 @@ int do_cmd_list(uint32_t *list, int list_len,
 	const union PacketBuffer *pbuffer;
 	struct texture_page *tex_page;
 	enum blending_mode blending_mode;
-	pvr_poly_cxt_t cxt;
 	unsigned int codebook;
 	bool new_set, new_check;
+	struct poly poly;
 
 	for (; list < list_end; list += 1 + len)
 	{
@@ -1439,16 +1496,20 @@ int do_cmd_list(uint32_t *list, int list_len,
 			/* Monochrome/shaded non-textured polygon */
 			unsigned int i, nb = 3 + !!multiple;
 			const uint32_t *buf = pbuffer->U4;
-			float xcoords[4], ycoords[4];
-			float ucoords[4] = {}, vcoords[4] = {};
 			struct texture_settings settings;
-			uint32_t colors[4], texcoord[4];
+			uint32_t texcoord[4];
 			unsigned int page_x, page_y;
 			uint16_t texpage, clut = 0;
 			bool bright = false;
 			uint32_t val;
 
-			colors[0] = 0xffffff;
+			poly_alloc_cache(&poly);
+
+			poly = (struct poly){
+				.depthcmp = pvr.depthcmp,
+				.colors = { 0xffffff },
+				.nb = nb,
+			};
 
 			if (textured && raw_tex) {
 				/* Skip color */
@@ -1458,31 +1519,31 @@ int do_cmd_list(uint32_t *list, int list_len,
 			for (i = 0; i < nb; i++) {
 				if (!(textured && raw_tex) && (i == 0 || multicolor)) {
 					/* BGR->RGB swap */
-					colors[i] = __builtin_bswap32(*buf++) >> 8;
+					poly.colors[i] = __builtin_bswap32(*buf++) >> 8;
 
 					if (textured) {
-						bright |= (colors[i] & 0xff) > 0x80
-							|| (colors[i] & 0xff00) > 0x8000
-							|| (colors[i] & 0xff0000) > 0x800000;
+						bright |= (poly.colors[i] & 0xff) > 0x80
+							|| (poly.colors[i] & 0xff00) > 0x8000
+							|| (poly.colors[i] & 0xff0000) > 0x800000;
 					}
 				} else {
-					colors[i] = colors[0];
+					poly.colors[i] = poly.colors[0];
 				}
 
 				val = *buf++;
-				xcoords[i] = x_to_pvr(val);
-				ycoords[i] = y_to_pvr(val >> 16);
+				poly.x[i] = val;
+				poly.y[i] = val >> 16;
 
 				if (textured) {
 					texcoord[i] = *buf++;
-					ucoords[i] = u_to_pvr((uint8_t)texcoord[i]);
-					vcoords[i] = v_to_pvr((uint8_t)(texcoord[i] >> 8));
+					poly.u[i] = (uint8_t)texcoord[i];
+					poly.v[i] = (uint8_t)(texcoord[i] >> 8);
 				}
 			}
 
 			if (textured && !raw_tex && !bright) {
 				for (i = 0; i < nb; i++)
-					colors[i] = get_tex_vertex_color(colors[i]);
+					poly.colors[i] = get_tex_vertex_color(poly.colors[i]);
 			}
 
 			if (textured) {
@@ -1496,21 +1557,21 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 				tex_page = get_or_alloc_texture(page_x, page_y, clut,
 								settings, &codebook);
-				pvr_prepare_poly_cxt_txr(&cxt, pvr.list, tex_page, codebook);
 
 				if (semi_trans)
 					blending_mode = (enum blending_mode)((texpage >> 5) & 0x3);
-			} else {
-				pvr_poly_cxt_col(&cxt, pvr.list);
+
+				poly.tex_page = tex_page;
+				poly.codebook = codebook;
+				poly.clut = clut;
 			}
 
-			/* We don't actually use the alpha channel of the vertex
-			 * colors */
-			cxt.gen.alpha = PVR_ALPHA_DISABLE;
+			poly.blending_mode = blending_mode;
 
-			draw_poly(&cxt, xcoords, ycoords, ucoords,
-				  vcoords, colors, nb, blending_mode,
-				  bright, tex_page, codebook, clut);
+			if (bright)
+				poly.flags |= POLY_BRIGHT;
+
+			process_poly(&poly);
 
 			if (multicolor && textured)
 				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
@@ -1574,29 +1635,25 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 		case 0x3: {
 			/* Monochrome rectangle */
-			float x[4], y[4];
-			float ucoords[4] = {}, vcoords[4] = {};
-			uint32_t colors[4];
 			uint16_t w, h, x0, y0, clut = 0;
 			bool bright = false;
+			uint32_t color;
 
 			if (raw_tex) {
-				colors[0] = 0xffffff;
+				color = 0xffffff;
 			} else {
 				/* BGR->RGB swap */
-				colors[0] = __builtin_bswap32(pbuffer->U4[0]) >> 8;
+				color = __builtin_bswap32(pbuffer->U4[0]) >> 8;
 			}
 
 			if (textured && !raw_tex) {
-				bright = (colors[0] & 0xff) > 0x80
-					|| (colors[0] & 0xff00) > 0x8000
-					|| (colors[0] & 0xff0000) > 0x800000;
+				bright = (color & 0xff) > 0x80
+					|| (color & 0xff00) > 0x8000
+					|| (color & 0xff0000) > 0x800000;
 
 				if (!bright)
-					colors[0] = get_tex_vertex_color(colors[0]);
+					color = get_tex_vertex_color(color);
 			}
-
-			colors[3] = colors[2] = colors[1] = colors[0];
 
 			x0 = (int16_t)pbuffer->U4[1];
 			y0 = (int16_t)(pbuffer->U4[1] >> 16);
@@ -1615,34 +1672,36 @@ int do_cmd_list(uint32_t *list, int list_len,
 				h = pbuffer->U2[5 + 2 * !!textured];
 			}
 
-			x[1] = x[3] = x_to_pvr(x0);
-			x[0] = x[2] = x_to_pvr(x0 + w);
-			y[0] = y[1] = y_to_pvr(y0);
-			y[2] = y[3] = y_to_pvr(y0 + h);
+			poly_alloc_cache(&poly);
+
+			poly = (struct poly){
+				.blending_mode = blending_mode,
+				.depthcmp = pvr.depthcmp,
+				.colors = { color, color, color, color },
+				.nb = 4,
+				.x = { x0 + w, x0, x0 + w, x0 },
+				.y = { y0, y0, y0 + h, y0 + h },
+				.flags = bright ? POLY_BRIGHT : 0,
+			};
 
 			if (textured) {
-				ucoords[1] = ucoords[3] = u_to_pvr(pbuffer->U1[8]);
-				ucoords[0] = ucoords[2] = u_to_pvr(pbuffer->U1[8] + w);
+				poly.u[1] = poly.u[3] = pbuffer->U1[8];
+				poly.u[0] = poly.u[2] = pbuffer->U1[8] + w;
 
-				vcoords[0] = vcoords[1] = v_to_pvr(pbuffer->U1[9]);
-				vcoords[2] = vcoords[3] = v_to_pvr(pbuffer->U1[9] + h);
+				poly.v[0] = poly.v[1] = pbuffer->U1[9];
+				poly.v[2] = poly.v[3] = pbuffer->U1[9] + h;
 
 				clut = pbuffer->U2[5] & 0x7fff;
 
 				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y, clut,
 								pvr.settings, &codebook);
-				pvr_prepare_poly_cxt_txr(&cxt, pvr.list, tex_page, codebook);
-			} else {
-				pvr_poly_cxt_col(&cxt, pvr.list);
+
+				poly.tex_page = tex_page;
+				poly.codebook = codebook;
+				poly.clut = clut;
 			}
 
-			/* We don't actually use the alpha channel of the vertex
-			 * colors */
-			cxt.gen.alpha = PVR_ALPHA_DISABLE;
-
-			draw_poly(&cxt, x, y, ucoords, vcoords,
-				  colors, 4, blending_mode, bright,
-				  tex_page, codebook, clut);
+			process_poly(&poly);
 
 			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
 			break;
