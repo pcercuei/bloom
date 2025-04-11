@@ -1103,6 +1103,7 @@ static uint32_t get_tex_vertex_color(uint32_t color)
 }
 
 static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
+				     pvr_list_t list,
 				     struct texture_page *page,
 				     unsigned int codebook)
 {
@@ -1119,7 +1120,7 @@ static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
 		tex_height = 512;
 	}
 
-	pvr_poly_cxt_txr(cxt, pvr.list, tex_fmt,
+	pvr_poly_cxt_txr(cxt, list, tex_fmt,
 			 tex_width, tex_height, tex, FILTER_MODE);
 }
 
@@ -1420,7 +1421,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 				tex_page = get_or_alloc_texture(page_x, page_y, clut,
 								settings, &codebook);
-				pvr_prepare_poly_cxt_txr(&cxt, tex_page, codebook);
+				pvr_prepare_poly_cxt_txr(&cxt, pvr.list, tex_page, codebook);
 
 				if (semi_trans)
 					blending_mode = (enum blending_mode)((texpage >> 5) & 0x3);
@@ -1555,7 +1556,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y, clut,
 								pvr.settings, &codebook);
-				pvr_prepare_poly_cxt_txr(&cxt, tex_page, codebook);
+				pvr_prepare_poly_cxt_txr(&cxt, pvr.list, tex_page, codebook);
 			} else {
 				pvr_poly_cxt_col(&cxt, pvr.list);
 			}
