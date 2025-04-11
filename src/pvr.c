@@ -666,30 +666,30 @@ static inline float v_to_pvr(uint16_t v)
 	return (float)v / 512.0f + 1.0f / 16384.0f;
 }
 
-static float get_zvalue(void)
+static float get_zvalue(uint16_t zoffset, bool set_mask, bool check_mask)
 {
 	union fint32 {
 		unsigned int vint;
 		float vf;
 	} fint32;
-	unsigned int zoffset = pvr.zoffset++ << 8;
+	unsigned int z = (unsigned int)zoffset << 8;
 
 	/* Craft a floating-point value, using a higher exponent for the masked
 	 * bits, and using a mantissa that increases by (1 << 8) for each poly
 	 * rendered. This is done so because the PVR seems to discard the lower
 	 * 8 bits of the Z value. */
 
-	if (!pvr.set_mask)
+	if (!set_mask)
 		fint32.vint = 125 << 23;
-	else if (pvr.check_mask)
+	else if (check_mask)
 		fint32.vint = 126 << 23;
 	else
 		fint32.vint = 127 << 23;
 
-	if (pvr.set_mask && pvr.check_mask)
-		fint32.vint -= zoffset;
+	if (set_mask && check_mask)
+		fint32.vint -= z;
 	else
-		fint32.vint += zoffset;
+		fint32.vint += z;
 
 	return fint32.vf;
 }
@@ -698,12 +698,11 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 		      const float *x, const float *y,
 		      const float *u, const float *v,
 		      const uint32_t *color, unsigned int nb,
-		      uint32_t oargb)
+		      float z, uint32_t oargb)
 {
 	pvr_poly_hdr_t *hdr;
 	pvr_vertex_t *vert;
 	unsigned int i;
-	float z;
 
 	if (pvr.new_frame) {
 		pvr_wait_ready();
@@ -714,8 +713,6 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 
 		pvr.new_frame = 0;
 	}
-
-	z = get_zvalue();
 
 	hdr = (void *)pvr_dr_target(pvr.dr_state);
 	pvr_poly_compile(hdr, cxt);
@@ -761,8 +758,12 @@ static void load_mask_texture(struct texture_page *page,
 	unsigned int tex_fmt, tex_width, tex_height;
 	pvr_poly_cxt_t mask_cxt;
 	pvr_ptr_t mask_tex;
-	float new_vcoords[4];
+	float z, new_vcoords[4];
 	unsigned int codebook;
+	uint16_t zoffset = pvr.zoffset;
+	bool set_mask = pvr.set_mask, check_mask = pvr.check_mask;
+
+	pvr.zoffset += 2;
 
 	/* If we are blending with a texture, we need to check the transparent
 	 * and semi-transparent bits. These are stored inside a separate 4bpp
@@ -802,18 +803,20 @@ static void load_mask_texture(struct texture_page *page,
 	mask_cxt.blend.src = PVR_BLEND_SRCALPHA;
 	mask_cxt.blend.dst = PVR_BLEND_INVSRCALPHA;
 	mask_cxt.txr.env = PVR_TXRENV_MODULATE;
+	z = get_zvalue(zoffset, set_mask, check_mask);
 
 	draw_prim(&mask_cxt, xcoords, ycoords,
-		  ucoords, vcoords, colors, nb, 0);
+		  ucoords, vcoords, colors, nb, z, 0);
 
 	if (bright) {
 		/* If we need to render brighter pixels, just render it
 		 * again. */
 		mask_cxt.blend.dst = PVR_BLEND_ONE;
 		mask_cxt.list_type = PVR_LIST_TR_POLY;
+		z = get_zvalue(zoffset, set_mask, check_mask);
 
 		draw_prim(&mask_cxt, xcoords, ycoords,
-			  ucoords, vcoords, colors, nb, 0);
+			  ucoords, vcoords, colors, nb, z, 0);
 	}
 }
 
@@ -826,10 +829,14 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		      unsigned int codebook, uint16_t clut)
 {
 	const float *old_vcoords = vcoords;
-	float new_vcoords[4];
+	float z, new_vcoords[4];
 	uint32_t *colors_alt;
 	unsigned int i;
 	int txr_en;
+	uint16_t zoffset = pvr.zoffset;
+	bool set_mask = pvr.set_mask, check_mask = pvr.check_mask;
+
+	pvr.zoffset += blending_mode == BLENDING_MODE_NONE ? 1 : 4;
 
 	if (tex_page) {
 		memcpy(new_vcoords, vcoords, nb * sizeof(*vcoords));
@@ -840,13 +847,14 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 	cxt->gen.culling = PVR_CULLING_SMALL;
 	cxt->depth.comparison = pvr.depthcmp;
+	z = get_zvalue(zoffset, set_mask, check_mask);
 
 	switch (blending_mode) {
 	case BLENDING_MODE_NONE:
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_INVSRCALPHA;
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, z, 0);
 
 		if (bright) {
 			/* Make the source texture twice as bright by adding it
@@ -854,8 +862,9 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 			cxt->blend.src = PVR_BLEND_SRCALPHA;
 			cxt->blend.dst = PVR_BLEND_ONE;
 			cxt->list_type = PVR_LIST_TR_POLY;
+			z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, z, 0);
 		}
 
 		/* We're done here */
@@ -881,7 +890,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.dst = PVR_BLEND_ONE;
 		cxt->list_type = PVR_LIST_TR_POLY;
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, z, 0);
 
 		break;
 
@@ -896,12 +905,14 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.dst = PVR_BLEND_ONE;
 		cxt->list_type = PVR_LIST_TR_POLY;
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, z, 0);
 
 		if (bright) {
+			z = get_zvalue(zoffset + 1, set_mask, check_mask);
+
 			/* Make the source texture twice as bright by adding it
 			 * again. */
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, z, 0);
 		}
 
 		break;
@@ -926,26 +937,31 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->txr.enable = PVR_TEXTURE_DISABLE;
 		cxt->list_type = PVR_LIST_TR_POLY;
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, z, 0);
 
 		cxt->gen.alpha = PVR_ALPHA_ENABLE;
 		cxt->blend.src = PVR_BLEND_ONE;
 		cxt->blend.dst = PVR_BLEND_ONE;
 		cxt->txr.enable = txr_en;
+		z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, z, 0);
 
 		if (bright) {
+			z = get_zvalue(zoffset + 2, set_mask, check_mask);
+
 			/* Make the source texture twice as bright by adding it
 			 * again */
-			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, 0);
+			draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, z, 0);
 		}
 
 		cxt->gen.alpha = PVR_ALPHA_DISABLE;
 		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
 		cxt->blend.dst = PVR_BLEND_ZERO;
 		cxt->txr.enable = PVR_TEXTURE_DISABLE;
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
+		z = get_zvalue(zoffset + 3, set_mask, check_mask);
+
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, z, 0);
 		break;
 
 	case BLENDING_MODE_HALF:
@@ -977,7 +993,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 			cxt->txr.env = PVR_TXRENV_MODULATE;
 
 			draw_prim(cxt, xcoords, ycoords,
-				  ucoords, vcoords, colors_alt, nb, 0x00808080);
+				  ucoords, vcoords, colors_alt, nb, z, 0x00808080);
 
 			/* Now, opaque pixels will be 0xff808080 in the second
 			 * accumulation buffer, and transparent pixels will be
@@ -989,9 +1005,10 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 			cxt->blend.dst = PVR_BLEND_INVSRCALPHA;
 			cxt->blend.dst_enable = PVR_BLEND_DISABLE;
 			cxt->txr.env = PVR_TXRENV_REPLACE;
+			z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
 			draw_prim(cxt, xcoords, ycoords,
-				  ucoords, vcoords, colors_alt, nb, 0);
+				  ucoords, vcoords, colors_alt, nb, z, 0);
 
 			cxt->blend.src_enable = PVR_BLEND_DISABLE;
 		} else {
@@ -1002,7 +1019,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 			cxt->blend.dst = PVR_BLEND_ZERO;
 
 			draw_prim(cxt, xcoords, ycoords,
-				  ucoords, vcoords, colors_alt, nb, 0);
+				  ucoords, vcoords, colors_alt, nb, z, 0);
 		}
 
 		if (bright) {
@@ -1018,8 +1035,9 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->blend.src = PVR_BLEND_SRCALPHA;
 		cxt->blend.dst = PVR_BLEND_ONE;
 		cxt->txr.enable = txr_en;
+		z = get_zvalue(zoffset + 2, set_mask, check_mask);
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, 0);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, z, 0);
 		break;
 	}
 
