@@ -177,8 +177,6 @@ static void adjust_vcoords(float *vcoords, unsigned int nb,
 
 static struct pvr_renderer pvr;
 
-alignas(32) static unsigned char vertbuf[0x20000];
-
 int renderer_init(void)
 {
 	pvr_printf("PVR renderer init\n");
@@ -696,39 +694,6 @@ static float get_zvalue(void)
 	return fint32.vf;
 }
 
-static void draw_prim_dma(pvr_poly_cxt_t *cxt,
-			  const float *x, const float *y,
-			  const float *u, const float *v,
-			  const uint32_t *color, unsigned int nb,
-			  uint32_t oargb)
-{
-	pvr_list_t list = (pvr_list_t)cxt->list_type;
-	pvr_poly_hdr_t *hdr;
-	pvr_vertex_t *vert;
-	unsigned int i;
-	uint32_t flags;
-	float z = get_zvalue();
-
-	hdr = pvr_vertbuf_tail(list);
-	pvr_poly_compile(hdr, cxt);
-	vert = (pvr_vertex_t *)&hdr[1];
-
-	for (i = 0; i < nb; i++) {
-		flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
-
-		dcache_alloc_block(&vert[i], flags);
-		vert[i].x = x[i];
-		vert[i].y = y[i];
-		vert[i].z = z;
-		vert[i].u = u[i];
-		vert[i].v = v[i];
-		vert[i].argb = color[i];
-		vert[i].oargb = oargb;
-	}
-
-	pvr_vertbuf_written(list, sizeof(*hdr) + nb * sizeof(*vert));
-}
-
 static void draw_prim(pvr_poly_cxt_t *cxt,
 		      const float *x, const float *y,
 		      const float *u, const float *v,
@@ -744,23 +709,10 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 		pvr_wait_ready();
 		pvr_reap_textures();
 
-		if (WITH_HYBRID_RENDERING) {
-			if (pvr.start_list == PVR_LIST_PT_POLY)
-				pvr_set_vertbuf(PVR_LIST_TR_POLY,
-						vertbuf, sizeof(vertbuf));
-			else
-				pvr_set_vertbuf(PVR_LIST_TR_POLY, NULL, 0);
-		}
-
 		pvr_scene_begin();
 		pvr_list_begin(pvr.start_list);
 
 		pvr.new_frame = 0;
-	}
-
-	if (WITH_HYBRID_RENDERING && cxt->list_type != pvr.start_list) {
-		draw_prim_dma(cxt, x, y, u, v, color, nb, oargb);
-		return;
 	}
 
 	z = get_zvalue();
@@ -1641,12 +1593,7 @@ void hw_render_start(void)
 	pvr.new_frame = 1;
 	pvr.zoffset = 0;
 	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
-
-	if (!WITH_HYBRID_RENDERING || (pvr.set_mask && pvr.check_mask))
-		pvr.start_list = PVR_LIST_TR_POLY;
-	else
-		pvr.start_list = PVR_LIST_PT_POLY;
-
+	pvr.start_list = PVR_LIST_TR_POLY;
 	pvr.list = pvr.start_list;
 }
 
