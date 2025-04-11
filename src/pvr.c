@@ -137,6 +137,31 @@ enum blending_mode {
 	BLENDING_MODE_NONE,
 };
 
+#define POLY_BRIGHT		BIT(0)
+#define POLY_IGN_MASK		BIT(1)
+#define POLY_SET_MASK		BIT(2)
+#define POLY_CHECK_MASK		BIT(3)
+
+struct poly {
+	alignas(32)
+	struct texture_page *tex_page;
+	enum blending_mode blending_mode :8;
+	uint8_t codebook;
+	uint8_t nb;
+	uint8_t flags :5;
+	uint8_t depthcmp :3;
+	uint16_t clut;
+	uint16_t zoffset;
+	void *priv;
+	uint32_t colors[4];
+	uint16_t x[4];
+	uint16_t y[4];
+	uint16_t u[4];
+	uint16_t v[4];
+};
+
+_Static_assert(sizeof(struct poly) == 64, "Invalid size");
+
 struct pvr_renderer {
 	uint32_t gp1;
 
@@ -746,6 +771,38 @@ static pvr_ptr_t pvr_get_texture(const struct texture_page *page,
 		return (pvr_ptr_t)&page->vq->codebook8[codebook];
 
 	return (pvr_ptr_t)&page->vq->codebook4[codebook];
+}
+
+static inline pvr_ptr_t poly_get_texture(const struct poly *poly)
+{
+	if (poly->tex_page->settings.bpp == TEXTURE_16BPP
+	    && (poly->clut & CLUT_IS_MASK))
+		return to_texture_page_16bpp(poly->tex_page)->mask_tex;
+
+	return pvr_get_texture(poly->tex_page, poly->codebook);
+}
+
+static inline void poly_alloc_cache(struct poly *poly)
+{
+	dcache_alloc_block(poly, 0);
+	dcache_alloc_block((char *)poly + 32, 0);
+}
+
+static inline void poly_prefetch(const struct poly *poly)
+{
+	__builtin_prefetch(poly);
+	__builtin_prefetch((char *)poly + 32);
+}
+
+static inline unsigned int poly_get_voffset(const struct poly *poly)
+{
+	if (poly->tex_page->settings.bpp == TEXTURE_16BPP)
+		return 0;
+
+	if (poly->tex_page->settings.bpp == TEXTURE_8BPP)
+		return (NB_CODEBOOKS_8BPP - 1 - poly->codebook) * 8;
+
+	return NB_CODEBOOKS_4BPP - 1 - poly->codebook;
 }
 
 static void load_mask_texture(struct texture_page *page,
