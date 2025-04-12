@@ -183,8 +183,9 @@ struct pvr_renderer {
 
 	uint32_t depthcmp :3;
 
-	uint32_t list :3;
-	uint32_t start_list :3;
+	pvr_list_t pt_list :3;
+	pvr_list_t list :3;
+	pvr_list_t polybuf_start_list :3;
 
 	uint32_t page_x :4;
 	uint32_t page_y :1;
@@ -194,6 +195,8 @@ struct pvr_renderer {
 
 	struct texture_page *textures[32];
 	struct texture_page *reap_list[2];
+
+	unsigned int polybuf_cnt_start;
 };
 
 /* Forward declarations */
@@ -202,6 +205,8 @@ static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
 				     const struct poly *poly);
 
 static struct pvr_renderer pvr;
+
+static struct poly polybuf[2048];
 
 int renderer_init(void)
 {
@@ -1051,8 +1056,38 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 
 static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 {
-	/* TODO: deferred rendering */
-	poly_draw_now(list, poly);
+	if (!WITH_HYBRID_RENDERING || list == pvr.list) {
+		poly_draw_now(list, poly);
+	} else if (pvr.polybuf_cnt_start == __array_size(polybuf)) {
+		printf("Poly buffer overflow\n");
+	} else {
+		poly_alloc_cache(&polybuf[pvr.polybuf_cnt_start]);
+		polybuf[pvr.polybuf_cnt_start++] = *poly;
+	}
+}
+
+static void polybuf_render_from_start(pvr_list_t list)
+{
+	unsigned int i;
+
+	for (i = 0; i < pvr.polybuf_cnt_start; i++) {
+		poly_prefetch(&polybuf[i + 1]);
+
+		poly_draw_now(list, &polybuf[i]);
+	}
+
+	pvr.polybuf_cnt_start = 0;
+}
+
+static void polybuf_deferred_render(void)
+{
+	if (pvr.polybuf_cnt_start) {
+		poly_prefetch(&polybuf[0]);
+
+		pvr_list_begin(pvr.polybuf_start_list);
+		polybuf_render_from_start(pvr.polybuf_start_list);
+		pvr_list_finish();
+	}
 }
 
 static void process_poly(struct poly *poly)
@@ -1068,7 +1103,7 @@ static void process_poly(struct poly *poly)
 		poly->zoffset = pvr.zoffset++;
 
 		/* TODO: support opaque polys */
-		poly_enqueue(pvr.list, poly);
+		poly_enqueue(pvr.pt_list, poly);
 
 		if (poly->flags & POLY_BRIGHT) {
 			/* Process a bright poly as a regular poly with additive
@@ -1385,10 +1420,14 @@ int do_cmd_list(uint32_t *list, int list_len,
 				if (!new_set && pvr.set_mask) {
 					/* We have to switch to using TR polys
 					 * exclusively now. */
-					pvr.list = PVR_LIST_TR_POLY;
+					pvr.pt_list = PVR_LIST_TR_POLY;
+
+					/* TODO: If we're currently using the PT list, switch
+					 * to the TR list, and flush all currently queued TR
+					 * polys */
 				}
 
-				if (pvr.list == PVR_LIST_TR_POLY) {
+				if (pvr.pt_list == PVR_LIST_TR_POLY) {
 					if (new_check)
 						pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
 					else
@@ -1651,14 +1690,36 @@ void hw_render_start(void)
 	pvr.new_frame = 1;
 	pvr.zoffset = 0;
 	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
-	pvr.start_list = PVR_LIST_TR_POLY;
-	pvr.list = pvr.start_list;
+
+	/* Reset lists */
+	if (WITH_HYBRID_RENDERING) {
+		pvr.pt_list = PVR_LIST_PT_POLY;
+
+		/* Default to PT list */
+		pvr.list = pvr.pt_list;
+		pvr.polybuf_start_list = PVR_LIST_TR_POLY;
+
+		pvr.polybuf_cnt_start = 0;
+	} else {
+		pvr.pt_list = PVR_LIST_TR_POLY;
+		pvr.list = PVR_LIST_TR_POLY;
+	}
 }
 
 void hw_render_stop(void)
 {
-	if (!pvr.new_frame) {
+	if (!pvr.new_frame)
 		pvr_list_finish();
-		pvr_scene_finish();
+
+	if (WITH_HYBRID_RENDERING && pvr.polybuf_cnt_start) {
+		if (pvr.new_frame) {
+			pvr_start_scene();
+			pvr.new_frame = 0;
+		}
+
+		polybuf_deferred_render();
 	}
+
+	if (!pvr.new_frame)
+		pvr_scene_finish();
 }
