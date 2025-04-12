@@ -197,8 +197,6 @@ struct pvr_renderer {
 };
 
 /* Forward declarations */
-static void adjust_vcoords(float *vcoords, unsigned int nb,
-			   enum texture_bpp bpp, unsigned int codebook);
 static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
 				     pvr_list_t list,
 				     const struct poly *poly);
@@ -808,78 +806,6 @@ static inline unsigned int poly_get_voffset(const struct poly *poly)
 	return NB_CODEBOOKS_4BPP - 1 - poly->codebook;
 }
 
-static void load_mask_texture(struct texture_page *page,
-			      uint16_t clut,
-			      const float *xcoords, const float *ycoords,
-			      const float *ucoords, const float *vcoords,
-			      const uint32_t *colors,
-			      unsigned int nb, bool bright)
-{
-	unsigned int tex_fmt, tex_width, tex_height;
-	pvr_poly_cxt_t mask_cxt;
-	pvr_ptr_t mask_tex;
-	float z, new_vcoords[4];
-	unsigned int codebook;
-	uint16_t zoffset = pvr.zoffset;
-	bool set_mask = pvr.set_mask, check_mask = pvr.check_mask;
-
-	pvr.zoffset += 2;
-
-	/* If we are blending with a texture, we need to check the transparent
-	 * and semi-transparent bits. These are stored inside a separate 4bpp
-	 * mask texture. Copy them into the destination alpha bits, so that we
-	 * can check them when blending the source texture later. */
-
-	if (page->settings.bpp == TEXTURE_16BPP) {
-		mask_tex = to_texture_page_16bpp(page)->mask_tex;
-
-		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
-		tex_width = 256;
-		tex_height = 512; /* Really 256, but we use V up to 0.5 */
-	} else {
-
-		/* Get a pointer to the mask codebook, and adjust V coordinates
-		 * as we are not using the same base. */
-		codebook = find_texture_codebook(page, clut | CLUT_IS_MASK);
-
-		memcpy(new_vcoords, vcoords, nb * sizeof(*vcoords));
-
-		adjust_vcoords(new_vcoords, nb, page->settings.bpp, codebook);
-		mask_tex = pvr_get_texture(page, codebook);
-
-		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
-		tex_width = 1024;
-		tex_height = 512;
-		vcoords = new_vcoords;
-	}
-
-	pvr_poly_cxt_txr(&mask_cxt, pvr.list,
-			 tex_fmt, tex_width, tex_height,
-			 mask_tex, FILTER_MODE);
-
-	mask_cxt.gen.culling = PVR_CULLING_SMALL;
-	mask_cxt.depth.comparison = pvr.depthcmp;
-	mask_cxt.gen.alpha = PVR_ALPHA_DISABLE;
-	mask_cxt.blend.src = PVR_BLEND_SRCALPHA;
-	mask_cxt.blend.dst = PVR_BLEND_INVSRCALPHA;
-	mask_cxt.txr.env = PVR_TXRENV_MODULATE;
-	z = get_zvalue(zoffset, set_mask, check_mask);
-
-	draw_prim(&mask_cxt, xcoords, ycoords,
-		  ucoords, vcoords, colors, nb, z, 0);
-
-	if (bright) {
-		/* If we need to render brighter pixels, just render it
-		 * again. */
-		mask_cxt.blend.dst = PVR_BLEND_ONE;
-		mask_cxt.list_type = PVR_LIST_TR_POLY;
-		z = get_zvalue(zoffset, set_mask, check_mask);
-
-		draw_prim(&mask_cxt, xcoords, ycoords,
-			  ucoords, vcoords, colors, nb, z, 0);
-	}
-}
-
 static void draw_poly(pvr_poly_cxt_t *cxt,
 		      const float *xcoords, const float *ycoords,
 		      const float *ucoords, const float *vcoords,
@@ -1334,30 +1260,6 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 
 		process_poly(&poly);
 	}
-}
-
-static void adjust_vcoords(float *vcoords, unsigned int nb,
-			   enum texture_bpp bpp, unsigned int codebook)
-{
-	unsigned int i, lines;
-	float adjustment;
-
-	switch (bpp) {
-	case TEXTURE_8BPP:
-		lines = (NB_CODEBOOKS_8BPP - 1 - codebook) * 8;
-		break;
-	case TEXTURE_4BPP:
-		lines = NB_CODEBOOKS_4BPP - 1 - codebook;
-		break;
-	default:
-		/* Nothing to do */
-		return;
-	}
-
-	adjustment = (float)lines / 512.0f;
-
-	for (i = 0; i < nb; i++)
-		vcoords[i] += adjustment;
 }
 
 int do_cmd_list(uint32_t *list, int list_len,
