@@ -674,12 +674,12 @@ void renderer_set_config(const struct rearmed_cbs *cbs)
 
 static inline float x_to_pvr(int16_t x)
 {
-	return (float)(x + pvr.draw_dx - pvr.draw_x1) * screen_fw;
+	return (float)x * screen_fw;
 }
 
 static inline float y_to_pvr(int16_t y)
 {
-	return (float)(y + pvr.draw_dy - pvr.draw_y1) * screen_fh;
+	return (float)y * screen_fh;
 }
 
 static inline float u_to_pvr(uint16_t u)
@@ -690,6 +690,16 @@ static inline float u_to_pvr(uint16_t u)
 static inline float v_to_pvr(uint16_t v)
 {
 	return (float)v / 512.0f + 1.0f / 16384.0f;
+}
+
+static inline int16_t x_to_xoffset(int16_t x)
+{
+	return x + pvr.draw_dx - pvr.draw_x1;
+}
+
+static inline int16_t y_to_yoffset(int16_t y)
+{
+	return y + pvr.draw_dy - pvr.draw_y1;
 }
 
 static float get_zvalue(uint16_t zoffset, bool set_mask, bool check_mask)
@@ -1219,7 +1229,8 @@ static void clear_framebuffer(uint16_t x0, uint16_t y0,
 static void cmd_clear_image(const union PacketBuffer *pbuffer)
 {
 	uint16_t x0, y0, w0, h0, color;
-	uint32_t color32, x13, y01, x02, y23;
+	int16_t x13, y01, x02, y23;
+	uint32_t color32;
 	struct poly poly;
 
 	/* horizontal position / size work in 16-pixel blocks */
@@ -1241,10 +1252,10 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 	if (overlap_draw_area(x0, y0, w0, h0)) {
 		color32 = __builtin_bswap32(pbuffer->U4[0]) >> 8;
 
-		x13 = max32(x0, pvr.draw_x1);
-		y01 = max32(y0, pvr.draw_y1);
-		x02 = min32(x0 + w0, pvr.draw_x2);
-		y23 = min32(y0 + h0, pvr.draw_y2);
+		x13 = x_to_xoffset(max32(x0, pvr.draw_x1));
+		y01 = y_to_yoffset(max32(y0, pvr.draw_y1));
+		x02 = x_to_xoffset(min32(x0 + w0, pvr.draw_x2));
+		y23 = y_to_yoffset(min32(y0 + h0, pvr.draw_y2));
 
 		poly_alloc_cache(&poly);
 
@@ -1433,8 +1444,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 				}
 
 				val = *buf++;
-				poly.x[i] = val;
-				poly.y[i] = val >> 16;
+				poly.x[i] = x_to_xoffset(val);
+				poly.y[i] = y_to_yoffset(val >> 16);
 
 				if (textured) {
 					texcoord[i] = *buf++;
@@ -1510,16 +1521,16 @@ int do_cmd_list(uint32_t *list, int list_len,
 			oldcolor = color;
 
 			val = *buf++;
-			oldx = (int16_t)val;
-			oldy = (int16_t)(val >> 16);
+			oldx = x_to_xoffset((int16_t)val);
+			oldy = y_to_yoffset((int16_t)(val >> 16));
 
 			for (i = 0; i < nb - 1; i++) {
 				if (multicolor)
 					color = __builtin_bswap32(*buf++) >> 8;
 
 				val = *buf++;
-				x = (int16_t)val;
-				y = (int16_t)(val >> 16);
+				x = x_to_xoffset((int16_t)val);
+				y = y_to_yoffset((int16_t)(val >> 16));
 
 				if (oldx > x)
 					draw_line(x, y, color, oldx, oldy, oldcolor, blending_mode);
@@ -1537,7 +1548,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 		case 0x3: {
 			/* Monochrome rectangle */
-			uint16_t w, h, x0, y0, clut = 0;
+			uint16_t w, h, x0, y0, x1, y1, clut = 0;
 			bool bright = false;
 			uint32_t color;
 
@@ -1574,6 +1585,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 				h = pbuffer->U2[5 + 2 * !!textured];
 			}
 
+			x1 = x_to_xoffset(x0 + w);
+			x0 = x_to_xoffset(x0);
+			y1 = y_to_yoffset(y0 + h);
+			y0 = y_to_yoffset(y0);
+
 			poly_alloc_cache(&poly);
 
 			poly = (struct poly){
@@ -1581,8 +1597,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 				.depthcmp = pvr.depthcmp,
 				.colors = { color, color, color, color },
 				.nb = 4,
-				.x = { x0 + w, x0, x0 + w, x0 },
-				.y = { y0, y0, y0 + h, y0 + h },
+				.x = { x1, x0, x1, x0 },
+				.y = { y0, y0, y1, y1 },
 				.flags = bright ? POLY_BRIGHT : 0,
 			};
 
