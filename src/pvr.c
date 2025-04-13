@@ -730,6 +730,16 @@ static float get_zvalue(uint16_t zoffset, bool set_mask, bool check_mask)
 	return fint32.vf;
 }
 
+static void pvr_start_scene(void)
+{
+	pvr_wait_ready();
+	pvr_reap_textures();
+
+	pvr_scene_begin();
+
+	pvr.new_frame = 0;
+}
+
 static void draw_prim(pvr_poly_cxt_t *cxt,
 		      const float *x, const float *y,
 		      const float *u, const float *v,
@@ -741,13 +751,8 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	unsigned int i;
 
 	if (pvr.new_frame) {
-		pvr_wait_ready();
-		pvr_reap_textures();
-
-		pvr_scene_begin();
-		pvr_list_begin(pvr.start_list);
-
-		pvr.new_frame = 0;
+		pvr_start_scene();
+		pvr_list_begin(pvr.list);
 	}
 
 	hdr = (void *)pvr_dr_target(pvr.dr_state);
