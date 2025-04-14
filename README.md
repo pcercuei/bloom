@@ -3,7 +3,7 @@ Bloom
 
 Bloom is an experimental Playstation 1 emulator for the SEGA Dreamcast.
 
-It is but a tiny wrapper around other open-source projects:
+It is built on top of other open-source projects:
 
 - PCSX, the Playstation emulator
   (https://github.com/libretro/pcsx_rearmed)
@@ -20,26 +20,25 @@ Features
 - Hardware CD-ROM support, including original discs, even the
   copy-protected (libcrypt) ones
 
-- BIN/CUE, CCD/IMG, MDS/MDF, ISO, PBP images are supported
-
-- CHD support can be enabled but isn't recommended, except on consoles
-  with the 32 MiB RAM mod
+- BIN/CUE, CCD/IMG, MDS/MDF, ISO, PBP, and CHD images with FLAC/LZMA/ZSTD compression are supported
 
 - Can load image files from CD, IDE (hard drive) or SD cards
 
-- Using HLE emulation for the BIOS, no BIOS file required
+- Using HLE emulation for the BIOS, no BIOS file required (but one can optionally be supplied)
 
-- Fully software-rendered for now
+- Experimental PVR renderer, faster with low compatibility
 
-- Compatibility should be very good
+- Optionally supports a software renderer (Unai), slow with very good compatibility
 
-- It's slow (not a feature).
+- Memory cards emulated as files on the VMUs. Possibility to use memory card images on IDE or SD cards.
+
+- No sound for now.
 
 Building
 --------
 
 You need the latest version of KallistiOS installed, and preferably a
-dc-chain toolchain built with the latest GCC version.
+dc-chain toolchain built with the latest GCC version. If you upload builds with dc-tool, you also need the latest version of both dc-tool and dc-load.
 
 To build Bloom, run:
 
