@@ -62,6 +62,9 @@ file(REAL_PATH ${LIGHTNING_DIR} LIGHTNING_REAL_DIR EXPAND_TILDE)
 set(LIGHTREC_DIR deps/pcsx_rearmed/deps/lightrec CACHE STRING "Lightrec directory")
 file(REAL_PATH ${LIGHTREC_DIR} LIGHTREC_REAL_DIR EXPAND_TILDE)
 
+set(PCSX_DIR deps/pcsx_rearmed CACHE STRING "PCSX directory")
+file(REAL_PATH ${PCSX_DIR} PCSX_REAL_DIR EXPAND_TILDE)
+
 set(MAYBE_INCLUDE_STDINT_H "#include <stdint.h>")
 configure_file(${LIGHTNING_REAL_DIR}/include/lightning.h.in include/lightning.h @ONLY)
 
@@ -102,42 +105,42 @@ if (NOT CODEBUF_SIZE)
 endif()
 
 add_library(libpcsxcore STATIC
-	deps/pcsx_rearmed/libpcsxcore/cdriso.c
-	deps/pcsx_rearmed/libpcsxcore/cdrom.c
-	deps/pcsx_rearmed/libpcsxcore/cheat.c
-	deps/pcsx_rearmed/libpcsxcore/database.c
-	deps/pcsx_rearmed/libpcsxcore/decode_xa.c
-	deps/pcsx_rearmed/libpcsxcore/disr3000a.c
-	deps/pcsx_rearmed/libpcsxcore/gpu.c
-	deps/pcsx_rearmed/libpcsxcore/gte.c
-	deps/pcsx_rearmed/libpcsxcore/gte_divider.c
-	deps/pcsx_rearmed/libpcsxcore/mdec.c
-	deps/pcsx_rearmed/libpcsxcore/misc.c
-	deps/pcsx_rearmed/libpcsxcore/plugins.c
-	deps/pcsx_rearmed/libpcsxcore/ppf.c
-	deps/pcsx_rearmed/libpcsxcore/psxbios.c
-	deps/pcsx_rearmed/libpcsxcore/psxcommon.c
-	deps/pcsx_rearmed/libpcsxcore/psxcounters.c
-	deps/pcsx_rearmed/libpcsxcore/psxdma.c
-	deps/pcsx_rearmed/libpcsxcore/psxevents.c
-	deps/pcsx_rearmed/libpcsxcore/psxhw.c
-	deps/pcsx_rearmed/libpcsxcore/psxinterpreter.c
-	deps/pcsx_rearmed/libpcsxcore/psxmem.c
-	deps/pcsx_rearmed/libpcsxcore/r3000a.c
-	deps/pcsx_rearmed/libpcsxcore/sio.c
-	deps/pcsx_rearmed/libpcsxcore/socket.c
-	deps/pcsx_rearmed/libpcsxcore/spu.c
-	deps/pcsx_rearmed/libpcsxcore/new_dynarec/emu_if.c
-	deps/pcsx_rearmed/libpcsxcore/lightrec/plugin.c
-	deps/pcsx_rearmed/plugins/gpulib/gpu.c
-	deps/pcsx_rearmed/plugins/gpulib/vout_pl.c
+	${PCSX_REAL_DIR}/libpcsxcore/cdriso.c
+	${PCSX_REAL_DIR}/libpcsxcore/cdrom.c
+	${PCSX_REAL_DIR}/libpcsxcore/cheat.c
+	${PCSX_REAL_DIR}/libpcsxcore/database.c
+	${PCSX_REAL_DIR}/libpcsxcore/decode_xa.c
+	${PCSX_REAL_DIR}/libpcsxcore/disr3000a.c
+	${PCSX_REAL_DIR}/libpcsxcore/gpu.c
+	${PCSX_REAL_DIR}/libpcsxcore/gte.c
+	${PCSX_REAL_DIR}/libpcsxcore/gte_divider.c
+	${PCSX_REAL_DIR}/libpcsxcore/mdec.c
+	${PCSX_REAL_DIR}/libpcsxcore/misc.c
+	${PCSX_REAL_DIR}/libpcsxcore/plugins.c
+	${PCSX_REAL_DIR}/libpcsxcore/ppf.c
+	${PCSX_REAL_DIR}/libpcsxcore/psxbios.c
+	${PCSX_REAL_DIR}/libpcsxcore/psxcommon.c
+	${PCSX_REAL_DIR}/libpcsxcore/psxcounters.c
+	${PCSX_REAL_DIR}/libpcsxcore/psxdma.c
+	${PCSX_REAL_DIR}/libpcsxcore/psxevents.c
+	${PCSX_REAL_DIR}/libpcsxcore/psxhw.c
+	${PCSX_REAL_DIR}/libpcsxcore/psxinterpreter.c
+	${PCSX_REAL_DIR}/libpcsxcore/psxmem.c
+	${PCSX_REAL_DIR}/libpcsxcore/r3000a.c
+	${PCSX_REAL_DIR}/libpcsxcore/sio.c
+	${PCSX_REAL_DIR}/libpcsxcore/socket.c
+	${PCSX_REAL_DIR}/libpcsxcore/spu.c
+	${PCSX_REAL_DIR}/libpcsxcore/new_dynarec/emu_if.c
+	${PCSX_REAL_DIR}/libpcsxcore/lightrec/plugin.c
+	${PCSX_REAL_DIR}/plugins/gpulib/gpu.c
+	${PCSX_REAL_DIR}/plugins/gpulib/vout_pl.c
 )
 target_include_directories(libpcsxcore PUBLIC
-	deps/pcsx_rearmed/include
-	deps/pcsx_rearmed
+	${PCSX_REAL_DIR}/include
+	${PCSX_REAL_DIR}
 )
 target_include_directories(libpcsxcore PRIVATE ${LIGHTREC_REAL_DIR})
-target_include_directories(libpcsxcore INTERFACE deps/pcsx_rearmed)
+target_include_directories(libpcsxcore INTERFACE ${PCSX_REAL_DIR})
 target_compile_definitions(libpcsxcore PUBLIC
 	LIGHTREC
 	LIGHTREC_CUSTOM_MAP
@@ -159,7 +162,7 @@ endif()
 
 if (GPU_PLUGIN STREQUAL Unai)
 	add_library(gpu STATIC
-		deps/pcsx_rearmed/plugins/gpu_unai/gpulib_if.cpp
+		${PCSX_REAL_DIR}/plugins/gpu_unai/gpulib_if.cpp
 	)
 	target_compile_definitions(gpu PRIVATE
 		_SDL
@@ -170,7 +173,7 @@ elseif(GPU_PLUGIN STREQUAL PVR)
 	add_library(gpu STATIC
 		src/pvr.c
 	)
-	target_include_directories(gpu PRIVATE deps/pcsx_rearmed/plugins)
+	target_include_directories(gpu PRIVATE ${PCSX_REAL_DIR}/plugins)
 	set(HARDWARE_ACCELERATED ON)
 endif()
 
@@ -178,7 +181,7 @@ option(ENABLE_THREADED_RENDERER "Threaded renderer" OFF)
 if (ENABLE_THREADED_RENDERER)
 	target_compile_definitions(gpu PUBLIC THREAD_RENDERING)
 	target_sources(libpcsxcore PRIVATE
-		deps/pcsx_rearmed/plugins/gpulib/gpulib_thread_if.c
+		${PCSX_REAL_DIR}/plugins/gpulib/gpulib_thread_if.c
 	)
 
 	include(FindThreads)
@@ -205,7 +208,7 @@ endif()
 
 if (SPU_PLUGIN STREQUAL Null)
 	add_library(spu STATIC
-		deps/pcsx_rearmed/plugins/spunull/spunull.c
+		${PCSX_REAL_DIR}/plugins/spunull/spunull.c
 	)
 elseif(SPU_PLUGIN STREQUAL AICA)
 	add_library(spu STATIC src/aica.c)
