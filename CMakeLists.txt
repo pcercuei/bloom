@@ -149,7 +149,7 @@ target_compile_options(libpcsxcore PRIVATE -Wno-format)
 target_link_libraries(libpcsxcore PUBLIC lightrec zlib)
 
 if (NOT GPU_PLUGIN)
-	set(GPU_PLUGIN Unai CACHE STRING "GPU plugin" FORCE)
+	set(GPU_PLUGIN PVR CACHE STRING "GPU plugin" FORCE)
 	set_property(CACHE GPU_PLUGIN PROPERTY
 		STRINGS Unai PVR
 	)
