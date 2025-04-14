@@ -108,7 +108,7 @@ static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 	}
 }
 
-static inline void copy15(const uint16_t *vram, int stride, int w, int h)
+static inline void copy15(const uint16_t *vram, int w, int h)
 {
 	const uint32_t *vram32 = (const uint32_t *)vram;
 	uint32_t pixels, r, g, b;
@@ -133,7 +133,7 @@ static inline void copy15(const uint16_t *vram, int stride, int w, int h)
 			line += 8;
 		}
 
-		vram32 += (stride - w) / 2;
+		vram32 += (TEX_WIDTH - w) / 2;
 		dest += TEX_WIDTH / 2;
 
 		sq_unlock();
@@ -147,7 +147,7 @@ static inline uint16_t rgb_24_to_16(uint8_t r, uint8_t g, uint8_t b)
 		| (uint16_t)b >> 3;
 }
 
-static inline void copy24(const uint16_t *vram, int stride, int w, int h)
+static inline void copy24(const uint16_t *vram, int w, int h)
 {
 	const uint32_t *vram32 = (const uint32_t *)vram;
 	uint32_t *line, *dest = (uint32_t *)pvram_sq;
@@ -179,7 +179,7 @@ static inline void copy24(const uint16_t *vram, int stride, int w, int h)
 
 		sq_unlock();
 
-		vram32 += (stride * 2 - w * 3) / 4;
+		vram32 += (TEX_WIDTH * 2 - w * 3) / 4;
 		dest += TEX_WIDTH / 2;
 	}
 }
@@ -222,9 +222,9 @@ static void dc_vout_flip(const void *vram, int stride, int bgr24,
 		copy_w = (w + 31) & ~31;
 
 		if (bgr24)
-			copy24(vram, stride, copy_w, h);
+			copy24(vram, copy_w, h);
 		else
-			copy15(vram, stride, copy_w, h);
+			copy15(vram, copy_w, h);
 
 		ymin = (float)y * (float)screen_fh;
 		ymax = (float)(y + h) * (float)screen_fh;
