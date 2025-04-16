@@ -450,21 +450,24 @@ static struct texture_page * alloc_texture(struct texture_settings settings)
 static void load_texture_16bpp(struct texture_page_16bpp *page,
 			       const uint16_t *src)
 {
-	alignas(32) uint16_t mask_line[256];
-	uint16_t *mask, *dst;
+	alignas(32) uint16_t line[256], mask_line[256];
+	uint16_t px, *mask, *dst;
 	unsigned int x, y;
 
 	dst = (uint16_t *)page->base.tex;
 	mask = (uint16_t *)page->mask_tex;
 
 	for (y = 0; y < 256; y++) {
-		pvr_txr_load(src, dst, 512);
+		for (x = 0; x < 256; x++) {
+			px = bgr_to_rgb(src[x]);
+			line[x] = px;
+			mask_line[x] = px ? px ^ 0x8000 : 0;
+		}
 
-		for (x = 0; x < 256; x++)
-			mask_line[x] = src[x] ? src[x] ^ 0x8000 : 0;
-
+		pvr_txr_load(line, dst, sizeof(line));
 		pvr_txr_load(mask_line, mask, sizeof(mask_line));
 
+		mask += 256;
 		dst += 256;
 		src += 1024;
 	}
@@ -1157,7 +1160,7 @@ static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
 	if (page->settings.bpp == TEXTURE_16BPP) {
 		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 256;
-		tex_height = 256;
+		tex_height = 512; /* Really 256, but we use V up to 0.5 */
 	} else {
 		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
 		tex_width = 1024;
