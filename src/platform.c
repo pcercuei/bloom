@@ -326,8 +326,14 @@ void plugin_call_rearmed_cbs(void)
 
 static void emu_attach_cont_cb(maple_device_t *dev)
 {
-	printf("Hot-plugged a controller in port %u\n", dev->port);
-	in_type[dev->port] = PSE_PAD_TYPE_STANDARD;
+	if (cont_has_capabilities(dev, 0xffff3f00)) {
+		printf("Plugged a BlueRetro / usb4maple controller in port %u\n",
+		       dev->port);
+		in_type[dev->port] = PSE_PAD_TYPE_ANALOGPAD;
+	} else {
+		printf("Plugged a standard controller in port %u\n", dev->port);
+		in_type[dev->port] = PSE_PAD_TYPE_STANDARD;
+	}
 }
 
 static void emu_detach_cont_cb(maple_device_t *dev)
@@ -345,10 +351,8 @@ long PAD__init(long flags) {
 
 	for (i = 0; i < 4; i++) {
 		dev = maple_enum_type(i, MAPLE_FUNC_CONTROLLER);
-		if (dev) {
-			printf("Found a controller in port %u\n", dev->port);
-			in_type[dev->port] = PSE_PAD_TYPE_STANDARD;
-		}
+		if (dev)
+			emu_attach_cont_cb(dev);
 	}
 
 	return PSE_PAD_ERR_SUCCESS;
@@ -421,6 +425,16 @@ long PAD1__readPort1(PadDataS *pad) {
 		buttons |= BIT(DKEY_TRIANGLE);
 
 	pad->buttonStatus = ~buttons;
+
+	if (pad->controllerType == PSE_PAD_TYPE_ANALOGPAD) {
+		pad->rightJoyX = state->joy2x + 128;
+		pad->rightJoyY = state->joy2y + 128;
+		pad->leftJoyX = state->joyx + 128;
+		pad->leftJoyY = state->joyy + 128;
+
+		if (state->buttons & CONT_DPAD2_RIGHT)
+			pad->ds.padMode ^= 1;
+	}
 
 	return 0;
 }
