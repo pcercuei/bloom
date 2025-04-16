@@ -9,6 +9,7 @@
 #include <psemu_plugin_defs.h>
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
+#include <dc/maple/mouse.h>
 #include <kos/regfield.h>
 
 #include <stdbool.h>
@@ -45,9 +46,9 @@ static void emu_attach_cont_cb(maple_device_t *dev)
 	}
 }
 
-static void emu_detach_cont_cb(maple_device_t *dev)
+static void emu_detach_cb(maple_device_t *dev)
 {
-	printf("Unplugged a controller in port %u\n", dev->port);
+	printf("Unplugged input device from port %u\n", dev->port);
 	in_type[dev->port] = PSE_PAD_TYPE_NONE;
 
 	if (dev->port > 1) {
@@ -61,17 +62,30 @@ static void emu_detach_cont_cb(maple_device_t *dev)
 	}
 }
 
+static void emu_attach_mouse_cb(maple_device_t *dev)
+{
+	printf("Plugged a mouse in port %u\n", dev->port);
+	in_type[dev->port] = PSE_PAD_TYPE_MOUSE;
+}
+
 long PAD__init(long flags) {
         maple_device_t *dev;
 	unsigned int i;
 
 	maple_attach_callback(MAPLE_FUNC_CONTROLLER, emu_attach_cont_cb);
-	maple_detach_callback(MAPLE_FUNC_CONTROLLER, emu_detach_cont_cb);
+	maple_attach_callback(MAPLE_FUNC_MOUSE, emu_attach_mouse_cb);
+
+	maple_detach_callback(MAPLE_FUNC_CONTROLLER, emu_detach_cb);
+	maple_detach_callback(MAPLE_FUNC_MOUSE, emu_detach_cb);
 
 	for (i = 0; i < 4; i++) {
 		dev = maple_enum_type(i, MAPLE_FUNC_CONTROLLER);
 		if (dev)
 			emu_attach_cont_cb(dev);
+
+		dev = maple_enum_type(i, MAPLE_FUNC_MOUSE);
+		if (dev)
+			emu_attach_mouse_cb(dev);
 	}
 
 	return PSE_PAD_ERR_SUCCESS;
@@ -80,6 +94,8 @@ long PAD__init(long flags) {
 long PAD__shutdown(void) {
 	maple_attach_callback(MAPLE_FUNC_CONTROLLER, NULL);
 	maple_detach_callback(MAPLE_FUNC_CONTROLLER, NULL);
+	maple_attach_callback(MAPLE_FUNC_MOUSE, NULL);
+	maple_detach_callback(MAPLE_FUNC_MOUSE, NULL);
 
 	return PSE_PAD_ERR_SUCCESS;
 }
@@ -91,6 +107,23 @@ long PAD__open(void)
 
 long PAD__close(void) {
 	return PSE_PAD_ERR_SUCCESS;
+}
+
+static long reportMouse(maple_device_t *dev, PadDataS *pad)
+{
+	mouse_state_t *state = (mouse_state_t *)maple_dev_status(dev);
+	uint16_t buttons = 0;
+
+	if (state->buttons & MOUSE_RIGHTBUTTON)
+		buttons |= BIT(10);
+	if (state->buttons & MOUSE_LEFTBUTTON)
+		buttons |= BIT(11);
+
+	pad->moveX = state->dx;
+	pad->moveY = state->dy;
+	pad->buttonStatus = ~buttons;
+
+	return 0;
 }
 
 long PAD1__readPort1(PadDataS *pad) {
@@ -108,6 +141,9 @@ long PAD1__readPort1(PadDataS *pad) {
 
 	if (pad->requestPadIndex == 1)
 		pad->portMultitap = use_multitap;
+
+	if (dev->info.functions & MAPLE_FUNC_MOUSE)
+		return reportMouse(dev, pad);
 
 	if (!(dev->info.functions & MAPLE_FUNC_CONTROLLER))
 		return 0;
