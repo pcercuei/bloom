@@ -214,10 +214,11 @@ add_executable(bloom
 	src/dynload.c
 	src/emu.c
 	src/genmenu.cpp
+	src/input.c
+	src/mcd.c
 	src/mmap.c
 	src/platform.c
 	src/plugins.c
-	src/mcd.c
 )
 target_link_libraries(bloom PUBLIC libpcsxcore gpu spu tsunami
 	#lightning lightrec libpcsxcore gpu spu
