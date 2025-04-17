@@ -663,7 +663,7 @@ static inline float u_to_pvr(uint16_t u)
 
 static inline float v_to_pvr(uint16_t v)
 {
-	return (float)v / 512.0f + 1.0f / 32768.0f;
+	return (float)v / 512.0f + 1.0f / 16384.0f;
 }
 
 static float get_zvalue(void)
@@ -1221,7 +1221,7 @@ static void adjust_vcoords(float *vcoords, unsigned int nb,
 		return;
 	}
 
-	adjustment = v_to_pvr(lines);
+	adjustment = (float)lines / 512.0f;
 
 	for (i = 0; i < nb; i++)
 		vcoords[i] += adjustment;
