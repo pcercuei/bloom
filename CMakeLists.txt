@@ -250,18 +250,17 @@ if (WITH_IDE)
 endif(WITH_IDE)
 
 if (WITH_IDE OR WITH_SDCARD)
-	find_library(KOSFAT_LIBRARIES kosfat REQUIRED
-		HINTS ${KOS_BASE}/addons/lib/dreamcast
+	add_library(fatfs STATIC
+		deps/fatfs/fatfs/src/option/ccsbcs.c
+		deps/fatfs/fatfs/src/option/syscall.c
+		deps/fatfs/fatfs/src/ff.c
+		deps/fatfs/fatfs/src/dc.c
+		deps/fatfs/fatfs/src/dc_bdev.c
 	)
-	add_library(kosfat STATIC IMPORTED)
-	set_target_properties(kosfat PROPERTIES
-		IMPORTED_LOCATION ${KOSFAT_LIBRARIES}
-	)
+	#target_compile_definitions(fatfs PRIVATE FATFS_USE_DMA_BUF)
+	target_include_directories(fatfs PUBLIC deps/fatfs/include)
 
-	target_include_directories(kosfat INTERFACE
-		${KOS_BASE}/addons/lib/dreamcast
-	)
-	target_link_libraries(bloom PUBLIC kosfat)
+	target_link_libraries(bloom PUBLIC fatfs)
 endif(WITH_IDE OR WITH_SDCARD)
 
 option(WITH_CHD "Enable CHD support" ON)

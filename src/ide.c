@@ -6,30 +6,13 @@
  */
 
 #include <dc/g1ata.h>
-#include <fat/fs_fat.h>
+#include <fatfs.h>
 #include <stdint.h>
 #include <stdio.h>
 
-static kos_blockdev_t rv;
-
 void ide_init(void)
 {
-	uint8_t type;
-	int err;
-
-	err = g1_ata_init();
-	if (err)
-		return;
-
-	err = g1_ata_blockdev_for_partition(0, 1, &rv, &type);
-	if (err)
-		return;
-
-	printf("Found IDE partition 0\n");
-
-	err = fs_fat_mount("/ide", &rv, FS_FAT_MOUNT_READWRITE);
-	if (err)
-		return;
+	fs_fat_mount_ide();
 
 	printf("Mounted IDE partition 0 to /ide\n");
 }

@@ -6,29 +6,13 @@
  */
 
 #include <dc/sd.h>
-#include <fat/fs_fat.h>
+#include <fatfs.h>
 #include <stdint.h>
 #include <stdio.h>
 
-static kos_blockdev_t rv;
-
 void sdcard_init(void)
 {
-	uint8_t type;
-	int err;
-
-	if (sd_init())
-		return;
-
-	err = sd_blockdev_for_partition(0, &rv, &type);
-	if (err)
-		return;
-
-	printf("Found SDCARD partition 0\n");
-
-	err = fs_fat_mount("/sd", &rv, FS_FAT_MOUNT_READWRITE);
-	if (err)
-		return;
+	fs_fat_mount_sd();
 
 	printf("Mounted SDCARD partition 0 to /sd\n");
 }
