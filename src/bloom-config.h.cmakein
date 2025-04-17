@@ -19,6 +19,7 @@
 #cmakedefine01 WITH_SDCARD
 #cmakedefine01 HARDWARE_ACCELERATED
 #cmakedefine01 ENABLE_THREADED_RENDERER
+#cmakedefine01 WITH_GDB
 
 #cmakedefine01 WITH_FSAA
 #cmakedefine01 WITH_24BPP

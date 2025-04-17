@@ -14,6 +14,10 @@ if (NOT CMAKE_BUILD_TYPE)
 	)
 endif()
 
+if (CMAKE_BUILD_TYPE STREQUAL Debug)
+	set(WITH_GDB ON)
+endif()
+
 find_library(PARALLAX_LIBRARIES parallax REQUIRED)
 add_library(parallax STATIC IMPORTED)
 set_target_properties(parallax PROPERTIES

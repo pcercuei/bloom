@@ -17,6 +17,7 @@
 #include <libpcsxcore/sio.h>
 #include <psemu_plugin_defs.h>
 
+#include <arch/gdb.h>
 #include <dc/cdrom.h>
 #include <dc/video.h>
 
@@ -149,6 +150,9 @@ static pvr_init_params_t pvr_init_params_fsaa = {
 int main(int argc, char **argv)
 {
 	enum vid_display_mode_generic video_mode;
+
+	if (WITH_GDB)
+		gdb_init();
 
 	if (WITH_IDE)
 		ide_init();
