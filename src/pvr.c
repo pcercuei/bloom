@@ -9,7 +9,6 @@
 #include <gpulib/gpu.h>
 #include <gpulib/gpu_timing.h>
 
-#include <alloca.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -840,7 +839,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		      enum blending_mode blending_mode, bool bright,
 		      bool set_mask, bool check_mask, uint16_t zoffset)
 {
-	uint32_t *colors_alt;
+	uint32_t colors_alt[4];
 	unsigned int i;
 	int txr_en;
 	float z;
@@ -860,7 +859,6 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		/* B + F/4 blending.
 		 * This is a regular additive blending with the foreground color
 		 * values divided by 4. */
-		colors_alt = alloca(sizeof(*colors_alt) * nb);
 
 		if (bright) {
 			/* Use F/2 instead of F/4 if we need brighter colors. */
@@ -910,7 +908,6 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		 * with the given parameters:
 		 * - src blend coeff: inverse destination color
 		 * - dst blend coeff: 0 */
-		colors_alt = alloca(sizeof(*colors_alt) * nb);
 
 		for (i = 0; i < nb; i++)
 			colors_alt[i] = 0xffffff;
@@ -959,7 +956,6 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		 * - dst blend coeff: 0
 		 * This will unconditionally divide all of the background colors
 		 * by 2, except for the alpha. */
-		colors_alt = alloca(sizeof(*colors_alt) * nb);
 
 		txr_en = cxt->txr.enable;
 
@@ -1005,10 +1001,11 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 		if (bright) {
 			/* Use F instead of F/2 if we need brighter colors. */
-			colors_alt = (uint32_t *)colors;
 		} else {
 			for (i = 0; i < nb; i++)
 				colors_alt[i] = (colors[i] & 0x00fefefe) >> 1;
+
+			colors = colors_alt;
 		}
 
 		/* Step 2: Render the polygon normally, with additive
@@ -1018,7 +1015,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		cxt->txr.enable = txr_en;
 		z = get_zvalue(zoffset + 2, set_mask, check_mask);
 
-		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors_alt, nb, z, 0);
+		draw_prim(cxt, xcoords, ycoords, ucoords, vcoords, colors, nb, z, 0);
 		break;
 	}
 }
