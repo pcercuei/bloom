@@ -737,6 +737,7 @@ static void pvr_start_scene(void)
 
 static void draw_prim(pvr_poly_cxt_t *cxt,
 		      const struct vertex_coords *coords,
+		      uint16_t voffset,
 		      const uint32_t *color, unsigned int nb,
 		      float z, uint32_t oargb)
 {
@@ -757,7 +758,7 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 		register float fr0 asm("fr0") = (float)coords[i].x;
 		register float fr1 asm("fr1") = (float)coords[i].y;
 		register float fr2 asm("fr2") = (float)coords[i].u;
-		register float fr3 asm("fr3") = (float)coords[i].v;
+		register float fr3 asm("fr3") = (float)(coords[i].v + voffset);
 
 		asm inline("ftrv xmtrx, fv0\n"
 			   : "+f"(fr0), "+f"(fr1), "+f"(fr2), "+f"(fr3));
@@ -823,15 +824,15 @@ static inline void poly_copy(struct poly *dst, const struct poly *src)
 	copy32((char *)dst + 32, (char *)src + 32);
 }
 
-static inline unsigned int poly_get_voffset(const struct poly *poly)
+static inline uint16_t get_voffset(enum texture_bpp bpp, uint8_t codebook)
 {
-	if (poly->tex_page->settings.bpp == TEXTURE_16BPP)
-		return 0;
+	if (bpp == TEXTURE_4BPP)
+		return NB_CODEBOOKS_4BPP - 1 - codebook;
 
-	if (poly->tex_page->settings.bpp == TEXTURE_8BPP)
-		return (NB_CODEBOOKS_8BPP - 1 - poly->codebook) * 8;
+	if (bpp == TEXTURE_8BPP)
+		return (NB_CODEBOOKS_8BPP - 1 - codebook) * 8;
 
-	return NB_CODEBOOKS_4BPP - 1 - poly->codebook;
+	return 0;
 }
 
 static void poly_draw_now(pvr_list_t list, const struct poly *poly)
@@ -843,15 +844,17 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 	bool bright = poly->flags & POLY_BRIGHT;
 	bool set_mask = poly->flags & POLY_SET_MASK;
 	bool check_mask = poly->flags & POLY_CHECK_MASK;
-	uint16_t zoffset = poly->zoffset;
+	uint16_t voffset = 0, zoffset = poly->zoffset;
 	pvr_poly_cxt_t cxt;
 	int txr_en;
 	float z;
 
-	if (poly->flags & POLY_TEXTURED)
+	if (poly->flags & POLY_TEXTURED) {
 		pvr_prepare_poly_cxt_txr(&cxt, list, poly);
-	else
+		voffset = get_voffset(poly->tex_page->settings.bpp, poly->codebook);
+	} else {
 		pvr_poly_cxt_col(&cxt, list);
+	}
 
 	cxt.gen.alpha = PVR_ALPHA_DISABLE;
 	cxt.gen.culling = PVR_CULLING_SMALL;
@@ -864,7 +867,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 		cxt.blend.src = PVR_BLEND_SRCALPHA;
 		cxt.blend.dst = PVR_BLEND_INVSRCALPHA;
 
-		draw_prim(&cxt, coords, colors, nb, z, 0);
+		draw_prim(&cxt, coords, voffset, colors, nb, z, 0);
 
 		break;
 
@@ -886,7 +889,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 		cxt.blend.src = PVR_BLEND_SRCALPHA;
 		cxt.blend.dst = PVR_BLEND_ONE;
 
-		draw_prim(&cxt, coords, colors_alt, nb, z, 0);
+		draw_prim(&cxt, coords, voffset, colors_alt, nb, z, 0);
 
 		break;
 
@@ -900,14 +903,14 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 		cxt.blend.src = PVR_BLEND_SRCALPHA;
 		cxt.blend.dst = PVR_BLEND_ONE;
 
-		draw_prim(&cxt, coords, colors, nb, z, 0);
+		draw_prim(&cxt, coords, voffset, colors, nb, z, 0);
 
 		if (bright) {
 			z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
 			/* Make the source texture twice as bright by adding it
 			 * again. */
-			draw_prim(&cxt, coords, colors, nb, z, 0);
+			draw_prim(&cxt, coords, voffset, colors, nb, z, 0);
 		}
 
 		break;
@@ -930,7 +933,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 		cxt.blend.dst = PVR_BLEND_ZERO;
 		cxt.txr.enable = PVR_TEXTURE_DISABLE;
 
-		draw_prim(&cxt, coords, colors_alt, nb, z, 0);
+		draw_prim(&cxt, coords, voffset, colors_alt, nb, z, 0);
 
 		cxt.gen.alpha = PVR_ALPHA_ENABLE;
 		cxt.blend.src = PVR_BLEND_ONE;
@@ -938,14 +941,14 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 		cxt.txr.enable = txr_en;
 		z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
-		draw_prim(&cxt, coords, colors, nb, z, 0);
+		draw_prim(&cxt, coords, voffset, colors, nb, z, 0);
 
 		if (bright) {
 			z = get_zvalue(zoffset + 2, set_mask, check_mask);
 
 			/* Make the source texture twice as bright by adding it
 			 * again */
-			draw_prim(&cxt, coords, colors, nb, z, 0);
+			draw_prim(&cxt, coords, voffset, colors, nb, z, 0);
 		}
 
 		cxt.gen.alpha = PVR_ALPHA_DISABLE;
@@ -954,7 +957,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 		cxt.txr.enable = PVR_TEXTURE_DISABLE;
 		z = get_zvalue(zoffset + 3, set_mask, check_mask);
 
-		draw_prim(&cxt, coords, colors_alt, nb, z, 0);
+		draw_prim(&cxt, coords, voffset, colors_alt, nb, z, 0);
 		break;
 
 	case BLENDING_MODE_HALF:
@@ -982,7 +985,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 			cxt.blend.dst_enable = PVR_BLEND_ENABLE;
 			cxt.txr.env = PVR_TXRENV_MODULATE;
 
-			draw_prim(&cxt, coords, colors_alt, nb, z, 0x00808080);
+			draw_prim(&cxt, coords, voffset, colors_alt, nb, z, 0x00808080);
 
 			/* Now, opaque pixels will be 0xff808080 in the second
 			 * accumulation buffer, and transparent pixels will be
@@ -996,7 +999,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 			cxt.txr.env = PVR_TXRENV_REPLACE;
 			z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
-			draw_prim(&cxt, coords, colors_alt, nb, z, 0);
+			draw_prim(&cxt, coords, voffset, colors_alt, nb, z, 0);
 
 			cxt.blend.src_enable = PVR_BLEND_DISABLE;
 		} else {
@@ -1006,7 +1009,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 			cxt.blend.src = PVR_BLEND_DESTCOLOR;
 			cxt.blend.dst = PVR_BLEND_ZERO;
 
-			draw_prim(&cxt, coords, colors_alt, nb, z, 0);
+			draw_prim(&cxt, coords, voffset, colors_alt, nb, z, 0);
 		}
 
 		if (bright) {
@@ -1025,7 +1028,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 		cxt.txr.enable = txr_en;
 		z = get_zvalue(zoffset + 2, set_mask, check_mask);
 
-		draw_prim(&cxt, coords, colors, nb, z, 0);
+		draw_prim(&cxt, coords, voffset, colors, nb, z, 0);
 		break;
 	}
 }
@@ -1067,10 +1070,6 @@ static void polybuf_deferred_render(void)
 
 static void process_poly(struct poly *poly)
 {
-	unsigned int i;
-	int voffset, vadjust;
-
-restart:
 	if (!(poly->flags & POLY_IGN_MASK)) {
 		if (pvr.set_mask)
 			poly->flags |= POLY_SET_MASK;
@@ -1106,19 +1105,9 @@ restart:
 			poly->blending_mode = BLENDING_MODE_NONE;
 			poly->clut |= CLUT_IS_MASK;
 
-			/* Update codebook to the mask one, and the offset to the V values */
-			if (poly->tex_page->settings.bpp != TEXTURE_16BPP) {
-				voffset = poly_get_voffset(poly);
-
-				poly->codebook = find_texture_codebook(poly->tex_page, poly->clut);
-				vadjust = poly_get_voffset(poly) - voffset;
-
-				for (i = 0; i < poly->nb; i++)
-					poly->coords[i].v += vadjust;
-			}
-
 			/* Process the mask poly as a regular one */
-			goto restart;
+			process_poly(poly);
+			return;
 		}
 	}
 
@@ -1324,8 +1313,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 	const union PacketBuffer *pbuffer;
 	struct texture_page *tex_page;
 	enum blending_mode blending_mode;
-	unsigned int voffset, codebook;
 	bool new_set, new_check;
+	unsigned int codebook;
 	struct poly poly;
 
 	for (; list < list_end; list += 1 + len)
@@ -1522,11 +1511,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 				poly.tex_page = tex_page;
 				poly.codebook = codebook;
 				poly.clut = clut;
-
-				voffset = poly_get_voffset(&poly);
-
-				for (i = 0; i < nb; i++)
-					poly.coords[i].v += voffset;
 			}
 
 			poly.blending_mode = blending_mode;
@@ -1672,13 +1656,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 				poly.codebook = codebook;
 				poly.clut = clut;
 
-				voffset = poly_get_voffset(&poly);
-
 				poly.coords[1].u = poly.coords[3].u = pbuffer->U1[8];
 				poly.coords[0].u = poly.coords[2].u = pbuffer->U1[8] + w;
 
-				poly.coords[0].v = poly.coords[1].v = pbuffer->U1[9] + voffset;
-				poly.coords[2].v = poly.coords[3].v = pbuffer->U1[9] + h + voffset;
+				poly.coords[0].v = poly.coords[1].v = pbuffer->U1[9];
+				poly.coords[2].v = poly.coords[3].v = pbuffer->U1[9] + h;
 			}
 
 			process_poly(&poly);
