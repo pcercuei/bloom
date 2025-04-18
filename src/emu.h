@@ -31,5 +31,8 @@ void mcd_fs_init(void);
 void mcd_fs_shutdown(void);
 void mcd_fs_hotplug_vmu(struct maple_device *dev);
 
+/* Copy 32 bytes from src to dst. Both must be aligned to 32 bytes. */
+void copy32(void *dst, const void *src);
+
 __END_DECLS
 #endif /* __BLOOM_EMU_H */

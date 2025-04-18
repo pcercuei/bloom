@@ -215,6 +215,7 @@ endif()
 
 add_executable(bloom
 	src/cdr.c
+	src/copy32.s
 	src/dynload.c
 	src/emu.c
 	src/genmenu.cpp
