@@ -18,6 +18,7 @@
 #include <kos/string.h>
 
 #include "bloom-config.h"
+#include "emu.h"
 #include "pvr.h"
 
 #if ENABLE_THREADED_RENDERER
@@ -815,6 +816,12 @@ static inline void poly_prefetch(const struct poly *poly)
 	__builtin_prefetch((char *)poly + 32);
 }
 
+static inline void poly_copy(struct poly *dst, const struct poly *src)
+{
+	copy32(dst, src);
+	copy32((char *)dst + 32, (char *)src + 32);
+}
+
 static inline unsigned int poly_get_voffset(const struct poly *poly)
 {
 	if (poly->tex_page->settings.bpp == TEXTURE_16BPP)
@@ -1061,8 +1068,7 @@ static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 	} else if (pvr.polybuf_cnt_start == __array_size(polybuf)) {
 		printf("Poly buffer overflow\n");
 	} else {
-		poly_alloc_cache(&polybuf[pvr.polybuf_cnt_start]);
-		polybuf[pvr.polybuf_cnt_start++] = *poly;
+		poly_copy(&polybuf[pvr.polybuf_cnt_start++], poly);
 	}
 }
 
