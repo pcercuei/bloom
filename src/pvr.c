@@ -146,6 +146,7 @@ enum blending_mode {
 #define POLY_IGN_MASK		BIT(1)
 #define POLY_SET_MASK		BIT(2)
 #define POLY_CHECK_MASK		BIT(3)
+#define POLY_TEXTURED		BIT(4)
 
 struct vertex_coords {
 	int16_t x;
@@ -847,7 +848,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 	int txr_en;
 	float z;
 
-	if (poly->tex_page)
+	if (poly->flags & POLY_TEXTURED)
 		pvr_prepare_poly_cxt_txr(&cxt, list, poly);
 	else
 		pvr_poly_cxt_col(&cxt, list);
@@ -1101,7 +1102,7 @@ restart:
 		poly_enqueue(PVR_LIST_TR_POLY, poly);
 
 		/* Mask poly */
-		if (poly->tex_page) {
+		if (poly->flags & POLY_TEXTURED) {
 			poly->blending_mode = BLENDING_MODE_NONE;
 			poly->clut |= CLUT_IS_MASK;
 
@@ -1465,6 +1466,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 				.depthcmp = pvr.depthcmp,
 				.colors = { 0xffffff },
 				.nb = nb,
+				.flags = textured ? POLY_TEXTURED : 0,
 			};
 
 			if (textured && raw_tex) {
@@ -1599,6 +1601,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 			uint16_t w, h, x0, y0, x1, y1, clut = 0;
 			bool bright = false;
 			uint32_t color;
+			uint8_t flags = 0;
 
 			if (raw_tex) {
 				color = 0xffffff;
@@ -1640,6 +1643,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 			poly_alloc_cache(&poly);
 
+			if (bright)
+				flags |= POLY_BRIGHT;
+			if (textured)
+				flags |= POLY_TEXTURED;
+
 			poly = (struct poly){
 				.blending_mode = blending_mode,
 				.depthcmp = pvr.depthcmp,
@@ -1651,7 +1659,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 					[2] = { .x = x1, .y = y1 },
 					[3] = { .x = x0, .y = y1 },
 				},
-				.flags = bright ? POLY_BRIGHT : 0,
+				.flags = flags,
 			};
 
 			if (textured) {
