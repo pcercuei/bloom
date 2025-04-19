@@ -420,7 +420,7 @@ void mcd_fs_init(void)
 	for (i = 0; i < 4; i++) {
 		dev = maple_enum_type(i, MAPLE_FUNC_MEMCARD);
 		if (dev && dev->valid)
-			mcd_hotplug_vmu_cb(dev);
+			mcd_fs_hotplug_vmu(dev);
 	}
 }
 
