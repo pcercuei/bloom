@@ -278,13 +278,16 @@ void MyMenu::preparePopulate(fs::path path, bool back, bool dft)
 }
 
 void MyMenu::setEntry(unsigned int entry) {
+	int offset_y;
+
 	m_entries[m_cursel]->deselect();
 	m_cursel = entry;
 
+	offset_y = MENU_OFF_Y + (int)entry * -(int)m_font_size;
+
 	m_entries[entry]->select();
 	m_scene->animRemoveAll();
-	m_scene->animAdd(std::make_shared<LogXYMover>(MENU_OFF_X,
-						      MENU_OFF_Y + entry * -m_font_size));
+	m_scene->animAdd(std::make_shared<LogXYMover>(MENU_OFF_X, offset_y));
 }
 
 void MyMenu::inputEvent(const Event & evt) {
