@@ -11,10 +11,13 @@
 #include <dc/maple/controller.h>
 #include <kos/regfield.h>
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 
 unsigned short in_keystate[8];
+
+static bool use_multitap;
 
 int in_type[8] = {
    PSE_PAD_TYPE_NONE, PSE_PAD_TYPE_NONE,
@@ -33,12 +36,29 @@ static void emu_attach_cont_cb(maple_device_t *dev)
 		printf("Plugged a standard controller in port %u\n", dev->port);
 		in_type[dev->port] = PSE_PAD_TYPE_STANDARD;
 	}
+
+	if (dev->port > 1) {
+		/* Plugged in port C/D - enable multitap */
+		if (!use_multitap)
+			printf("Enabling multi-tap\n");
+		use_multitap = true;
+	}
 }
 
 static void emu_detach_cont_cb(maple_device_t *dev)
 {
 	printf("Unplugged a controller in port %u\n", dev->port);
 	in_type[dev->port] = PSE_PAD_TYPE_NONE;
+
+	if (dev->port > 1) {
+		/* Unplugged from port C/D - check if the other one is unplugged
+		 * as well, and if it is, disable multitap */
+		if (in_type[dev->port ^ 1] == PSE_PAD_TYPE_NONE) {
+			if (use_multitap)
+				printf("Disabling multi-tap\n");
+			use_multitap = false;
+		}
+	}
 }
 
 long PAD__init(long flags) {
@@ -85,6 +105,9 @@ long PAD1__readPort1(PadDataS *pad) {
 	dev = maple_enum_dev(pad->requestPadIndex, 0);
 	if (!dev)
 		return 0;
+
+	if (pad->requestPadIndex == 1)
+		pad->portMultitap = use_multitap;
 
 	if (!(dev->info.functions & MAPLE_FUNC_CONTROLLER))
 		return 0;
