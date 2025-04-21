@@ -835,25 +835,37 @@ static inline unsigned int poly_get_voffset(const struct poly *poly)
 	return NB_CODEBOOKS_4BPP - 1 - poly->codebook;
 }
 
-static void draw_poly(pvr_poly_cxt_t *cxt,
-		      const struct vertex_coords *coords,
-		      const uint32_t *colors, unsigned int nb,
-		      enum blending_mode blending_mode, bool bright,
-		      bool set_mask, bool check_mask, uint16_t zoffset)
+static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 {
+	const struct vertex_coords *coords = poly->coords;
+	const uint32_t *colors = poly->colors;
+	unsigned int i, nb = poly->nb;
 	uint32_t colors_alt[4];
-	unsigned int i;
+	bool bright = poly->flags & POLY_BRIGHT;
+	bool set_mask = poly->flags & POLY_SET_MASK;
+	bool check_mask = poly->flags & POLY_CHECK_MASK;
+	uint16_t zoffset = poly->zoffset;
+	pvr_poly_cxt_t cxt;
 	int txr_en;
 	float z;
 
+	if (poly->tex_page)
+		pvr_prepare_poly_cxt_txr(&cxt, list, poly);
+	else
+		pvr_poly_cxt_col(&cxt, list);
+
+	cxt.gen.alpha = PVR_ALPHA_DISABLE;
+	cxt.gen.culling = PVR_CULLING_SMALL;
+	cxt.depth.comparison = poly->depthcmp;
+
 	z = get_zvalue(zoffset, set_mask, check_mask);
 
-	switch (blending_mode) {
+	switch (poly->blending_mode) {
 	case BLENDING_MODE_NONE:
-		cxt->blend.src = PVR_BLEND_SRCALPHA;
-		cxt->blend.dst = PVR_BLEND_INVSRCALPHA;
+		cxt.blend.src = PVR_BLEND_SRCALPHA;
+		cxt.blend.dst = PVR_BLEND_INVSRCALPHA;
 
-		draw_prim(cxt, coords, colors, nb, z, 0);
+		draw_prim(&cxt, coords, colors, nb, z, 0);
 
 		break;
 
@@ -872,10 +884,10 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		}
 
 		/* Regular additive blending */
-		cxt->blend.src = PVR_BLEND_SRCALPHA;
-		cxt->blend.dst = PVR_BLEND_ONE;
+		cxt.blend.src = PVR_BLEND_SRCALPHA;
+		cxt.blend.dst = PVR_BLEND_ONE;
 
-		draw_prim(cxt, coords, colors_alt, nb, z, 0);
+		draw_prim(&cxt, coords, colors_alt, nb, z, 0);
 
 		break;
 
@@ -886,17 +898,17 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		 * The destination alpha is set for transparent or
 		 * semi-transparent pixels. */
 
-		cxt->blend.src = PVR_BLEND_SRCALPHA;
-		cxt->blend.dst = PVR_BLEND_ONE;
+		cxt.blend.src = PVR_BLEND_SRCALPHA;
+		cxt.blend.dst = PVR_BLEND_ONE;
 
-		draw_prim(cxt, coords, colors, nb, z, 0);
+		draw_prim(&cxt, coords, colors, nb, z, 0);
 
 		if (bright) {
 			z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
 			/* Make the source texture twice as bright by adding it
 			 * again. */
-			draw_prim(cxt, coords, colors, nb, z, 0);
+			draw_prim(&cxt, coords, colors, nb, z, 0);
 		}
 
 		break;
@@ -914,36 +926,36 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		for (i = 0; i < nb; i++)
 			colors_alt[i] = 0xffffff;
 
-		txr_en = cxt->txr.enable;
-		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
-		cxt->blend.dst = PVR_BLEND_ZERO;
-		cxt->txr.enable = PVR_TEXTURE_DISABLE;
+		txr_en = cxt.txr.enable;
+		cxt.blend.src = PVR_BLEND_INVDESTCOLOR;
+		cxt.blend.dst = PVR_BLEND_ZERO;
+		cxt.txr.enable = PVR_TEXTURE_DISABLE;
 
-		draw_prim(cxt, coords, colors_alt, nb, z, 0);
+		draw_prim(&cxt, coords, colors_alt, nb, z, 0);
 
-		cxt->gen.alpha = PVR_ALPHA_ENABLE;
-		cxt->blend.src = PVR_BLEND_ONE;
-		cxt->blend.dst = PVR_BLEND_ONE;
-		cxt->txr.enable = txr_en;
+		cxt.gen.alpha = PVR_ALPHA_ENABLE;
+		cxt.blend.src = PVR_BLEND_ONE;
+		cxt.blend.dst = PVR_BLEND_ONE;
+		cxt.txr.enable = txr_en;
 		z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
-		draw_prim(cxt, coords, colors, nb, z, 0);
+		draw_prim(&cxt, coords, colors, nb, z, 0);
 
 		if (bright) {
 			z = get_zvalue(zoffset + 2, set_mask, check_mask);
 
 			/* Make the source texture twice as bright by adding it
 			 * again */
-			draw_prim(cxt, coords, colors, nb, z, 0);
+			draw_prim(&cxt, coords, colors, nb, z, 0);
 		}
 
-		cxt->gen.alpha = PVR_ALPHA_DISABLE;
-		cxt->blend.src = PVR_BLEND_INVDESTCOLOR;
-		cxt->blend.dst = PVR_BLEND_ZERO;
-		cxt->txr.enable = PVR_TEXTURE_DISABLE;
+		cxt.gen.alpha = PVR_ALPHA_DISABLE;
+		cxt.blend.src = PVR_BLEND_INVDESTCOLOR;
+		cxt.blend.dst = PVR_BLEND_ZERO;
+		cxt.txr.enable = PVR_TEXTURE_DISABLE;
 		z = get_zvalue(zoffset + 3, set_mask, check_mask);
 
-		draw_prim(cxt, coords, colors_alt, nb, z, 0);
+		draw_prim(&cxt, coords, colors_alt, nb, z, 0);
 		break;
 
 	case BLENDING_MODE_HALF:
@@ -959,43 +971,43 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 		 * This will unconditionally divide all of the background colors
 		 * by 2, except for the alpha. */
 
-		txr_en = cxt->txr.enable;
+		txr_en = cxt.txr.enable;
 
 		if (txr_en) {
 			for (i = 0; i < nb; i++)
 				colors_alt[i] = 0xff000000;
 
-			cxt->gen.specular = PVR_SPECULAR_ENABLE;
-			cxt->blend.src = PVR_BLEND_SRCALPHA;
-			cxt->blend.dst = PVR_BLEND_ZERO;
-			cxt->blend.dst_enable = PVR_BLEND_ENABLE;
-			cxt->txr.env = PVR_TXRENV_MODULATE;
+			cxt.gen.specular = PVR_SPECULAR_ENABLE;
+			cxt.blend.src = PVR_BLEND_SRCALPHA;
+			cxt.blend.dst = PVR_BLEND_ZERO;
+			cxt.blend.dst_enable = PVR_BLEND_ENABLE;
+			cxt.txr.env = PVR_TXRENV_MODULATE;
 
-			draw_prim(cxt, coords, colors_alt, nb, z, 0x00808080);
+			draw_prim(&cxt, coords, colors_alt, nb, z, 0x00808080);
 
 			/* Now, opaque pixels will be 0xff808080 in the second
 			 * accumulation buffer, and transparent pixels will be
 			 * 0x00000000. */
 
-			cxt->gen.specular = PVR_SPECULAR_DISABLE;
-			cxt->blend.src = PVR_BLEND_DESTCOLOR;
-			cxt->blend.src_enable = PVR_BLEND_ENABLE;
-			cxt->blend.dst = PVR_BLEND_INVSRCALPHA;
-			cxt->blend.dst_enable = PVR_BLEND_DISABLE;
-			cxt->txr.env = PVR_TXRENV_REPLACE;
+			cxt.gen.specular = PVR_SPECULAR_DISABLE;
+			cxt.blend.src = PVR_BLEND_DESTCOLOR;
+			cxt.blend.src_enable = PVR_BLEND_ENABLE;
+			cxt.blend.dst = PVR_BLEND_INVSRCALPHA;
+			cxt.blend.dst_enable = PVR_BLEND_DISABLE;
+			cxt.txr.env = PVR_TXRENV_REPLACE;
 			z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
-			draw_prim(cxt, coords, colors_alt, nb, z, 0);
+			draw_prim(&cxt, coords, colors_alt, nb, z, 0);
 
-			cxt->blend.src_enable = PVR_BLEND_DISABLE;
+			cxt.blend.src_enable = PVR_BLEND_DISABLE;
 		} else {
 			for (i = 0; i < nb; i++)
 				colors_alt[i] = 0xff808080;
 
-			cxt->blend.src = PVR_BLEND_DESTCOLOR;
-			cxt->blend.dst = PVR_BLEND_ZERO;
+			cxt.blend.src = PVR_BLEND_DESTCOLOR;
+			cxt.blend.dst = PVR_BLEND_ZERO;
 
-			draw_prim(cxt, coords, colors_alt, nb, z, 0);
+			draw_prim(&cxt, coords, colors_alt, nb, z, 0);
 		}
 
 		if (bright) {
@@ -1009,35 +1021,14 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 		/* Step 2: Render the polygon normally, with additive
 		 * blending. */
-		cxt->blend.src = PVR_BLEND_SRCALPHA;
-		cxt->blend.dst = PVR_BLEND_ONE;
-		cxt->txr.enable = txr_en;
+		cxt.blend.src = PVR_BLEND_SRCALPHA;
+		cxt.blend.dst = PVR_BLEND_ONE;
+		cxt.txr.enable = txr_en;
 		z = get_zvalue(zoffset + 2, set_mask, check_mask);
 
-		draw_prim(cxt, coords, colors, nb, z, 0);
+		draw_prim(&cxt, coords, colors, nb, z, 0);
 		break;
 	}
-}
-
-static void poly_draw_now(pvr_list_t list, const struct poly *poly)
-{
-	pvr_poly_cxt_t cxt;
-
-	if (poly->tex_page)
-		pvr_prepare_poly_cxt_txr(&cxt, list, poly);
-	else
-		pvr_poly_cxt_col(&cxt, list);
-
-	cxt.gen.alpha = PVR_ALPHA_DISABLE;
-	cxt.gen.culling = PVR_CULLING_SMALL;
-	cxt.depth.comparison = poly->depthcmp;
-
-	draw_poly(&cxt, poly->coords,
-		  poly->colors, poly->nb, poly->blending_mode,
-		  poly->flags & POLY_BRIGHT,
-		  poly->flags & POLY_SET_MASK,
-		  poly->flags & POLY_CHECK_MASK,
-		  poly->zoffset);
 }
 
 static void poly_enqueue(pvr_list_t list, const struct poly *poly)
