@@ -142,6 +142,13 @@ enum blending_mode {
 #define POLY_SET_MASK		BIT(2)
 #define POLY_CHECK_MASK		BIT(3)
 
+struct vertex_coords {
+	int16_t x;
+	int16_t y;
+	uint16_t u;
+	uint16_t v;
+};
+
 struct poly {
 	alignas(32)
 	struct texture_page *tex_page;
@@ -154,10 +161,7 @@ struct poly {
 	uint16_t zoffset;
 	void *priv;
 	uint32_t colors[4];
-	uint16_t x[4];
-	uint16_t y[4];
-	uint16_t u[4];
-	uint16_t v[4];
+	struct vertex_coords coords[4];
 };
 
 _Static_assert(sizeof(struct poly) == 64, "Invalid size");
@@ -1030,8 +1034,8 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 	pvr_poly_cxt_t cxt;
 
 	for (i = 0; i < nb; i++) {
-		xcoords[i] = x_to_pvr(poly->x[i]);
-		ycoords[i] = y_to_pvr(poly->y[i]);
+		xcoords[i] = x_to_pvr(poly->coords[i].x);
+		ycoords[i] = y_to_pvr(poly->coords[i].y);
 	}
 
 	if (poly->tex_page) {
@@ -1039,8 +1043,8 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 		pvr_prepare_poly_cxt_txr(&cxt, list, poly);
 
 		for (i = 0; i < nb; i++) {
-			ucoords[i] = u_to_pvr(poly->u[i]);
-			vcoords[i] = v_to_pvr(poly->v[i] + voffset);
+			ucoords[i] = u_to_pvr(poly->coords[i].u);
+			vcoords[i] = v_to_pvr(poly->coords[i].v + voffset);
 		}
 	} else {
 		pvr_poly_cxt_col(&cxt, list);
@@ -1164,8 +1168,12 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 		.depthcmp = pvr.depthcmp,
 		.nb = 4,
 		.colors = { color0, color0, color0, color1 },
-		.x = { x0, x0, x0 + 1, x1 },
-		.y = { y0 + up, y0 + !up, y0 + up, y1 + !up },
+		.coords = {
+			[0] = { .x = x0, .y = y0 + up },
+			[1] = { .x = x0, .y = y0 + !up },
+			[2] = { .x = x0 + 1, .y = y0 + up },
+			[3] = { .x = x1, .y = y1 + !up },
+		},
 	};
 
 	process_poly(&poly);
@@ -1177,8 +1185,12 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 		.depthcmp = pvr.depthcmp,
 		.nb = 4,
 		.colors = { color0, color1, color1, color1 },
-		.x = { x0 + 1, x1, x1 + 1, x1 + 1 },
-		.y = { y0 + up, y1 + !up, y1 + up, y1 + !up },
+		.coords = {
+			[0] = { .x = x0 + 1, .y = y0 + up },
+			[1] = { .x = x1, .y = y1 + !up },
+			[2] = { .x = x1 + 1, .y = y1 + up },
+			[3] = { .x = x1 + 1, .y = y1 + !up },
+		},
 	};
 
 	process_poly(&poly);
@@ -1308,8 +1320,12 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 			.nb = 4,
 			.flags = POLY_IGN_MASK,
 			.colors = { color32, color32, color32, color32 },
-			.x = { x02, x13, x02, x13 },
-			.y = { y01, y01, y23, y23 },
+			.coords = {
+				[0] = { .x = x02, .y = y01 },
+				[1] = { .x = x13, .y = y01 },
+				[2] = { .x = x02, .y = y23 },
+				[3] = { .x = x13, .y = y23 },
+			},
 		};
 
 		process_poly(&poly);
@@ -1491,13 +1507,13 @@ int do_cmd_list(uint32_t *list, int list_len,
 				}
 
 				val = *buf++;
-				poly.x[i] = x_to_xoffset(val);
-				poly.y[i] = y_to_yoffset(val >> 16);
+				poly.coords[i].x = x_to_xoffset(val);
+				poly.coords[i].y = y_to_yoffset(val >> 16);
 
 				if (textured) {
 					texcoord[i] = *buf++;
-					poly.u[i] = (uint8_t)texcoord[i];
-					poly.v[i] = (uint8_t)(texcoord[i] >> 8);
+					poly.coords[i].u = (uint8_t)texcoord[i];
+					poly.coords[i].v = (uint8_t)(texcoord[i] >> 8);
 				}
 			}
 
@@ -1644,17 +1660,21 @@ int do_cmd_list(uint32_t *list, int list_len,
 				.depthcmp = pvr.depthcmp,
 				.colors = { color, color, color, color },
 				.nb = 4,
-				.x = { x1, x0, x1, x0 },
-				.y = { y0, y0, y1, y1 },
+				.coords = {
+					[0] = { .x = x1, .y = y0 },
+					[1] = { .x = x0, .y = y0 },
+					[2] = { .x = x1, .y = y1 },
+					[3] = { .x = x0, .y = y1 },
+				},
 				.flags = bright ? POLY_BRIGHT : 0,
 			};
 
 			if (textured) {
-				poly.u[1] = poly.u[3] = pbuffer->U1[8];
-				poly.u[0] = poly.u[2] = pbuffer->U1[8] + w;
+				poly.coords[1].u = poly.coords[3].u = pbuffer->U1[8];
+				poly.coords[0].u = poly.coords[2].u = pbuffer->U1[8] + w;
 
-				poly.v[0] = poly.v[1] = pbuffer->U1[9];
-				poly.v[2] = poly.v[3] = pbuffer->U1[9] + h;
+				poly.coords[0].v = poly.coords[1].v = pbuffer->U1[9];
+				poly.coords[2].v = poly.coords[3].v = pbuffer->U1[9] + h;
 
 				clut = pbuffer->U2[5] & 0x7fff;
 
