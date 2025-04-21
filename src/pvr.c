@@ -60,6 +60,11 @@
 
 #define CLUT_IS_MASK BIT(15)
 
+/* These reduce the visible gaps in the seams between polys.
+ * They probably correspond to something but I don't know what. */
+#define COORDS_U_OFFSET (1.0f / 2048.0f)
+#define COORDS_V_OFFSET (1.0f / 16384.0f)
+
 union PacketBuffer {
 	uint32_t U4[16];
 	uint16_t U2[32];
@@ -681,26 +686,6 @@ void renderer_set_config(const struct rearmed_cbs *cbs)
 {
 }
 
-static inline float x_to_pvr(int16_t x)
-{
-	return (float)x * screen_fw;
-}
-
-static inline float y_to_pvr(int16_t y)
-{
-	return (float)y * screen_fh;
-}
-
-static inline float u_to_pvr(uint16_t u)
-{
-	return (float)u / 256.0f + 1.0f / 2048.0f;
-}
-
-static inline float v_to_pvr(uint16_t v)
-{
-	return (float)v / 512.0f + 1.0f / 16384.0f;
-}
-
 static inline int16_t x_to_xoffset(int16_t x)
 {
 	return x + pvr.draw_dx - pvr.draw_x1;
@@ -768,18 +753,25 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	pvr_dr_commit(hdr);
 
 	for (i = 0; i < nb; i++) {
+		register float fr0 asm("fr0") = (float)coords[i].x;
+		register float fr1 asm("fr1") = (float)coords[i].y;
+		register float fr2 asm("fr2") = (float)coords[i].u;
+		register float fr3 asm("fr3") = (float)coords[i].v;
+
+		asm inline("ftrv xmtrx, fv0\n"
+			   : "+f"(fr0), "+f"(fr1), "+f"(fr2), "+f"(fr3));
+
 		vert = pvr_dr_target(pvr.dr_state);
 
-		*vert = (pvr_vertex_t){
-			.flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
-			.argb = color[i],
-			.oargb = oargb,
-			.x = x_to_pvr(coords[i].x),
-			.y = y_to_pvr(coords[i].y),
-			.z = z,
-			.u = u_to_pvr(coords[i].u),
-			.v = v_to_pvr(coords[i].v),
-		};
+		vert->flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+		vert->z = z;
+		vert->argb = color[i];
+		vert->oargb = oargb;
+
+		vert->x = fr0;
+		vert->y = fr1;
+		vert->u = fr2 + COORDS_U_OFFSET;
+		vert->v = fr3 + COORDS_V_OFFSET;
 
 		pvr_dr_commit(vert);
 	}

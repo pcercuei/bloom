@@ -10,8 +10,9 @@
 #include <libpcsxcore/gpu.h>
 
 #include <arch/timer.h>
-#include <dc/sq.h>
+#include <dc/matrix.h>
 #include <dc/pvr.h>
+#include <dc/sq.h>
 #include <dc/video.h>
 #include <dc/vmu_fb.h>
 
@@ -94,6 +95,17 @@ static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 	/* Use 1280x480 when using FSAA */
 	screen_fw = SCREEN_WIDTH / (float)raw_w;
 	screen_fh = SCREEN_HEIGHT / (float)raw_h;
+
+	if (HARDWARE_ACCELERATED) {
+		matrix_t matrix = {
+			{ screen_fw, 0.0f, 0.0f, 0.0f },
+			{ 0.0f, screen_fh, 0.0f, 0.0f },
+			{ 0.0f, 0.0f, 1.0f / 256.0f, 0.0f },
+			{ 0.0f, 0.0f, 0.0f, 1.0f / 512.0f },
+		};
+
+		mat_load(&matrix);
+	}
 }
 
 static inline void copy15(const uint16_t *vram, int stride, int w, int h)
