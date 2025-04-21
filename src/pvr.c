@@ -1026,7 +1026,7 @@ static void draw_poly(pvr_poly_cxt_t *cxt,
 
 static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 {
-	unsigned int i, nb = poly->nb, voffset = 0;
+	unsigned int i, nb = poly->nb;
 	float xcoords[4];
 	float ycoords[4];
 	float ucoords[4];
@@ -1039,12 +1039,10 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 	}
 
 	if (poly->tex_page) {
-		voffset = poly_get_voffset(poly);
 		pvr_prepare_poly_cxt_txr(&cxt, list, poly);
-
 		for (i = 0; i < nb; i++) {
 			ucoords[i] = u_to_pvr(poly->coords[i].u);
-			vcoords[i] = v_to_pvr(poly->coords[i].v + voffset);
+			vcoords[i] = v_to_pvr(poly->coords[i].v);
 		}
 	} else {
 		pvr_poly_cxt_col(&cxt, list);
@@ -1099,6 +1097,9 @@ static void polybuf_deferred_render(void)
 
 static void process_poly(struct poly *poly)
 {
+	unsigned int i;
+	int voffset, vadjust;
+
 	if (!(poly->flags & POLY_IGN_MASK)) {
 		if (pvr.set_mask)
 			poly->flags |= POLY_SET_MASK;
@@ -1134,9 +1135,16 @@ static void process_poly(struct poly *poly)
 			poly->blending_mode = BLENDING_MODE_NONE;
 			poly->clut |= CLUT_IS_MASK;
 
-			/* Update codebook to the mask one */
-			if (poly->tex_page->settings.bpp != TEXTURE_16BPP)
+			/* Update codebook to the mask one, and the offset to the V values */
+			if (poly->tex_page->settings.bpp != TEXTURE_16BPP) {
+				voffset = poly_get_voffset(poly);
+
 				poly->codebook = find_texture_codebook(poly->tex_page, poly->clut);
+				vadjust = poly_get_voffset(poly) - voffset;
+
+				for (i = 0; i < poly->nb; i++)
+					poly->coords[i].v += vadjust;
+			}
 
 			/* Process the mask poly as a regular one */
 			process_poly(poly);
@@ -1343,7 +1351,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 	const union PacketBuffer *pbuffer;
 	struct texture_page *tex_page;
 	enum blending_mode blending_mode;
-	unsigned int codebook;
+	unsigned int voffset, codebook;
 	bool new_set, new_check;
 	struct poly poly;
 
@@ -1540,6 +1548,11 @@ int do_cmd_list(uint32_t *list, int list_len,
 				poly.tex_page = tex_page;
 				poly.codebook = codebook;
 				poly.clut = clut;
+
+				voffset = poly_get_voffset(&poly);
+
+				for (i = 0; i < nb; i++)
+					poly.coords[i].v += voffset;
 			}
 
 			poly.blending_mode = blending_mode;
@@ -1670,12 +1683,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 			};
 
 			if (textured) {
-				poly.coords[1].u = poly.coords[3].u = pbuffer->U1[8];
-				poly.coords[0].u = poly.coords[2].u = pbuffer->U1[8] + w;
-
-				poly.coords[0].v = poly.coords[1].v = pbuffer->U1[9];
-				poly.coords[2].v = poly.coords[3].v = pbuffer->U1[9] + h;
-
 				clut = pbuffer->U2[5] & 0x7fff;
 
 				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y, clut,
@@ -1684,6 +1691,14 @@ int do_cmd_list(uint32_t *list, int list_len,
 				poly.tex_page = tex_page;
 				poly.codebook = codebook;
 				poly.clut = clut;
+
+				voffset = poly_get_voffset(&poly);
+
+				poly.coords[1].u = poly.coords[3].u = pbuffer->U1[8];
+				poly.coords[0].u = poly.coords[2].u = pbuffer->U1[8] + w;
+
+				poly.coords[0].v = poly.coords[1].v = pbuffer->U1[9] + voffset;
+				poly.coords[2].v = poly.coords[3].v = pbuffer->U1[9] + h + voffset;
 			}
 
 			process_poly(&poly);
