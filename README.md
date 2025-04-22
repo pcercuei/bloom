@@ -5,6 +5,9 @@ Bloom is an experimental Playstation 1 emulator for the SEGA Dreamcast.
 
 It is built on top of other open-source projects:
 
+- KallistiOS, the independent SDK for the SEGA Dreamcast
+  (https://github.com/KallistiOS/KallistiOS)
+
 - PCSX, the Playstation emulator
   (https://github.com/libretro/pcsx_rearmed)
 
