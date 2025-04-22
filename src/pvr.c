@@ -810,6 +810,12 @@ static inline void poly_prefetch(const struct poly *poly)
 	__builtin_prefetch((char *)poly + 32);
 }
 
+static inline void poly_discard(struct poly *poly)
+{
+	asm inline("ocbi @%1\n"
+		   "ocbi @%2\n" : "=m"(*poly) : "r"(poly), "r"((char *)poly + 32));
+}
+
 static inline void poly_copy(struct poly *dst, const struct poly *src)
 {
 	copy32(dst, src);
@@ -1063,6 +1069,7 @@ static void process_poly(struct poly *poly)
 	unsigned int i;
 	int voffset, vadjust;
 
+restart:
 	if (!(poly->flags & POLY_IGN_MASK)) {
 		if (pvr.set_mask)
 			poly->flags |= POLY_SET_MASK;
@@ -1110,9 +1117,11 @@ static void process_poly(struct poly *poly)
 			}
 
 			/* Process the mask poly as a regular one */
-			process_poly(poly);
+			goto restart;
 		}
 	}
+
+	poly_discard(poly);
 }
 
 static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
