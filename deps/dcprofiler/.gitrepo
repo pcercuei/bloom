@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/Dreamcast-Projects/dcprofiler
+	branch = main
+	commit = 2d2cb48c199344cb6db0fee3dfad7493ce36fa71
+	parent = f254261dd4acbc37ac21b38976aef9f7c2cd914d
+	method = merge
+	cmdver = 0.4.6
