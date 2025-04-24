@@ -312,6 +312,9 @@ if (WITH_CHD)
 	)
 	target_compile_definitions(libchdr INTERFACE HAVE_CHD)
 	target_link_libraries(libchdr PUBLIC lzma zstd zlib)
+	target_compile_options(libchdr PRIVATE
+		-Wno-unused-but-set-variable -Wno-format -Wno-unused-function -Wno-unused-variable
+	)
 
 	target_link_libraries(libpcsxcore PUBLIC libchdr)
 endif(WITH_CHD)
