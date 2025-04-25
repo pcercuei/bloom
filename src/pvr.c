@@ -157,12 +157,13 @@ struct vertex_coords {
 
 struct poly {
 	alignas(32)
-	struct texture_page *tex_page;
+	uint8_t texpage_id;
+	enum texture_bpp bpp :8;
 	enum blending_mode blending_mode :8;
-	uint8_t codebook;
 	uint8_t nb;
-	uint8_t flags :5;
-	uint8_t depthcmp :3;
+	uint8_t depthcmp;
+	uint8_t __pad;
+	uint16_t flags;
 	uint16_t clut;
 	uint16_t zoffset;
 	void *priv;
@@ -208,11 +209,6 @@ struct pvr_renderer {
 
 	unsigned int polybuf_cnt_start;
 };
-
-/* Forward declarations */
-static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
-				     pvr_list_t list,
-				     const struct poly *poly);
 
 static struct pvr_renderer pvr;
 
@@ -475,15 +471,15 @@ static struct texture_page * alloc_texture_4bpp(void)
 	return &page->base;
 }
 
-static struct texture_page * alloc_texture(struct texture_settings settings)
+static struct texture_page * alloc_texture(enum texture_bpp bpp)
 {
-	if (settings.bpp == TEXTURE_16BPP)
-		return alloc_texture_16bpp();
+	if (bpp == TEXTURE_4BPP)
+		return alloc_texture_4bpp();
 
-	if (settings.bpp == TEXTURE_8BPP)
+	if (bpp == TEXTURE_8BPP)
 		return alloc_texture_8bpp();
 
-	return alloc_texture_4bpp();
+	return alloc_texture_16bpp();
 }
 
 static void load_texture_16bpp(struct texture_page_16bpp *page,
@@ -563,44 +559,6 @@ static void load_texture(struct texture_page *page,
 		load_texture_8bpp(page, src);
 	else
 		load_texture_4bpp(page, src);
-}
-
-static struct texture_page *
-get_or_alloc_texture(unsigned int page_x, unsigned int page_y,
-		     uint16_t clut, struct texture_settings settings,
-		     unsigned int *codebook)
-{
-	unsigned int page_offset = page_y * 16 + page_x;
-	struct texture_page *page;
-
-	for (page = pvr.textures[page_offset]; page; page = page->next) {
-		/* The page settings (window mask/offset and bpp) must match. */
-		if (!memcmp(&page->settings, &settings, sizeof(settings)))
-			break;
-	}
-
-	if (!page) {
-		pvr_printf("Creating new %ubpp texture for page %u\n",
-			   4 << settings.bpp, page_offset);
-
-		/* No valid texture page found - create a new one */
-		page = alloc_texture(settings);
-
-		/* Init the base fields */
-		memcpy(&page->settings, &settings, sizeof(settings));
-
-		/* Add it to our linked list */
-		page->next = pvr.textures[page_offset];
-		pvr.textures[page_offset] = page;
-
-		/* Load the texture to VRAM */
-		load_texture(page, page_offset);
-	}
-
-	if (settings.bpp != TEXTURE_16BPP)
-		*codebook = find_texture_codebook(page, clut);
-
-	return page;
 }
 
 static void pvr_reap_texture(struct texture_page *page)
@@ -779,27 +737,6 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	}
 }
 
-static pvr_ptr_t pvr_get_texture(const struct texture_page *page,
-				 unsigned int codebook)
-{
-	if (page->settings.bpp == TEXTURE_16BPP)
-		return page->tex;
-
-	if (page->settings.bpp == TEXTURE_8BPP)
-		return (pvr_ptr_t)&page->vq->codebook8[codebook];
-
-	return (pvr_ptr_t)&page->vq->codebook4[codebook];
-}
-
-static inline pvr_ptr_t poly_get_texture(const struct poly *poly)
-{
-	if (poly->tex_page->settings.bpp == TEXTURE_16BPP
-	    && (poly->clut & CLUT_IS_MASK))
-		return to_texture_page_16bpp(poly->tex_page)->mask_tex;
-
-	return pvr_get_texture(poly->tex_page, poly->codebook);
-}
-
 static inline void poly_alloc_cache(struct poly *poly)
 {
 	dcache_alloc_block(poly, 0);
@@ -835,23 +772,84 @@ static inline uint16_t get_voffset(enum texture_bpp bpp, uint8_t codebook)
 	return 0;
 }
 
+static inline struct texture_page *
+poly_get_texture_page(const struct poly *poly)
+{
+	struct texture_page *page;
+
+	for (page = pvr.textures[poly->texpage_id]; page; page = page->next) {
+		/* The bpp must match. */
+		if (page->settings.bpp == poly->bpp)
+			break;
+	}
+
+	if (!page) {
+		pvr_printf("Creating new %ubpp texture for page %u\n",
+			   4 << poly->bpp, poly->texpage_id);
+
+		/* No valid texture page found - create a new one */
+		page = alloc_texture(poly->bpp);
+
+		/* Init the base fields */
+		page->settings = (struct texture_settings){ .bpp = poly->bpp };
+
+		/* Add it to our linked list */
+		page->next = pvr.textures[poly->texpage_id];
+		pvr.textures[poly->texpage_id] = page;
+
+		/* Load the texture to VRAM */
+		load_texture(page, poly->texpage_id);
+	}
+
+	return page;
+}
+
 static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 {
+	unsigned int i, codebook, tex_fmt, tex_w, tex_h, nb = poly->nb;
 	const struct vertex_coords *coords = poly->coords;
 	const uint32_t *colors = poly->colors;
-	unsigned int i, nb = poly->nb;
 	uint32_t colors_alt[4];
 	bool bright = poly->flags & POLY_BRIGHT;
 	bool set_mask = poly->flags & POLY_SET_MASK;
 	bool check_mask = poly->flags & POLY_CHECK_MASK;
 	uint16_t voffset = 0, zoffset = poly->zoffset;
+	struct texture_page *tex_page;
 	pvr_poly_cxt_t cxt;
+	pvr_ptr_t tex;
 	int txr_en;
 	float z;
 
 	if (poly->flags & POLY_TEXTURED) {
-		pvr_prepare_poly_cxt_txr(&cxt, list, poly);
-		voffset = get_voffset(poly->tex_page->settings.bpp, poly->codebook);
+		tex_page = poly_get_texture_page(poly);
+
+		if (poly->bpp == TEXTURE_16BPP) {
+			tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
+			tex_w = 256;
+			tex_h = 512; /* Really 256, but we use V up to 0.5 */
+
+			if (poly->clut & CLUT_IS_MASK)
+				tex = to_texture_page_16bpp(tex_page)->mask_tex;
+			else
+				tex = tex_page->tex;
+		} else {
+			codebook = find_texture_codebook(tex_page, poly->clut);
+			voffset = get_voffset(poly->bpp, codebook);
+
+			tex_fmt = PVR_TXRFMT_ARGB1555
+				| PVR_TXRFMT_VQ_ENABLE
+				| PVR_TXRFMT_NONTWIDDLED;
+			tex_w = 1024;
+			tex_h = 512;
+
+			if (poly->bpp == TEXTURE_4BPP)
+				tex = (pvr_ptr_t)&tex_page->vq->codebook4[codebook];
+			else
+				tex = (pvr_ptr_t)&tex_page->vq->codebook8[codebook];
+		}
+
+		pvr_poly_cxt_txr(&cxt, list, tex_fmt,
+				 tex_w, tex_h, tex, FILTER_MODE);
 	} else {
 		pvr_poly_cxt_col(&cxt, list);
 	}
@@ -1203,27 +1201,6 @@ static uint32_t get_tex_vertex_color(uint32_t color)
 		| mask;
 }
 
-static void pvr_prepare_poly_cxt_txr(pvr_poly_cxt_t *cxt,
-				     pvr_list_t list,
-				     const struct poly *poly)
-{
-	unsigned int tex_fmt, tex_width, tex_height;
-	pvr_ptr_t tex = poly_get_texture(poly);
-
-	if (poly->tex_page->settings.bpp == TEXTURE_16BPP) {
-		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
-		tex_width = 256;
-		tex_height = 512; /* Really 256, but we use V up to 0.5 */
-	} else {
-		tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_VQ_ENABLE | PVR_TXRFMT_NONTWIDDLED;
-		tex_width = 1024;
-		tex_height = 512;
-	}
-
-	pvr_poly_cxt_txr(cxt, list, tex_fmt,
-			 tex_width, tex_height, tex, FILTER_MODE);
-}
-
 static bool overlap_draw_area(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
 	return x < pvr.draw_x2
@@ -1311,10 +1288,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 	uint32_t *list_start = list;
 	uint32_t *list_end = list + list_len;
 	const union PacketBuffer *pbuffer;
-	struct texture_page *tex_page;
 	enum blending_mode blending_mode;
 	bool new_set, new_check;
-	unsigned int codebook;
 	struct poly poly;
 
 	for (; list < list_end; list += 1 + len)
@@ -1334,7 +1309,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 		semi_trans = cmd & 0x02;
 		raw_tex = cmd & 0x01;
 
-		tex_page = NULL;
 		blending_mode = semi_trans ? pvr.blending_mode : BLENDING_MODE_NONE;
 
 		switch (cmd >> 5) {
@@ -1442,10 +1416,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 			/* Monochrome/shaded non-textured polygon */
 			unsigned int i, nb = 3 + !!multiple;
 			const uint32_t *buf = pbuffer->U4;
-			struct texture_settings settings;
 			uint32_t texcoord[4];
-			unsigned int page_x, page_y;
-			uint16_t texpage, clut = 0;
+			uint16_t texpage;
 			bool bright = false;
 			uint32_t val;
 
@@ -1494,23 +1466,14 @@ int do_cmd_list(uint32_t *list, int list_len,
 			}
 
 			if (textured) {
-				clut = (texcoord[0] >> 16) & 0x7fff;
 				texpage = texcoord[1] >> 16;
-				settings = pvr.settings;
 
-				settings.bpp = (texpage >> 7) & 0x3;
-				page_x = texpage & 0xf;
-				page_y = (texpage >> 4) & 0x1;
-
-				tex_page = get_or_alloc_texture(page_x, page_y, clut,
-								settings, &codebook);
+				poly.clut = (texcoord[0] >> 16) & 0x7fff;
+				poly.bpp = (texpage >> 7) & 0x3;
+				poly.texpage_id = texpage & 0x1f;
 
 				if (semi_trans)
 					blending_mode = (enum blending_mode)((texpage >> 5) & 0x3);
-
-				poly.tex_page = tex_page;
-				poly.codebook = codebook;
-				poly.clut = clut;
 			}
 
 			poly.blending_mode = blending_mode;
@@ -1582,7 +1545,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 		case 0x3: {
 			/* Monochrome rectangle */
-			uint16_t w, h, x0, y0, x1, y1, clut = 0;
+			uint16_t w, h, x0, y0, x1, y1;
 			bool bright = false;
 			uint32_t color;
 			uint8_t flags = 0;
@@ -1647,14 +1610,9 @@ int do_cmd_list(uint32_t *list, int list_len,
 			};
 
 			if (textured) {
-				clut = pbuffer->U2[5] & 0x7fff;
-
-				tex_page = get_or_alloc_texture(pvr.page_x, pvr.page_y, clut,
-								pvr.settings, &codebook);
-
-				poly.tex_page = tex_page;
-				poly.codebook = codebook;
-				poly.clut = clut;
+				poly.bpp = pvr.settings.bpp;
+				poly.texpage_id = pvr.page_y * 16 + pvr.page_x;
+				poly.clut = pbuffer->U2[5] & 0x7fff;
 
 				poly.coords[1].u = poly.coords[3].u = pbuffer->U1[8];
 				poly.coords[0].u = poly.coords[2].u = pbuffer->U1[8] + w;
