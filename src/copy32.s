@@ -7,6 +7,7 @@
 .text
 .globl _copy32
 .type _copy32,%function
+.section .sub0
 
 .align 5
 
