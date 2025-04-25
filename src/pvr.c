@@ -184,6 +184,7 @@ _Static_assert(sizeof(struct poly) == 64, "Invalid size");
 
 struct pvr_renderer {
 	uint32_t gp1;
+	uint32_t new_gp1;
 
 	unsigned int zoffset;
 	uint32_t dr_state;
@@ -224,11 +225,15 @@ struct pvr_renderer {
 	unsigned int reap_bank, to_reap[2];
 
 	unsigned int polybuf_cnt_start;
+
+	unsigned int cmdbuf_offt;
 };
 
 static struct pvr_renderer pvr;
 
 static struct poly polybuf[2048];
+
+static uint32_t cmdbuf[32768];
 
 int renderer_init(void)
 {
@@ -1369,29 +1374,23 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 	}
 }
 
-int do_cmd_list(uint32_t *list, int list_len,
-		int *cycles_sum_out, int *cycles_last, int *last_cmd)
+static void process_gpu_commands(void)
 {
 	bool multicolor, multiple, semi_trans, textured, raw_tex;
-	int cpu_cycles_sum = 0, cpu_cycles = *cycles_last;
-	uint32_t cmd = 0, len;
-	uint32_t *list_start = list;
-	uint32_t *list_end = list + list_len;
 	const union PacketBuffer *pbuffer;
 	enum blending_mode blending_mode;
 	bool new_set, new_check;
 	struct poly poly;
+	unsigned int cmd_offt;
+	uint32_t cmd, len;
 
-	for (; list < list_end; list += 1 + len)
-	{
-		cmd = *list >> 24;
+	for (cmd_offt = 0; cmd_offt < pvr.cmdbuf_offt; cmd_offt += 1 + len) {
+		pbuffer = (const union PacketBuffer *)&cmdbuf[cmd_offt];
+
+		cmd = pbuffer->U4[0] >> 24;
 		len = cmd_lengths[cmd];
-		if (list + 1 + len > list_end) {
-			cmd = -1;
-			break;
-		}
 
-		pbuffer = (const union PacketBuffer *)list;
+		dcache_pref_block(&cmdbuf[cmd_offt + 1 + len]);
 
 		multicolor = cmd & 0x10;
 		multiple = cmd & 0x08;
@@ -1406,9 +1405,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 			switch (cmd) {
 			case 0x02:
 				cmd_clear_image(pbuffer);
-				gput_sum(cpu_cycles_sum, cpu_cycles,
-					 gput_fill(pbuffer->U2[4] & 0x3ff,
-						   pbuffer->U2[5] & 0x1ff));
 				break;
 
 			default:
@@ -1500,7 +1496,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 		case 5:
 		case 6:
 			/* VRAM access commands */
-			goto out;
+			break;
 
 		case 0x1: {
 			/* Monochrome/shaded non-textured polygon */
@@ -1572,16 +1568,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 				poly.flags |= POLY_BRIGHT;
 
 			process_poly(&poly);
-
-			if (multicolor && textured)
-				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
-			else if (textured)
-				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_t());
-			else if (multicolor)
-				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_g());
-			else
-				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base());
-
 			break;
 		}
 
@@ -1592,16 +1578,9 @@ int do_cmd_list(uint32_t *list, int list_len,
 			uint32_t oldcolor, color, val;
 			int16_t x, y, oldx, oldy;
 
-			if (multiple) {
-				nb = get_line_length(list, list_end, multicolor);
-
-				len += (nb - 2) << !!multicolor;
-
-				if (list + len >= list_end) {
-					cmd = -1;
-					break;
-				}
-			}
+			if (multiple)
+				nb = get_line_length((uint32_t *)pbuffer,
+						     (uint32_t *)0xffffffff, multicolor);
 
 			/* BGR->RGB swap */
 			color = __builtin_bswap32(*buf++) >> 8;
@@ -1627,8 +1606,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 				oldx = x;
 				oldy = y;
 				oldcolor = color;
-
-				gput_sum(cpu_cycles_sum, cpu_cycles, gput_line(0));
 			}
 			break;
 		}
@@ -1712,8 +1689,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 			}
 
 			process_poly(&poly);
-
-			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
 			break;
 		}
 
@@ -1723,9 +1698,141 @@ int do_cmd_list(uint32_t *list, int list_len,
 		}
 	}
 
+	pvr.cmdbuf_offt = 0;
+}
+
+int do_cmd_list(uint32_t *list, int list_len,
+		int *cycles_sum_out, int *cycles_last, int *last_cmd)
+{
+	bool multicolor, multiple, textured;
+	int cpu_cycles_sum = 0, cpu_cycles = *cycles_last;
+	uint32_t cmd = 0, len;
+	uint32_t *list_start = list;
+	uint32_t *list_end = list + list_len;
+	const union PacketBuffer *pbuffer;
+
+	for (; list < list_end; list += 1 + len)
+	{
+		cmd = *list >> 24;
+
+		len = cmd_lengths[cmd];
+		if (list + 1 + len > list_end) {
+			cmd = -1;
+			break;
+		}
+
+		if (pvr.cmdbuf_offt + len >= __array_size(cmdbuf)) {
+			/* No more space in command buffer?
+			 * Flush what we queued so far. */
+			process_gpu_commands();
+		}
+
+		memcpy(&cmdbuf[pvr.cmdbuf_offt], list, (len + 1) * 4);
+		pvr.cmdbuf_offt += len + 1;
+
+		pbuffer = (const union PacketBuffer *)list;
+
+		multicolor = cmd & 0x10;
+		multiple = cmd & 0x08;
+		textured = cmd & 0x04;
+
+		switch (cmd >> 5) {
+		case 0x0:
+			switch (cmd) {
+			case 0x02:
+				gput_sum(cpu_cycles_sum, cpu_cycles,
+					 gput_fill(pbuffer->U2[4] & 0x3ff,
+						   pbuffer->U2[5] & 0x1ff));
+				break;
+
+			case 0x00:
+				/* NOP */
+				break;
+
+			default:
+				/* VRAM access commands.
+				 * These might update PSX textures or palettes
+				 * that were already used for the current frame;
+				 * so we need to render everything we queued
+				 * until now. */
+				process_gpu_commands();
+				break;
+			}
+			break;
+
+		case 0x7:
+			if (cmd == 0xe1)
+				pvr.new_gp1 = (pvr.new_gp1 & ~0x7ff) | (pbuffer->U4[0] & 0x7ff);
+			break;
+
+		case 4:
+		case 5:
+		case 6:
+			/* VRAM access commands */
+			goto out;
+
+		case 0x1: {
+			if (multicolor && textured)
+				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt());
+			else if (textured)
+				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_t());
+			else if (multicolor)
+				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_g());
+			else
+				gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base());
+
+			break;
+		}
+
+		case 0x2: {
+			/* Monochrome/shaded line */
+			unsigned int i, nb = 2;
+
+			if (multiple) {
+				nb = get_line_length(list, list_end, multicolor);
+
+				len += (nb - 2) << !!multicolor;
+
+				if (list + len >= list_end) {
+					cmd = -1;
+					break;
+				}
+			}
+
+			for (i = 0; i < nb - 1; i++)
+				gput_sum(cpu_cycles_sum, cpu_cycles, gput_line(0));
+			break;
+		}
+
+		case 0x3: {
+			uint16_t w, h;
+
+			if ((cmd & 0x18) == 0x18) {
+				w = 16;
+				h = 16;
+			} else if (cmd & 0x10) {
+				w = 8;
+				h = 8;
+			} else if (cmd & 0x08) {
+				w = 1;
+				h = 1;
+			} else {
+				w = pbuffer->U2[4 + 2 * !!textured];
+				h = pbuffer->U2[5 + 2 * !!textured];
+			}
+
+			gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(w, h));
+			break;
+		}
+
+		default:
+			break;
+		}
+	}
+
 out:
 	gpu.ex_regs[1] &= ~0x1ff;
-	gpu.ex_regs[1] |= pvr.gp1 & 0x1ff;
+	gpu.ex_regs[1] |= pvr.new_gp1 & 0x1ff;
 
 	*cycles_sum_out += cpu_cycles_sum;
 	*cycles_last = cpu_cycles;
@@ -1739,6 +1846,7 @@ void hw_render_start(void)
 	pvr.zoffset = 0;
 	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
 	pvr.inval_counter_at_start = pvr.inval_counter;
+	pvr.cmdbuf_offt = 0;
 
 	/* Reset lists */
 	if (WITH_HYBRID_RENDERING) {
@@ -1757,6 +1865,8 @@ void hw_render_start(void)
 
 void hw_render_stop(void)
 {
+	process_gpu_commands();
+
 	if (!pvr.new_frame)
 		pvr_list_finish();
 
