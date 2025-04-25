@@ -69,6 +69,8 @@
 #define COORDS_U_OFFSET (1.0f / 2048.0f)
 #define COORDS_V_OFFSET (1.0f / 16384.0f)
 
+#define __pvr __attribute__((section(".sub0")))
+
 union PacketBuffer {
 	uint32_t U4[16];
 	uint16_t U2[32];
@@ -345,13 +347,24 @@ static inline uint16_t *clut_get_ptr(uint16_t clut)
 	return &gpu.vram[clut_get_offset(clut) / 2];
 }
 
-static void load_palette(pvr_ptr_t palette_addr, uint16_t clut, unsigned int nb)
+__noinline
+static void load_palette(struct texture_page *page, unsigned int offset,
+			 uint16_t clut, bool bpp4)
 {
 	alignas(32) uint64_t palette_data[256];
+	pvr_ptr_t palette_addr;
+	unsigned int i, nb;
+	uint16_t *palette;
 	uint16_t pixel;
 	uint64_t color;
-	uint16_t *palette;
-	unsigned int i;
+
+	if (bpp4) {
+		palette_addr = page->vq->codebook4[offset].palette;
+		nb = 16;
+	} else {
+		palette_addr = page->vq->codebook8[offset].palette;
+		nb = 256;
+	}
 
 	palette = clut_get_ptr(clut);
 
@@ -379,22 +392,6 @@ static void load_palette(pvr_ptr_t palette_addr, uint16_t clut, unsigned int nb)
 	}
 
 	pvr_txr_load(palette_data, palette_addr, nb * sizeof(color));
-}
-
-static void
-load_palette_bpp4(struct texture_page *page, unsigned int offset, uint16_t clut)
-{
-	struct pvr_vq_codebook_4bpp *codebook4 = &page->vq->codebook4[offset];
-
-	load_palette(codebook4->palette, clut, 16);
-}
-
-static void
-load_palette_bpp8(struct texture_page *page, unsigned int offset, uint16_t clut)
-{
-	struct pvr_vq_codebook_8bpp *codebook8 = &page->vq->codebook8[offset];
-
-	load_palette(codebook8->palette, clut, 256);
 }
 
 static inline bool counter_is_newer(uint16_t current, uint16_t other)
@@ -451,10 +448,7 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 
 	pvr_printf("Load CLUT 0x%04hx at offset %u\n", clut, i);
 
-	if (bpp4)
-		load_palette_bpp4(page, i, clut);
-	else
-		load_palette_bpp8(page, i, clut);
+	load_palette(page, i, clut, bpp4);
 
 	return i;
 }
@@ -559,20 +553,16 @@ static void load_block(struct texture_page *page, unsigned int page_offset,
 		load_block_16bpp(to_texture_page_16bpp(page), src, x, y);
 }
 
-static void maybe_update_texture(struct texture_page *page,
-				 unsigned int page_offset, uint64_t block_mask)
+__noinline
+static void update_texture(struct texture_page *page,
+			   unsigned int page_offset, uint64_t to_load)
 {
 	unsigned int idx;
-	uint64_t to_load;
 
-	to_load = ~page->block_mask & block_mask;
-
-	if (to_load) {
-		for (idx = 0; idx < 64; idx++) {
-			if (to_load & BITLL(idx)) {
-				load_block(page, page_offset, idx % 8, idx / 8);
-				page->block_mask |= BITLL(idx);
-			}
+	for (idx = 0; idx < 64; idx++) {
+		if (to_load & BITLL(idx)) {
+			load_block(page, page_offset, idx % 8, idx / 8);
+			page->block_mask |= BITLL(idx);
 		}
 	}
 }
@@ -765,6 +755,7 @@ static void pvr_start_scene(void)
 	pvr.new_frame = 0;
 }
 
+__pvr
 static void draw_prim(pvr_poly_cxt_t *cxt,
 		      const struct vertex_coords *coords,
 		      uint16_t voffset,
@@ -891,6 +882,7 @@ poly_get_texture_page(const struct poly *poly)
 	return page;
 }
 
+__pvr
 static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 {
 	unsigned int i, codebook, tex_fmt, tex_w, tex_h, nb = poly->nb;
@@ -902,7 +894,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 	bool check_mask = poly->flags & POLY_CHECK_MASK;
 	uint16_t voffset = 0, zoffset = poly->zoffset;
 	struct texture_page *tex_page;
-	uint64_t block_mask;
+	uint64_t block_mask, to_load;
 	pvr_poly_cxt_t cxt;
 	pvr_ptr_t tex;
 	int txr_en;
@@ -912,7 +904,10 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 		tex_page = poly_get_texture_page(poly);
 
 		block_mask = poly_get_block_mask(poly);
-		maybe_update_texture(tex_page, poly->texpage_id, block_mask);
+		to_load = ~tex_page->block_mask & block_mask;
+
+		if (to_load)
+			update_texture(tex_page, poly->texpage_id, to_load);
 
 		if (poly->bpp == TEXTURE_16BPP) {
 			tex_fmt = PVR_TXRFMT_ARGB1555 | PVR_TXRFMT_NONTWIDDLED;
@@ -1122,6 +1117,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 	}
 }
 
+__pvr
 static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 {
 	if (!WITH_HYBRID_RENDERING || list == pvr.list) {
@@ -1164,6 +1160,7 @@ static void polybuf_deferred_render(void)
 	}
 }
 
+__pvr
 static void process_poly(struct poly *poly)
 {
 	if (!(poly->flags & POLY_IGN_MASK)) {
@@ -1377,6 +1374,7 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 	}
 }
 
+__pvr
 static void process_gpu_commands(void)
 {
 	bool multicolor, multiple, semi_trans, textured, raw_tex;
@@ -1868,6 +1866,7 @@ void hw_render_start(void)
 	}
 }
 
+__pvr
 void hw_render_stop(void)
 {
 	process_gpu_commands();
