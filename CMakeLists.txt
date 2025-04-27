@@ -157,6 +157,13 @@ target_compile_definitions(libpcsxcore PUBLIC
 target_compile_options(libpcsxcore PRIVATE -Wno-format)
 target_link_libraries(libpcsxcore PUBLIC lightrec zlib)
 
+set(WITH_GPUSTATUS_POLLING_THRESHOLD 350 CACHE STRING
+	"Threshold in CPU cycles for GPU status register polling detection"
+)
+target_compile_definitions(libpcsxcore PRIVATE
+	GPUSTATUS_POLLING_THRESHOLD=${WITH_GPUSTATUS_POLLING_THRESHOLD}
+)
+
 if (NOT GPU_PLUGIN)
 	set(GPU_PLUGIN PVR CACHE STRING "GPU plugin" FORCE)
 	set_property(CACHE GPU_PLUGIN PROPERTY
