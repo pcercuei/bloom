@@ -120,6 +120,10 @@ if (NOT CODEBUF_SIZE)
 	message(SEND_ERROR "Invalid buffer size.")
 endif()
 
+set(WITH_GPUSTATUS_POLLING_THRESHOLD 0 CACHE STRING
+	"Threshold in CPU cycles for GPU status register polling detection (0 = disabled)"
+)
+
 add_library(libpcsxcore STATIC
 	${PCSX_REAL_DIR}/libpcsxcore/cdriso.c
 	${PCSX_REAL_DIR}/libpcsxcore/cdrom.c
@@ -174,6 +178,7 @@ target_compile_definitions(libpcsxcore PUBLIC
 	USE_ASYNC_CDROM
 	USE_C11_THREADS
 	HAVE_CDROM
+	GPUSTATUS_POLLING_THRESHOLD=${WITH_GPUSTATUS_POLLING_THRESHOLD}
 )
 target_compile_options(libpcsxcore PRIVATE -Wno-format)
 target_link_libraries(libpcsxcore PUBLIC lightrec zlib)
