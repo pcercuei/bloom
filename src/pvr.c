@@ -230,6 +230,8 @@ struct pvr_renderer {
 	unsigned int polybuf_cnt_start;
 
 	unsigned int cmdbuf_offt;
+	bool old_blending_is_none;
+	pvr_ptr_t old_tex;
 };
 
 static struct pvr_renderer pvr;
@@ -766,9 +768,11 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	pvr_vertex_t *vert;
 	unsigned int i;
 
-	hdr = (void *)pvr_dr_target(pvr.dr_state);
-	pvr_poly_compile(hdr, cxt);
-	pvr_dr_commit(hdr);
+	if (cxt) {
+		hdr = (void *)pvr_dr_target(pvr.dr_state);
+		pvr_poly_compile(hdr, cxt);
+		pvr_dr_commit(hdr);
+	}
 
 	for (i = 0; i < nb; i++) {
 		register float fr0 asm("fr0") = (float)coords[i].x;
@@ -885,10 +889,11 @@ poly_get_texture_page(const struct poly *poly)
 __pvr
 static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 {
-	unsigned int i, codebook, tex_fmt, tex_w, tex_h, nb = poly->nb;
+	unsigned int i, codebook, tex_fmt = 0, tex_w = 0, tex_h = 0, nb = poly->nb;
 	const struct vertex_coords *coords = poly->coords;
 	const uint32_t *colors = poly->colors;
 	uint32_t colors_alt[4];
+	bool textured = poly->flags & POLY_TEXTURED;
 	bool bright = poly->flags & POLY_BRIGHT;
 	bool set_mask = poly->flags & POLY_SET_MASK;
 	bool check_mask = poly->flags & POLY_CHECK_MASK;
@@ -896,11 +901,11 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 	struct texture_page *tex_page;
 	uint64_t block_mask, to_load;
 	pvr_poly_cxt_t cxt;
-	pvr_ptr_t tex;
+	pvr_ptr_t tex = NULL;
 	int txr_en;
 	float z;
 
-	if (poly->flags & POLY_TEXTURED) {
+	if (textured) {
 		tex_page = poly_get_texture_page(poly);
 
 		block_mask = poly_get_block_mask(poly);
@@ -933,7 +938,18 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 			else
 				tex = (pvr_ptr_t)&tex_page->vq->codebook8[codebook];
 		}
+	}
 
+	z = get_zvalue(zoffset, set_mask, check_mask);
+
+	if (poly->blending_mode == BLENDING_MODE_NONE
+	    && pvr.old_blending_is_none
+	    && tex == pvr.old_tex) {
+		draw_prim(NULL, coords, voffset, colors, nb, z, 0);
+		return;
+	}
+
+	if (textured) {
 		pvr_poly_cxt_txr(&cxt, list, tex_fmt,
 				 tex_w, tex_h, tex, FILTER_MODE);
 	} else {
@@ -944,7 +960,8 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 	cxt.gen.culling = PVR_CULLING_SMALL;
 	cxt.depth.comparison = poly->depthcmp;
 
-	z = get_zvalue(zoffset, set_mask, check_mask);
+	pvr.old_blending_is_none = poly->blending_mode == BLENDING_MODE_NONE;
+	pvr.old_tex = tex;
 
 	switch (poly->blending_mode) {
 	case BLENDING_MODE_NONE:
@@ -994,7 +1011,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 
 			/* Make the source texture twice as bright by adding it
 			 * again. */
-			draw_prim(&cxt, coords, voffset, colors, nb, z, 0);
+			draw_prim(NULL, coords, voffset, colors, nb, z, 0);
 		}
 
 		break;
@@ -1032,7 +1049,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 
 			/* Make the source texture twice as bright by adding it
 			 * again */
-			draw_prim(&cxt, coords, voffset, colors, nb, z, 0);
+			draw_prim(NULL, coords, voffset, colors, nb, z, 0);
 		}
 
 		cxt.gen.alpha = PVR_ALPHA_DISABLE;
@@ -1850,6 +1867,7 @@ void hw_render_start(void)
 	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
 	pvr.inval_counter_at_start = pvr.inval_counter;
 	pvr.cmdbuf_offt = 0;
+	pvr.old_blending_is_none = false;
 
 	/* Reset lists */
 	if (WITH_HYBRID_RENDERING) {
