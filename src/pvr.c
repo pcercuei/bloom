@@ -71,6 +71,9 @@
 
 #define __pvr __attribute__((section(".sub0")))
 
+#define likely(x) __likely(x)
+#define unlikely(x) __unlikely(x)
+
 union PacketBuffer {
 	uint32_t U4[16];
 	uint16_t U2[32];
@@ -360,7 +363,7 @@ static void load_palette(struct texture_page *page, unsigned int offset,
 	uint16_t pixel;
 	uint64_t color;
 
-	if (bpp4) {
+	if (likely(bpp4)) {
 		palette_addr = page->vq->codebook4[offset].palette;
 		nb = 16;
 	} else {
@@ -411,7 +414,7 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 	unsigned int i;
 
 	for (i = 0; i < page4->nb_cluts; i++) {
-		if (page4->clut[i].clut != clut)
+		if (likely(page4->clut[i].clut != clut))
 			continue;
 
 		pvr_printf("Found %s CLUT at offset %u\n",
@@ -419,8 +422,8 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 
 		other = clut_get_page4(clut);
 
-		if (counter_is_newer(page4->clut[i].inval_counter,
-				     other->base.inval_counter))
+		if (likely(counter_is_newer(page4->clut[i].inval_counter,
+					    other->base.inval_counter)))
 			return i;
 
 		/* We found the palette but it's outdated */
@@ -436,7 +439,7 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 		/* Otherwise, we need to use another one. */
 	}
 
-	if (i == codebooks) {
+	if (unlikely(i == codebooks)) {
 		/* No space? Let's trash everything and start again */
 		i = 0;
 		page4->nb_cluts = 1;
@@ -547,7 +550,7 @@ static void load_block(struct texture_page *page, unsigned int page_offset,
 
 	src += y * 32 * 2048 + x * (16 << page->settings.bpp);
 
-	if (page->settings.bpp == TEXTURE_4BPP)
+	if (likely(page->settings.bpp == TEXTURE_4BPP))
 		load_block_4bpp(page, src, x, y);
 	else if (page->settings.bpp == TEXTURE_8BPP)
 		load_block_8bpp(page, src, x, y);
@@ -670,7 +673,7 @@ void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 
 	/* Texture pages overlap, so we actually have to invalidate three
 	 * pages before the one pointed by the aligned x/y coordinates */
-	if (x < 192)
+	if (unlikely(x < 192))
 		x = 0;
 	else
 		x -= 192;
@@ -732,14 +735,14 @@ static float get_zvalue(uint16_t zoffset, bool set_mask, bool check_mask)
 	 * rendered. This is done so because the PVR seems to discard the lower
 	 * 8 bits of the Z value. */
 
-	if (!set_mask)
+	if (likely(!set_mask))
 		fint32.vint = 125 << 23;
 	else if (check_mask)
 		fint32.vint = 126 << 23;
 	else
 		fint32.vint = 127 << 23;
 
-	if (set_mask && check_mask)
+	if (unlikely(set_mask && check_mask))
 		fint32.vint -= z;
 	else
 		fint32.vint += z;
@@ -768,7 +771,7 @@ static void draw_prim(pvr_poly_hdr_t *hdr,
 	pvr_vertex_t *vert;
 	unsigned int i;
 
-	if (hdr) {
+	if (unlikely(hdr)) {
 		sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
 		copy32(sq_hdr, hdr);
 		pvr_dr_commit(sq_hdr);
@@ -830,7 +833,7 @@ static inline void header_copy(pvr_poly_hdr_t *dst, const pvr_poly_hdr_t *src)
 
 static inline uint16_t get_voffset(enum texture_bpp bpp, uint8_t codebook)
 {
-	if (bpp == TEXTURE_4BPP)
+	if (likely(bpp == TEXTURE_4BPP))
 		return NB_CODEBOOKS_4BPP - 1 - codebook;
 
 	if (bpp == TEXTURE_8BPP)
@@ -847,17 +850,17 @@ poly_get_texture_page(const struct poly *poly)
 	struct texture_page_8bpp *page8;
 	struct texture_page_4bpp *page4;
 
-	if (poly->bpp == TEXTURE_4BPP)
+	if (likely(poly->bpp == TEXTURE_4BPP))
 		page = &pvr.textures4[poly->texpage_id].base;
 	else if (poly->bpp == TEXTURE_8BPP)
 		page = &pvr.textures8[poly->texpage_id].base;
 	else
 		page = &pvr.textures16[poly->texpage_id].base;
 
-	if (!page->tex) {
+	if (unlikely(!page->tex)) {
 		/* Texture page not loaded */
 
-		if (poly->bpp == TEXTURE_16BPP) {
+		if (unlikely(poly->bpp == TEXTURE_16BPP)) {
 			page16 = to_texture_page_16bpp(page);
 
 			page16->base.tex = pvr_mem_malloc(256 * 256 * 2);
@@ -963,10 +966,10 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 		block_mask = poly_get_block_mask(poly);
 		to_load = ~tex_page->block_mask & block_mask;
 
-		if (to_load)
+		if (unlikely(to_load))
 			update_texture(tex_page, poly->texpage_id, to_load);
 
-		if (poly->bpp == TEXTURE_16BPP) {
+		if (unlikely(poly->bpp == TEXTURE_16BPP)) {
 			if (poly->clut & CLUT_IS_MASK)
 				tex = to_texture_page_16bpp(tex_page)->mask_tex;
 			else
@@ -975,7 +978,7 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 			codebook = find_texture_codebook(tex_page, poly->clut);
 			voffset = get_voffset(poly->bpp, codebook);
 
-			if (poly->bpp == TEXTURE_4BPP)
+			if (likely(poly->bpp == TEXTURE_4BPP))
 				tex = (pvr_ptr_t)&tex_page->vq->codebook4[codebook];
 			else
 				tex = (pvr_ptr_t)&tex_page->vq->codebook8[codebook];
@@ -990,9 +993,9 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 
 	z = get_zvalue(zoffset, set_mask, check_mask);
 
-	if (poly->blending_mode == BLENDING_MODE_NONE
-	    && pvr.old_blending_is_none
-	    && tex == pvr.old_tex) {
+	if (likely(poly->blending_mode == BLENDING_MODE_NONE
+		   && pvr.old_blending_is_none
+		   && tex == pvr.old_tex)) {
 		draw_prim(NULL, coords, voffset, colors, nb, z, 0);
 		return;
 	}
@@ -1007,11 +1010,11 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 			.pixel_mode = PVR_PIXEL_MODE_ARGB1555,
 		};
 
-		if (poly->bpp == TEXTURE_16BPP)
+		if (unlikely(poly->bpp == TEXTURE_16BPP))
 			hdr.m2.u_size = PVR_UV_SIZE_256;
 	}
 
-	if (poly->depthcmp != PVR_DEPTHCMP_GEQUAL)
+	if (unlikely(poly->depthcmp != PVR_DEPTHCMP_GEQUAL))
 		hdr.m1.depth_cmp = poly->depthcmp;
 
 	pvr.old_blending_is_none = poly->blending_mode == BLENDING_MODE_NONE;
@@ -1180,14 +1183,14 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 __pvr
 static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 {
-	if (!WITH_HYBRID_RENDERING || list == pvr.list) {
-		if (pvr.new_frame) {
+	if (!WITH_HYBRID_RENDERING || likely(list == pvr.list)) {
+		if (unlikely(pvr.new_frame)) {
 			pvr_start_scene();
 			pvr_list_begin(pvr.list);
 		}
 
 		poly_draw_now(list, poly);
-	} else if (pvr.polybuf_cnt_start == __array_size(polybuf)) {
+	} else if (unlikely(pvr.polybuf_cnt_start == __array_size(polybuf))) {
 		printf("Poly buffer overflow\n");
 	} else {
 		poly_copy(&polybuf[pvr.polybuf_cnt_start++], poly);
@@ -1227,20 +1230,20 @@ static void polybuf_deferred_render(void)
 __pvr
 static void process_poly(struct poly *poly)
 {
-	if (!(poly->flags & POLY_IGN_MASK)) {
+	if (likely(!(poly->flags & POLY_IGN_MASK))) {
 		if (pvr.set_mask)
 			poly->flags |= POLY_SET_MASK;
 		if (pvr.check_mask)
 			poly->flags |= POLY_CHECK_MASK;
 	}
 
-	if (poly->blending_mode == BLENDING_MODE_NONE) {
+	if (likely(poly->blending_mode == BLENDING_MODE_NONE)) {
 		poly->zoffset = pvr.zoffset++;
 
 		/* TODO: support opaque polys */
 		poly_enqueue(pvr.pt_list, poly);
 
-		if (poly->flags & POLY_BRIGHT) {
+		if (unlikely(poly->flags & POLY_BRIGHT)) {
 			/* Process a bright poly as a regular poly with additive
 			 * blending */
 			poly->flags &= ~POLY_BRIGHT;
@@ -1783,12 +1786,12 @@ int do_cmd_list(uint32_t *list, int list_len,
 		cmd = *list >> 24;
 
 		len = cmd_lengths[cmd];
-		if (list + 1 + len > list_end) {
+		if (unlikely(list + 1 + len > list_end)) {
 			cmd = -1;
 			break;
 		}
 
-		if (pvr.cmdbuf_offt + len >= __array_size(cmdbuf)) {
+		if (unlikely(pvr.cmdbuf_offt + len >= __array_size(cmdbuf))) {
 			/* No more space in command buffer?
 			 * Flush what we queued so far. */
 			process_gpu_commands();
@@ -1939,11 +1942,11 @@ void hw_render_stop(void)
 {
 	process_gpu_commands();
 
-	if (!pvr.new_frame)
+	if (likely(!pvr.new_frame))
 		pvr_list_finish();
 
-	if (WITH_HYBRID_RENDERING && pvr.polybuf_cnt_start) {
-		if (pvr.new_frame) {
+	if (WITH_HYBRID_RENDERING && likely(pvr.polybuf_cnt_start)) {
+		if (unlikely(pvr.new_frame)) {
 			pvr_start_scene();
 			pvr.new_frame = 0;
 		}
@@ -1951,6 +1954,6 @@ void hw_render_stop(void)
 		polybuf_deferred_render();
 	}
 
-	if (!pvr.new_frame)
+	if (likely(!pvr.new_frame))
 		pvr_scene_finish();
 }
