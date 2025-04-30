@@ -812,11 +812,6 @@ static void draw_prim(pvr_poly_cxt_t *cxt,
 	pvr_vertex_t *vert;
 	unsigned int i;
 
-	if (pvr.new_frame) {
-		pvr_start_scene();
-		pvr_list_begin(pvr.list);
-	}
-
 	hdr = (void *)pvr_dr_target(pvr.dr_state);
 	pvr_poly_compile(hdr, cxt);
 	pvr_dr_commit(hdr);
@@ -1167,6 +1162,11 @@ static void poly_draw_now(pvr_list_t list, const struct poly *poly)
 static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 {
 	if (!WITH_HYBRID_RENDERING || list == pvr.list) {
+		if (pvr.new_frame) {
+			pvr_start_scene();
+			pvr_list_begin(pvr.list);
+		}
+
 		poly_draw_now(list, poly);
 	} else if (pvr.polybuf_cnt_start == __array_size(polybuf)) {
 		printf("Poly buffer overflow\n");
