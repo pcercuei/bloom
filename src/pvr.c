@@ -212,6 +212,7 @@ struct pvr_renderer {
 	enum blending_mode blending_mode :3;
 
 	uint16_t inval_counter;
+	uint16_t inval_counter_at_start;
 
 	struct texture_settings settings;
 
@@ -405,11 +406,9 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 	unsigned int i;
 
 	for (i = 0; i < page4->nb_cluts; i++) {
-		if (page4->clut[i].clut == clut)
-			break;
-	}
+		if (page4->clut[i].clut != clut)
+			continue;
 
-	if (i < page4->nb_cluts) {
 		pvr_printf("Found %s CLUT at offset %u\n",
 			   (clut & CLUT_IS_MASK) ? "mask" : "normal", i);
 
@@ -419,7 +418,17 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 				     other->base.inval_counter))
 			return i;
 
-		/* We found the palette but it's outdated - we need to reload it. */
+		/* We found the palette but it's outdated */
+
+		if (counter_is_newer(pvr.inval_counter_at_start,
+				     page4->clut[i].inval_counter)) {
+			/* If the CLUT has not yet been used for the current
+			 * frame, we can reuse it. */
+			page4->clut[i].inval_counter = other->base.inval_counter;
+			break;
+		}
+
+		/* Otherwise, we need to use another one. */
 	}
 
 	if (i == codebooks) {
@@ -1729,6 +1738,7 @@ void hw_render_start(void)
 	pvr.new_frame = 1;
 	pvr.zoffset = 0;
 	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
+	pvr.inval_counter_at_start = pvr.inval_counter;
 
 	/* Reset lists */
 	if (WITH_HYBRID_RENDERING) {
