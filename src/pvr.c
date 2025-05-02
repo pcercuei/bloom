@@ -212,6 +212,7 @@ struct pvr_renderer {
 	enum blending_mode blending_mode :3;
 
 	uint16_t inval_counter;
+	uint16_t inval_counter_at_start;
 
 	struct texture_settings settings;
 
@@ -321,13 +322,6 @@ static inline uint32_t max32(uint32_t a, uint32_t b)
 	return a < b ? b : a;
 }
 
-static inline struct texture_page_4bpp * clut_get_page4(uint16_t clut)
-{
-	unsigned int offt = ((clut & 0x4000) >> 10) | ((clut & 0x3f) >> 2);
-
-	return &pvr.textures4[offt];
-}
-
 static inline unsigned int clut_get_offset(uint16_t clut)
 {
 	return ((clut >> 6) & 0x1ff) * 2048 + (clut & 0x3f) * 32;
@@ -396,36 +390,94 @@ static inline bool counter_is_older(uint16_t current, uint16_t other)
 		> (uint16_t)(pvr.inval_counter - other);
 }
 
+static inline bool clut_is_used(struct texture_clut *clut)
+{
+	return !counter_is_older(clut->inval_counter,
+				 pvr.inval_counter_at_start);
+}
+
+static inline unsigned int clut_get_texture_page(uint16_t clut)
+{
+	return ((clut & 0x4000) >> 10) | ((clut & 0x3f) >> 2);
+}
+
+static inline bool clut_is_outdated(const struct texture_clut *clut, bool bpp4)
+{
+	const struct texture_page *page;
+	unsigned int page_offset, end;
+	uint16_t clut_tmp;
+
+	page_offset = clut_get_texture_page(clut->clut);
+	page = &pvr.textures4[page_offset].base;
+
+	if (counter_is_older(clut->inval_counter, page->inval_counter))
+		return true;
+
+	if (!bpp4) {
+		clut_tmp = clut->clut;
+		end = clut_get_texture_page(clut_tmp + 15);
+
+		do {
+			/* 64 half-words in a page, 16 half-words CLUT granularity */
+			clut_tmp += 64 / 16;
+
+			page_offset = clut_get_texture_page(clut_tmp);
+			page = &pvr.textures4[page_offset].base;
+
+			if (counter_is_older(clut->inval_counter,
+					     page->inval_counter))
+				return true;
+		} while (page_offset != end);
+	}
+
+	return false;
+}
+
 static unsigned int
 find_texture_codebook(struct texture_page *page, uint16_t clut)
 {
-	struct texture_page_4bpp *other, *page4 = to_texture_page_4bpp(page);
+	struct texture_page_4bpp *page4 = to_texture_page_4bpp(page);
 	bool bpp4 = page->settings.bpp == TEXTURE_4BPP;
 	unsigned int codebooks = bpp4 ? NB_CODEBOOKS_4BPP : NB_CODEBOOKS_8BPP;
 	unsigned int i;
 
 	for (i = 0; i < page4->nb_cluts; i++) {
-		if (page4->clut[i].clut == clut)
-			break;
-	}
+		if (page4->clut[i].clut != clut)
+			continue;
 
-	if (i < page4->nb_cluts) {
 		pvr_printf("Found %s CLUT at offset %u\n",
 			   (clut & CLUT_IS_MASK) ? "mask" : "normal", i);
 
-		other = clut_get_page4(clut);
-
-		if (!counter_is_older(page4->clut[i].inval_counter,
-				      other->base.inval_counter))
+		if (!clut_is_outdated(&page4->clut[i], bpp4))
 			return i;
 
-		/* We found the palette but it's outdated - we need to reload it. */
+		/* We found the palette but it's outdated */
+
+		if (!clut_is_used(&page4->clut[i])) {
+			/* If the CLUT has not yet been used for the current
+			 * frame, we can reuse it. */
+			break;
+		}
+
+		/* Otherwise, we need to use another one. */
 	}
 
 	if (i == codebooks) {
-		/* No space? Let's trash everything and start again */
-		i = 0;
-		page4->nb_cluts = 1;
+		/* No space? Try to reuse the first CLUT that's not yet been
+		 * used in the current frame */
+		for (i = 0; i < codebooks; i++) {
+			if (!clut_is_used(&page4->clut[i]))
+				break;
+		}
+
+		if (i == codebooks) {
+			/* All CLUTs used? This is really surprising.
+			 * Let's trash everything and start again. */
+			page4->nb_cluts = 1;
+			i = 0;
+
+			printf("All CLUTs used!\n");
+		}
 	} else if (i == page4->nb_cluts) {
 		page4->nb_cluts++;
 	}
@@ -1732,6 +1784,7 @@ void hw_render_start(void)
 	pvr.new_frame = 1;
 	pvr.zoffset = 0;
 	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
+	pvr.inval_counter_at_start = pvr.inval_counter;
 
 	/* Reset lists */
 	if (WITH_HYBRID_RENDERING) {
