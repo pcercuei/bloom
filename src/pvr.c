@@ -390,6 +390,12 @@ load_palette_bpp8(struct texture_page *page, unsigned int offset, uint16_t clut)
 	load_palette(codebook8->palette, clut, 256);
 }
 
+static inline bool counter_is_newer(uint16_t current, uint16_t other)
+{
+	return (uint16_t)(pvr.inval_counter - current)
+		<= (uint16_t)(pvr.inval_counter - other);
+}
+
 static unsigned int
 find_texture_codebook(struct texture_page *page, uint16_t clut)
 {
@@ -409,7 +415,8 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 
 		other = clut_get_page4(clut);
 
-		if (page4->clut[i].inval_counter >= other->base.inval_counter)
+		if (counter_is_newer(page4->clut[i].inval_counter,
+				     other->base.inval_counter))
 			return i;
 
 		/* We found the palette but it's outdated - we need to reload it. */
