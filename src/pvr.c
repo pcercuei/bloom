@@ -419,7 +419,6 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 		/* No space? Let's trash everything and start again */
 		i = 0;
 		page4->nb_cluts = 1;
-		memset(page4->clut, 0, codebooks * sizeof(*page4->clut));
 	} else if (i == page4->nb_cluts) {
 		page4->nb_cluts++;
 	}
@@ -862,11 +861,9 @@ poly_get_texture_page(const struct poly *poly)
 			if (poly->bpp == TEXTURE_8BPP) {
 				page8 = to_texture_page_8bpp(page);
 				page8->nb_cluts = 0;
-				memset(page8->clut, 0, sizeof(page8->clut));
 			} else {
 				page4 = to_texture_page_4bpp(page);
 				page4->nb_cluts = 0;
-				memset(page4->clut, 0, sizeof(page4->clut));
 			}
 		}
 
