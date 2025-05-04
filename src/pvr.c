@@ -1507,7 +1507,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 				.flags = textured ? POLY_TEXTURED : 0,
 			};
 
-			if (textured && raw_tex) {
+			if (textured && raw_tex && !multicolor) {
 				/* Skip color */
 				buf++;
 			}
@@ -1523,6 +1523,9 @@ int do_cmd_list(uint32_t *list, int list_len,
 							|| (poly.colors[i] & 0xff0000) > 0x800000;
 					}
 				} else {
+					if (textured && raw_tex && multicolor)
+						buf++;
+
 					poly.colors[i] = poly.colors[0];
 				}
 
