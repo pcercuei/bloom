@@ -969,7 +969,7 @@ static pvr_poly_hdr_t poly_nontextured = {
 };
 
 __pvr
-static void poly_draw_now(pvr_list_t list, const struct poly *poly)
+static void poly_draw_now(const struct poly *poly)
 {
 	unsigned int i, codebook, nb = poly->nb;
 	const struct vertex_coords *coords = poly->coords;
@@ -1215,7 +1215,7 @@ static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 			pvr_list_begin(pvr.list);
 		}
 
-		poly_draw_now(list, poly);
+		poly_draw_now(poly);
 	} else if (pvr.polybuf_cnt_start == __array_size(polybuf)) {
 		printf("Poly buffer overflow\n");
 	} else {
@@ -1236,7 +1236,7 @@ static void polybuf_render_from_start(pvr_list_t list)
 	for (i = 0; i < pvr.polybuf_cnt_start; i++) {
 		poly_prefetch(&polybuf[i + 1]);
 
-		poly_draw_now(list, &polybuf[i]);
+		poly_draw_now(&polybuf[i]);
 	}
 
 	pvr.polybuf_cnt_start = 0;
