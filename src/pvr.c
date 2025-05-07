@@ -126,6 +126,8 @@ struct texture_page {
 	};
 	uint64_t block_mask;
 	uint64_t inuse_mask;
+	uint64_t locked_mask;
+	uint64_t locked_mask_old;
 };
 
 struct texture_page_16bpp {
@@ -656,16 +658,12 @@ static void discard_texture_page(struct texture_page *page)
 
 static void invalidate_texture(struct texture_page *page, uint64_t block_mask)
 {
-	if (page->block_mask) {
-		page->block_mask &= ~block_mask;
+	page->block_mask &= ~block_mask;
 
-		/* If we cleared all texture blocks, we can toss away the page.
-		 * If we cleared a texture block that was already used for this
-		 * frame, we have to make sure that it won't be overwritten, so
-		 * create a new texture page as well. */
-		if (!page->block_mask || (page->inuse_mask & block_mask))
-			discard_texture_page(page);
-	}
+	/* Mark the blocks that were already used for the current frame
+	 * and that we want to invalidate as locked; next time we try
+	 * to use them, we'll have to toss away the page. */
+	page->locked_mask |= page->inuse_mask & block_mask;
 
 	page->inval_counter = pvr.inval_counter;
 }
@@ -977,6 +975,8 @@ poly_get_texture_page(const struct poly *poly)
 		/* Init the base fields */
 		page->block_mask = 0;
 		page->inuse_mask = 0;
+		page->locked_mask = 0;
+		page->locked_mask_old = 0;
 	}
 
 	return page;
@@ -1044,14 +1044,25 @@ static void poly_draw_now(const struct poly *poly)
 	uint16_t voffset = 0, zoffset = poly->zoffset;
 	pvr_poly_hdr_t hdr, *poly_hdr;
 	struct texture_page *tex_page;
-	uint64_t block_mask, to_load;
+	uint64_t block_mask, locked_mask, to_load;
 	pvr_ptr_t tex = NULL;
 	float z;
 
 	if (textured) {
-		tex_page = poly_get_texture_page(poly);
-
 		block_mask = poly_get_block_mask(poly);
+
+		for (;;) {
+			tex_page = poly_get_texture_page(poly);
+			locked_mask = tex_page->locked_mask | tex_page->locked_mask_old;
+
+			if (likely(!(locked_mask & block_mask)))
+				break;
+
+			/* We want to draw from locked blocks...
+			 * recreate the texture page now. */
+			discard_texture_page(tex_page);
+		}
+
 		to_load = ~tex_page->block_mask & block_mask;
 
 		tex_page->inuse_mask |= block_mask;
@@ -2006,6 +2017,12 @@ out:
 static void reset_texture_page(struct texture_page *page)
 {
 	if (page->tex) {
+		/* If we cleared all texture blocks, we can toss away the page.  */
+		if (!page->block_mask && !page->locked_mask)
+			discard_texture_page(page);
+
+		page->locked_mask_old = page->locked_mask;
+		page->locked_mask = 0;
 		page->inuse_mask = 0;
 	}
 }
