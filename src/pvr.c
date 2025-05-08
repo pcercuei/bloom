@@ -664,7 +664,7 @@ void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 
 	for (dy = y; dy < y2; dy += 256) {
 		for (dx = x; dx < x2; dx += 64) {
-			page_offset = (dy >> 4) + (dx >> 6);
+			page_offset = ((dy & 511) >> 4) + ((dx & 1023) >> 6);
 			invalidate_textures(page_offset);
 		}
 	}
