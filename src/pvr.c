@@ -341,6 +341,11 @@ static inline unsigned int clut_get_offset(uint16_t clut)
 	return ((clut >> 6) & 0x1ff) * 2048 + (clut & 0x3f) * 32;
 }
 
+static uint32_t *pvr_ptr_get_sq_addr(pvr_ptr_t ptr)
+{
+	return (uint32_t *)(((uintptr_t)ptr & 0xffffff) | PVR_TA_TEX_MEM);
+}
+
 static inline uint16_t *clut_get_ptr(uint16_t clut)
 {
 	return &gpu.vram[clut_get_offset(clut) / 2];
@@ -350,12 +355,12 @@ __noinline
 static void load_palette(struct texture_page *page, unsigned int offset,
 			 uint16_t clut, bool bpp4)
 {
-	alignas(32) uint64_t palette_data[256];
 	pvr_ptr_t palette_addr;
 	unsigned int i, nb;
 	uint16_t *palette;
 	uint16_t pixel;
 	uint64_t color;
+	uint64_t *sq;
 
 	if (likely(bpp4)) {
 		palette_addr = page->vq->codebook4[offset].palette;
@@ -365,6 +370,7 @@ static void load_palette(struct texture_page *page, unsigned int offset,
 		nb = 256;
 	}
 
+	sq = (uint64_t *)sq_lock(pvr_ptr_get_sq_addr(palette_addr));
 	palette = clut_get_ptr(clut);
 
 	for (i = 0; i < nb; i++) {
@@ -382,15 +388,18 @@ static void load_palette(struct texture_page *page, unsigned int offset,
 			color |= color << 32;
 
 			if (clut & CLUT_IS_MASK)
-				palette_data[i] = color ^ 0x8000800080008000ull;
+				sq[i] = color ^ 0x8000800080008000ull;
 			else
-				palette_data[i] = color | 0x8000800080008000ull;
+				sq[i] = color | 0x8000800080008000ull;
 		} else {
-			palette_data[i] = 0;
+			sq[i] = 0;
 		}
+
+		if ((i & 0x3) == 0x3)
+			sq_flush(&sq[i]);
 	}
 
-	pvr_txr_load(palette_data, palette_addr, nb * sizeof(color));
+	sq_unlock();
 }
 
 static inline bool counter_is_older(uint16_t current, uint16_t other)
@@ -532,11 +541,6 @@ load_block_16bpp(struct texture_page_16bpp *page, const uint16_t *src,
 		dst += 512;
 		src += 1024;
 	}
-}
-
-static uint32_t *pvr_ptr_get_sq_addr(pvr_ptr_t ptr)
-{
-	return (uint32_t *)(((uintptr_t)ptr & 0xffffff) | PVR_TA_TEX_MEM);
 }
 
 static void load_block_8bpp(struct texture_page *page, const uint8_t *src,
