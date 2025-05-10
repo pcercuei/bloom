@@ -178,11 +178,11 @@ struct poly {
 	enum texture_bpp bpp :8;
 	enum blending_mode blending_mode :8;
 	uint8_t depthcmp;
-	uint16_t __pad;
 	uint16_t flags;
 	uint16_t clut;
 	uint16_t zoffset;
-	void *priv;
+	uint16_t voffset;
+	pvr_ptr_t tex;
 	uint32_t colors[4];
 	struct vertex_coords coords[4];
 };
@@ -954,6 +954,7 @@ poly_get_texture_page(const struct poly *poly)
 	struct texture_page_16bpp *page16;
 	struct texture_page_8bpp *page8;
 	struct texture_page_4bpp *page4;
+	uint64_t block_mask, to_load;
 
 	if (likely(poly->bpp == TEXTURE_4BPP))
 		page = &pvr.textures4[poly->texpage_id].base;
@@ -996,6 +997,14 @@ poly_get_texture_page(const struct poly *poly)
 		page->block_mask = 0;
 		page->inuse_mask = 0;
 	}
+
+	block_mask = poly_get_block_mask(poly);
+	to_load = ~page->block_mask & block_mask;
+
+	page->inuse_mask |= block_mask;
+
+	if (unlikely(to_load))
+		update_texture(page, poly->texpage_id, to_load);
 
 	return page;
 }
@@ -1051,7 +1060,7 @@ static pvr_poly_hdr_t poly_nontextured = {
 __pvr
 static void poly_draw_now(const struct poly *poly)
 {
-	unsigned int i, codebook, nb = poly_get_vertex_count(poly);
+	unsigned int i, nb = poly_get_vertex_count(poly);
 	const struct vertex_coords *coords = poly->coords;
 	const uint32_t *colors = poly->colors;
 	uint32_t colors_alt[4];
@@ -1061,37 +1070,12 @@ static void poly_draw_now(const struct poly *poly)
 	bool check_mask = poly->flags & POLY_CHECK_MASK;
 	uint16_t voffset = 0, zoffset = poly->zoffset;
 	pvr_poly_hdr_t hdr, *poly_hdr;
-	struct texture_page *tex_page;
-	uint64_t block_mask, to_load;
 	pvr_ptr_t tex = NULL;
 	float z;
 
 	if (textured) {
-		tex_page = poly_get_texture_page(poly);
-
-		block_mask = poly_get_block_mask(poly);
-		to_load = ~tex_page->block_mask & block_mask;
-
-		tex_page->inuse_mask |= block_mask;
-
-		if (unlikely(to_load))
-			update_texture(tex_page, poly->texpage_id, to_load);
-
-		if (unlikely(poly->bpp == TEXTURE_16BPP)) {
-			if (poly->clut & CLUT_IS_MASK)
-				tex = to_texture_page_16bpp(tex_page)->mask_tex;
-			else
-				tex = tex_page->tex;
-		} else {
-			codebook = find_texture_codebook(tex_page, poly->clut);
-			voffset = get_voffset(poly->bpp, codebook);
-
-			if (likely(poly->bpp == TEXTURE_4BPP))
-				tex = (pvr_ptr_t)&tex_page->vq->codebook4[codebook];
-			else
-				tex = (pvr_ptr_t)&tex_page->vq->codebook8[codebook];
-		}
-
+		voffset = poly->voffset;
+		tex = poly->tex;
 		poly_hdr = &poly_textured;
 	} else {
 		poly_hdr = &poly_nontextured;
@@ -1338,6 +1322,28 @@ static void polybuf_deferred_render(void)
 __pvr
 static void process_poly(struct poly *poly)
 {
+	struct texture_page *page;
+	uint8_t codebook;
+
+	if (poly->flags & POLY_TEXTURED) {
+		page = poly_get_texture_page(poly);
+
+		if (unlikely(poly->bpp == TEXTURE_16BPP)) {
+			if (poly->clut & CLUT_IS_MASK)
+				poly->tex = to_texture_page_16bpp(page)->mask_tex;
+			else
+				poly->tex = page->tex;
+		} else {
+			codebook = find_texture_codebook(page, poly->clut);
+			poly->voffset = get_voffset(poly->bpp, codebook);
+
+			if (likely(poly->bpp == TEXTURE_4BPP))
+				poly->tex = (pvr_ptr_t)&page->vq->codebook4[codebook];
+			else
+				poly->tex = (pvr_ptr_t)&page->vq->codebook8[codebook];
+		}
+	}
+
 	if (likely(!(poly->flags & POLY_IGN_MASK))) {
 		if (pvr.set_mask)
 			poly->flags |= POLY_SET_MASK;
