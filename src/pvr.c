@@ -158,12 +158,6 @@ enum blending_mode {
 	BLENDING_MODE_NONE,
 };
 
-#define POLY_BRIGHT		BIT(0)
-#define POLY_IGN_MASK		BIT(1)
-#define POLY_SET_MASK		BIT(2)
-#define POLY_CHECK_MASK		BIT(3)
-#define POLY_TEXTURED		BIT(4)
-
 struct vertex_coords {
 	int16_t x;
 	int16_t y;
@@ -171,14 +165,20 @@ struct vertex_coords {
 	uint16_t v;
 };
 
+#define POLY_BRIGHT		BIT(0)
+#define POLY_IGN_MASK		BIT(1)
+#define POLY_SET_MASK		BIT(2)
+#define POLY_CHECK_MASK		BIT(3)
+#define POLY_TEXTURED		BIT(4)
+#define POLY_4VERTEX		BIT(5)
+
 struct poly {
 	alignas(32)
 	uint8_t texpage_id;
 	enum texture_bpp bpp :8;
 	enum blending_mode blending_mode :8;
-	uint8_t nb;
 	uint8_t depthcmp;
-	uint8_t __pad;
+	uint16_t __pad;
 	uint16_t flags;
 	uint16_t clut;
 	uint16_t zoffset;
@@ -635,12 +635,17 @@ get_block_mask(uint16_t umin, uint16_t umax, uint16_t vmin, uint16_t vmax)
 	return mask;
 }
 
+static inline unsigned int poly_get_vertex_count(const struct poly *poly)
+{
+	return (poly->flags & POLY_4VERTEX) ? 4 : 3;
+}
+
 static uint64_t poly_get_block_mask(const struct poly *poly)
 {
 	uint16_t u, v, umin = 0xffff, vmin = 0xffff, umax = 0, vmax = 0;
 	unsigned int i;
 
-	for (i = 0; i < poly->nb; i++) {
+	for (i = 0; i < poly_get_vertex_count(poly); i++) {
 		u = poly->coords[i].u;
 		v = poly->coords[i].v;
 
@@ -1046,7 +1051,7 @@ static pvr_poly_hdr_t poly_nontextured = {
 __pvr
 static void poly_draw_now(const struct poly *poly)
 {
-	unsigned int i, codebook, nb = poly->nb;
+	unsigned int i, codebook, nb = poly_get_vertex_count(poly);
 	const struct vertex_coords *coords = poly->coords;
 	const uint32_t *colors = poly->colors;
 	uint32_t colors_alt[4];
@@ -1399,7 +1404,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	poly = (struct poly){
 		.blending_mode = blending_mode,
 		.depthcmp = pvr.depthcmp,
-		.nb = 4,
+		.flags = POLY_4VERTEX,
 		.colors = { color0, color0, color0, color1 },
 		.coords = {
 			[0] = { .x = x0, .y = y0 + up },
@@ -1416,7 +1421,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	poly = (struct poly){
 		.blending_mode = blending_mode,
 		.depthcmp = pvr.depthcmp,
-		.nb = 4,
+		.flags = POLY_4VERTEX,
 		.colors = { color0, color1, color1, color1 },
 		.coords = {
 			[0] = { .x = x0 + 1, .y = y0 + up },
@@ -1529,8 +1534,7 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 		poly = (struct poly){
 			.blending_mode = BLENDING_MODE_NONE,
 			.depthcmp = PVR_DEPTHCMP_ALWAYS,
-			.nb = 4,
-			.flags = POLY_IGN_MASK,
+			.flags = POLY_IGN_MASK | POLY_4VERTEX,
 			.colors = { color32, color32, color32, color32 },
 			.coords = {
 				[0] = { .x = x02, .y = y01 },
@@ -1685,9 +1689,12 @@ static void process_gpu_commands(void)
 			poly = (struct poly){
 				.depthcmp = pvr.depthcmp,
 				.colors = { 0xffffff },
-				.nb = nb,
-				.flags = textured ? POLY_TEXTURED : 0,
 			};
+
+			if (textured)
+				poly.flags |= POLY_TEXTURED;
+			if (multiple)
+				poly.flags |= POLY_4VERTEX;
 
 			if (textured && raw_tex && !multicolor) {
 				/* Skip color */
@@ -1791,7 +1798,7 @@ static void process_gpu_commands(void)
 			uint16_t w, h, x0, y0, x1, y1;
 			bool bright = false;
 			uint32_t color;
-			uint8_t flags = 0;
+			uint8_t flags = POLY_4VERTEX;
 
 			if (raw_tex) {
 				color = 0xffffff;
@@ -1842,7 +1849,6 @@ static void process_gpu_commands(void)
 				.blending_mode = blending_mode,
 				.depthcmp = pvr.depthcmp,
 				.colors = { color, color, color, color },
-				.nb = 4,
 				.coords = {
 					[0] = { .x = x1, .y = y0 },
 					[1] = { .x = x0, .y = y0 },
