@@ -1135,7 +1135,9 @@ static void draw_prim(const pvr_poly_hdr_t *hdr,
 		      uint32_t oargb, uint16_t flags)
 {
 	bool textured = flags & POLY_TEXTURED;
-	bool modified = !(flags & POLY_NOCLIP);
+	bool bright = flags & POLY_BRIGHT;
+	bool modified = textured
+		&& ((WITH_CLIPPING && !(flags & POLY_NOCLIP)) || bright);
 	pvr_poly_hdr_t *sq_hdr;
 	pvr_vertex_t *vert;
 	pvr_vertex_part2_t *vert2;
@@ -1174,15 +1176,15 @@ static void draw_prim(const pvr_poly_hdr_t *hdr,
 
 		pvr_dr_commit(vert);
 
-		if (!WITH_CLIPPING || unlikely(!textured || !modified))
+		if (likely(!modified))
 			continue;
 
 		vert2 = pvr_dr_target();
 
 		vert2->u1 = fr2 + COORDS_U_OFFSET;
 		vert2->v1 = fr3 + COORDS_V_OFFSET;
-		vert2->argb = 0x0;
-		vert2->oargb = 0x0;
+		vert2->argb = bright ? color[i] : 0;
+		vert2->oargb = oargb;
 
 		pvr_dr_commit(vert2);
 	}
@@ -1383,16 +1385,6 @@ static pvr_poly_hdr_t poly_textured = {
 	.m3 = {
 		.pixel_mode = PVR_PIXEL_MODE_ARGB1555,
 	},
-	.modifier.m2 = {
-		.fog_type = PVR_FOG_DISABLE,
-		.blend_dst = PVR_BLEND_ONE,
-		.blend_src = PVR_BLEND_ONE,
-		.shading = PVR_TXRENV_MODULATE,
-		.alpha = true,
-	},
-	.modifier.m3 = {
-		.pixel_mode = PVR_PIXEL_MODE_ARGB1555,
-	},
 };
 
 static pvr_poly_hdr_t poly_nontextured = {
@@ -1410,12 +1402,6 @@ static pvr_poly_hdr_t poly_nontextured = {
 		.fog_type = PVR_FOG_DISABLE,
 		.blend_dst = PVR_BLEND_ZERO,
 		.blend_src = PVR_BLEND_ONE,
-	},
-	.modifier.m2 = {
-		.fog_type = PVR_FOG_DISABLE,
-		.blend_dst = PVR_BLEND_ONE,
-		.blend_src = PVR_BLEND_ONE,
-		.alpha = true,
 	},
 };
 
@@ -1677,6 +1663,7 @@ static void poly_draw_now(const struct poly *poly)
 				hdr.m2.u_size = PVR_UV_SIZE_64;
 			else
 				hdr.m2.u_size = PVR_UV_SIZE_512;
+			hdr.modifier.m2.u_size = hdr.m2.u_size;
 		}
 	}
 
@@ -1695,6 +1682,12 @@ static void poly_draw_now(const struct poly *poly)
 			}
 		}
 
+		if (bright) {
+			hdr.m0.modifier_en = true;
+			hdr.m0.mod_normal = true;
+			hdr.modifier.m3 = hdr.m3;
+		}
+
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
 		break;
 
@@ -1707,6 +1700,8 @@ static void poly_draw_now(const struct poly *poly)
 			/* Use F/2 instead of F/4 if we need brighter colors. */
 			for (i = 0; i < nb; i++)
 				colors_alt[i] = (colors[i] & 0xfefefe) >> 1;
+
+			flags &= ~POLY_BRIGHT;
 		} else {
 			for (i = 0; i < nb; i++)
 				colors_alt[i] = (colors[i] & 0xfcfcfc) >> 2;
@@ -1732,6 +1727,7 @@ static void poly_draw_now(const struct poly *poly)
 		else
 			hdr.m2.blend_src = PVR_BLEND_ONE;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
+		flags &= ~POLY_BRIGHT;
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
 
@@ -1761,6 +1757,7 @@ static void poly_draw_now(const struct poly *poly)
 		hdr.m2.blend_src = PVR_BLEND_INVDESTCOLOR;
 		hdr.m2.blend_dst = PVR_BLEND_ZERO;
 		hdr.m0.txr_en = hdr.m1.txr_en = false;
+		flags &= ~POLY_BRIGHT;
 
 		draw_prim(&hdr, coords, voffset, colors_alt,
 			  nb, z, 0, flags & ~POLY_TEXTURED);
@@ -1806,6 +1803,8 @@ static void poly_draw_now(const struct poly *poly)
 		 * - dst blend coeff: 0
 		 * This will unconditionally divide all of the background colors
 		 * by 2, except for the alpha. */
+
+		flags &= ~POLY_BRIGHT;
 
 		if (textured) {
 			for (i = 0; i < nb; i++)
@@ -1912,6 +1911,26 @@ static void pvr_set_list(pvr_list_t list)
 		poly_textured.m0.list_type = list;
 		poly_nontextured.m0.list_type = list;
 		poly_dummy.m0.list_type = list;
+	}
+
+	if (list == PVR_LIST_PT_POLY) {
+		poly_textured.modifier.m2 = (pvr_poly_hdr_mode2_t){
+			.v_size = PVR_UV_SIZE_1024,
+			.u_size = PVR_UV_SIZE_1024,
+			.shading = PVR_TXRENV_MODULATE,
+			.filter_mode = FILTER_MODE,
+			.fog_type = PVR_FOG_DISABLE,
+			.blend_dst = PVR_BLEND_ONE,
+			.blend_src = PVR_BLEND_SRCALPHA,
+		};
+	} else {
+		poly_textured.modifier.m2 = (pvr_poly_hdr_mode2_t){
+			.fog_type = PVR_FOG_DISABLE,
+			.blend_dst = PVR_BLEND_ONE,
+			.blend_src = PVR_BLEND_ONE,
+			.shading = PVR_TXRENV_MODULATE,
+			.alpha = true,
+		};
 	}
 }
 
@@ -2157,10 +2176,10 @@ static inline bool poly_should_clip(const struct poly *poly)
 __pvr __attribute__((optimize(2)))
 static void process_poly(struct poly *poly, bool scissor)
 {
-	bool check_mask, set_mask, noclip;
+	bool check_mask, set_mask, textured, noclip;
+	uint16_t umin, umax, flags;
 	struct texture_page *page;
 	unsigned int i, offt;
-	uint16_t umin, umax;
 	uint8_t codebook;
 	pvr_list_t list;
 
@@ -2169,7 +2188,9 @@ static void process_poly(struct poly *poly, bool scissor)
 	if (noclip)
 		poly->flags |= POLY_NOCLIP;
 
-	if (poly->flags & POLY_TEXTURED) {
+	textured = poly->flags & POLY_TEXTURED;
+
+	if (textured) {
 		if (scissor && unlikely(poly->bpp != TEXTURE_4BPP)) {
 			umin = poly_get_umin(poly);
 			umax = poly_get_umax(poly) - 1;
@@ -2219,34 +2240,35 @@ static void process_poly(struct poly *poly, bool scissor)
 
 	if (likely(poly->blending_mode == BLENDING_MODE_NONE)) {
 		poly->zoffset = pvr.zoffset++;
+		flags = poly->flags;
 
-		if (unlikely(check_mask)) {
-			pvr.zoffset += 5;
-			poly->flags |= POLY_CHECK_MASK;
-			poly_enqueue(PVR_LIST_TR_POLY, poly);
-		} else if (WITH_BILINEAR) {
-			poly_enqueue(PVR_LIST_TR_POLY, poly);
-
-			if (WITH_HYBRID_RENDERING && noclip) {
-				poly->zoffset = pvr.zoffset++;
-				poly_enqueue(PVR_LIST_PT_POLY, poly);
-			}
+		if (!WITH_BILINEAR && WITH_HYBRID_RENDERING && noclip && !check_mask) {
+			list = PVR_LIST_PT_POLY;
 		} else {
-			if (WITH_HYBRID_RENDERING && noclip)
-				list = PVR_LIST_PT_POLY;
-			else
-				list = PVR_LIST_TR_POLY;
+			list = PVR_LIST_TR_POLY;
+			poly->flags &= ~POLY_BRIGHT;
 
-			poly_enqueue(list, poly);
+			if (unlikely(check_mask)) {
+				pvr.zoffset += 5;
+				poly->flags |= POLY_CHECK_MASK;
+			}
 		}
 
-		if (unlikely(poly->flags & POLY_BRIGHT)) {
+		poly_enqueue(list, poly);
+
+		if (list == PVR_LIST_TR_POLY && unlikely(flags & POLY_BRIGHT)) {
 			/* Process a bright poly as a regular poly with additive
 			 * blending */
-			poly->flags &= ~POLY_BRIGHT;
 			poly->blending_mode = BLENDING_MODE_ADD;
 			poly->zoffset = pvr.zoffset++;
 			poly_enqueue(PVR_LIST_TR_POLY, poly);
+		}
+
+		if (WITH_BILINEAR && WITH_HYBRID_RENDERING && noclip) {
+			poly->blending_mode = BLENDING_MODE_NONE;
+			poly->zoffset = pvr.zoffset++;
+			poly->flags = flags;
+			poly_enqueue(PVR_LIST_PT_POLY, poly);
 		}
 
 		if (unlikely(set_mask)) {
@@ -3083,7 +3105,7 @@ static void render_mod_cube(float x1, float y1, float z1,
 			 PVR_MODIFIER_INCLUDE_LAST_POLY);
 }
 
-static void pvr_render_modifier_volumes(void)
+static void pvr_render_tr_modifier_volumes(void)
 {
 	int16_t x1, y1, x2, y2, tilex1, tiley1, tilex2, tiley2;
 	unsigned int i;
@@ -3129,6 +3151,67 @@ static void pvr_render_modifier_volumes(void)
 		if (y2 != tiley2)
 			render_mod_cube(tilex1, y2, z, tilex2, tiley2, newz);
 	}
+
+	pvr_list_finish();
+}
+
+static void pvr_render_op_modifier_volumes(void)
+{
+	pvr_mod_hdr_t *hdr;
+	float *mod;
+	union fint32 {
+		unsigned int vint;
+		float vf;
+	} fint32;
+	float z;
+
+	/* Craft a Z value that's on top of everything else */
+	fint32.vint = 127 << 23;
+	z = fint32.vf;
+
+	pvr_list_begin(PVR_LIST_OP_MOD);
+
+	hdr = (void *)pvr_dr_target(pvr.dr_state);
+	pvr_mod_compile(hdr, PVR_LIST_OP_MOD, PVR_MODIFIER_OTHER_POLY, PVR_CULLING_NONE);
+	pvr_dr_commit(hdr);
+
+	mod = (void *)pvr_dr_target(pvr.dr_state);
+	*(uint32_t *)mod = PVR_CMD_VERTEX_EOL;
+	mod[1] = 0.0f;		/* X0 */
+	mod[2] = SCREEN_HEIGHT;	/* Y0 */
+	mod[3] = z;		/* Z0 */
+	mod[4] = 0.0f;		/* X1 */
+	mod[5] = 0.0f;		/* Y1 */
+	mod[6] = z;		/* Z1 */
+	mod[7] = SCREEN_WIDTH;	/* X2 */
+
+	pvr_dr_commit(mod);
+	mod = (void *)pvr_dr_target(pvr.dr_state);
+
+	mod[0] = SCREEN_HEIGHT;	/* Y2 */
+	mod[1] = z;		/* Z2 */
+	pvr_dr_commit(mod);
+
+	hdr = (void *)pvr_dr_target(pvr.dr_state);
+	pvr_mod_compile(hdr, PVR_LIST_OP_MOD, PVR_MODIFIER_INCLUDE_LAST_POLY, PVR_CULLING_NONE);
+	pvr_dr_commit(hdr);
+
+	mod = (void *)pvr_dr_target(pvr.dr_state);
+	*(uint32_t *)mod = PVR_CMD_VERTEX_EOL;
+	mod[1] = 0.0f;		/* X0 */
+	mod[2] = 0.0f;		/* Y0 */
+	mod[3] = z;		/* Z0 */
+	mod[4] = SCREEN_WIDTH;	/* X1 */
+	mod[5] = SCREEN_HEIGHT;	/* Y1 */
+	mod[6] = z;		/* Z1 */
+	mod[7] = SCREEN_WIDTH;	/* X2 */
+
+	pvr_dr_commit(mod);
+	mod = (void *)pvr_dr_target(pvr.dr_state);
+
+	mod[0] = 0.0f;		/* Y2 */
+	mod[1] = z;		/* Z2 */
+	pvr_dr_commit(mod);
 
 	pvr_list_finish();
 }
@@ -3181,7 +3264,9 @@ void hw_render_stop(void)
 	pvr_render_outlines();
 
 	if (WITH_CLIPPING && pvr.nb_clips)
-		pvr_render_modifier_volumes();
+		pvr_render_tr_modifier_volumes();
+
+	pvr_render_op_modifier_volumes();
 
 	pvr_scene_finish();
 
