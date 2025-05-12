@@ -6,7 +6,6 @@
  */
 
 #include <arch/cache.h>
-#include <arch/irq.h>
 #include <dc/pvr.h>
 #include <gpulib/gpu.h>
 #include <gpulib/gpu_timing.h>
@@ -1297,8 +1296,6 @@ static void polybuf_render_from_start(pvr_list_t list)
 	poly_textured.m0.list_type = list;
 	poly_nontextured.m0.list_type = list;
 
-	irq_disable_scoped();
-
 	for (i = 0; i < pvr.polybuf_cnt_start; i++) {
 		poly_prefetch(&polybuf[i + 1]);
 
@@ -1564,8 +1561,6 @@ static void process_gpu_commands(void)
 	struct poly poly;
 	unsigned int cmd_offt;
 	uint32_t cmd, len;
-
-	irq_disable_scoped();
 
 	for (cmd_offt = 0; cmd_offt < pvr.cmdbuf_offt; cmd_offt += 1 + len) {
 		pbuffer = (const union PacketBuffer *)&cmdbuf[cmd_offt];
