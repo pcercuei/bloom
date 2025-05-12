@@ -9,6 +9,8 @@ extern "C" {
 #include <math.h>
 }
 
+#include <kos/fs.h>
+
 #include <tsu/genmenu.h>
 #include <tsu/font.h>
 
