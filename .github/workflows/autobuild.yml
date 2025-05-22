@@ -1,0 +1,42 @@
+name: build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: pcercuei/kallistios-toolchain:16.0.0-dev
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/checkout@v4
+      with:
+        repository: KallistiOS/KallistiOS
+        path: $GITHUB_WORKSPACE/kos
+
+    - uses: actions/checkout@v4
+      with:
+        repository: KallistiOS/kos-ports
+        path: $GITHUB_WORKSPACE/kos-ports
+
+    - name: install-dependencies
+      run: |
+        apk --update add --no-cache coreutils
+
+    - name: build KallistiOS
+      run: |
+        cp $GITHUB_WORKSPACE/kos/doc/environ.sh.sample $GITHUB_WORKSPACE/kos/environ.sh
+        sed -i 's/KOS_BASE=.*$/KOS_BASE=$GITHUB_WORKSPACE/kos/' $GITHUB_WORKSPACE/kos/environ.sh
+        . $GITHUB_WORKSPACE/kos/environ.sh
+        make -C $GITHUB_WORKSPACE/kos
+
+    - name: build KallistiOS ports
+      continue-on-error: true
+      run: |
+        make -C $GITHUB_WORKSPACE/kos kos-ports_all
+
+    - name: build Bloom
+      run: |
+        kos-cmake -DCMAKE_BUILD_TYPE=Release -DGPU_PLUGIN=PVR .
+        make
