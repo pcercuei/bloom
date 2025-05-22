@@ -1,0 +1,48 @@
+name: build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    if: github.repository == 'pcercuei/bloom'
+    runs-on: ubuntu-latest
+    container: pcercuei/dreamcast-toolchain:15.0.0-lra
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - uses: actions/checkout@v6
+      with:
+        repository: KallistiOS/KallistiOS
+        path: kos
+
+    - uses: actions/checkout@v6
+      with:
+        repository: pcercuei/kos-ports
+        ref: libpng-fix-bug
+        path: kos-ports
+
+    - name: install-dependencies
+      run: |
+        apk --update add --no-cache coreutils cmake
+        mkdir -p /opt/toolchains/dc/bin
+
+    - name: build KallistiOS
+      run: |
+        cp kos/doc/environ.sh.sample kos/environ.sh
+        sed -i 's/KOS_BASE=.*$/KOS_BASE=\/__w\/bloom\/bloom\/kos/' kos/environ.sh
+        sed -i 's/-O2/-O3 -fno-PIC -freorder-blocks-algorithm=simple -fipa-cp-clone -flto=auto -ffat-lto-objects -DNDEBUG/' kos/environ.sh
+
+        . kos/environ.sh
+        make -C $KOS_BASE
+
+    - name: build kos-ports
+      run: |
+        . kos/environ.sh
+        make -C $KOS_PORTS/libtsunami install
+
+    - name: build Bloom
+      run: |
+        . kos/environ.sh
+        kos-cmake -DCMAKE_BUILD_TYPE=Release .
+        make
