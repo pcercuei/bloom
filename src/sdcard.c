@@ -26,10 +26,6 @@ void sdcard_init(void)
 
 	printf("Found SDCARD partition 0\n");
 
-	err = fs_fat_init();
-	if (err)
-		return;
-
 	err = fs_fat_mount("/sd", &rv, FS_FAT_MOUNT_READWRITE);
 	if (err)
 		return;
@@ -40,6 +36,5 @@ void sdcard_init(void)
 void sdcard_shutdown(void)
 {
 	fs_fat_unmount("/sd");
-	fs_fat_shutdown();
 	sd_shutdown();
 }

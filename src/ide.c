@@ -27,10 +27,6 @@ void ide_init(void)
 
 	printf("Found IDE partition 0\n");
 
-	err = fs_fat_init();
-	if (err)
-		return;
-
 	err = fs_fat_mount("/ide", &rv, FS_FAT_MOUNT_READWRITE);
 	if (err)
 		return;
@@ -41,6 +37,5 @@ void ide_init(void)
 void ide_shutdown(void)
 {
 	fs_fat_unmount("/ide");
-	fs_fat_shutdown();
 	g1_ata_shutdown();
 }

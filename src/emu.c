@@ -26,6 +26,9 @@
 #include "bloom-config.h"
 #include "emu.h"
 
+int fs_fat_init(void);
+void fs_fat_shutdown(void);
+
 static bool is_exe;
 
 extern int stop;
@@ -154,6 +157,9 @@ int main(int argc, char **argv)
 	if (WITH_GDB)
 		gdb_init();
 
+	if (WITH_IDE || WITH_SDCARD)
+		fs_fat_init();
+
 	if (WITH_IDE)
 		ide_init();
 	if (WITH_SDCARD)
@@ -231,6 +237,8 @@ int main(int argc, char **argv)
 		sdcard_shutdown();
 	if (WITH_IDE)
 		ide_shutdown();
+	if (WITH_IDE || WITH_SDCARD)
+		fs_fat_shutdown();
 
 	return 0;
 }
