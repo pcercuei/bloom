@@ -233,12 +233,12 @@ target_link_libraries(bloom PUBLIC libpcsxcore gpu spu tsunami
 
 option(WITH_CDROM_DMA "Read CD-ROM sectors using DMA" ON)
 
-option(WITH_SDCARD "Enable SD cards support" OFF)
+option(WITH_SDCARD "Enable SD cards support" ON)
 if (WITH_SDCARD)
 	target_sources(bloom PRIVATE src/sdcard.c)
 endif(WITH_SDCARD)
 
-option(WITH_IDE "Enable IDE (hard drive) support" OFF)
+option(WITH_IDE "Enable IDE (hard drive) support" ON)
 if (WITH_IDE)
 	target_sources(bloom PRIVATE src/ide.c)
 endif(WITH_IDE)
@@ -258,7 +258,7 @@ if (WITH_IDE OR WITH_SDCARD)
 	target_link_libraries(bloom PUBLIC kosfat)
 endif(WITH_IDE OR WITH_SDCARD)
 
-option(WITH_CHD "Enable CHD support" OFF)
+option(WITH_CHD "Enable CHD support" ON)
 if (WITH_CHD)
 	set(LZMA_VERSION 24.05)
 	set(ZSTD_VERSION 1.5.6)
