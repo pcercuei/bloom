@@ -14,6 +14,20 @@ if (NOT CMAKE_BUILD_TYPE)
 	)
 endif()
 
+include(FindGit OPTIONAL)
+if (GIT_FOUND)
+	execute_process(
+		COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+		OUTPUT_VARIABLE BLOOM_VERSION_GIT
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+	)
+
+	set(BLOOM_VERSION bloom-g${BLOOM_VERSION_GIT})
+else()
+	set(BLOOM_VERSION bloom)
+endif()
+
 option(WITH_GDB "Enable support for GDB" OFF)
 
 find_library(PARALLAX_LIBRARIES parallax REQUIRED)
