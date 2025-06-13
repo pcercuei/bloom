@@ -115,6 +115,10 @@ public:
 
 	void addEntry(std::shared_ptr<MyLabel> entry);
 
+	bool hasExited() const {
+		return m_exited;
+	}
+
 	virtual void inputEvent(const Event & evt);
 
 	virtual void startExit();
@@ -127,6 +131,7 @@ private:
 	unsigned int m_cursel;
 	unsigned int m_font_size;
 	std::shared_ptr<Font> m_font;
+	bool m_exited;
 };
 
 

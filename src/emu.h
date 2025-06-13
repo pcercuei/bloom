@@ -15,7 +15,7 @@ struct maple_device;
 
 extern _Bool started;
 
-void runMenu(void);
+_Bool runMenu(void);
 
 void plugin_call_rearmed_cbs(void);
 

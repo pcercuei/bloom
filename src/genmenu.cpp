@@ -136,6 +136,7 @@ MyMenu::MyMenu(std::shared_ptr<Font> fnt, const fs::path &path)
 	m_input_allowed = false;
 
 	m_font = fnt;
+	m_exited = false;
 
 	populate_dft();
 }
@@ -166,7 +167,7 @@ void MyMenu::populate_dft()
 						 [&] {
 		if (emu_check_cd(nullptr)) {
 			/* Launch CD-Rom! */
-			myMenu->startExit();
+			startExit();
 		} else {
 			/* TODO: show error */
 		}
@@ -183,6 +184,12 @@ void MyMenu::populate_dft()
 
 	addEntry(std::make_shared<MainMenuLabel>(m_font, "Credits", m_font_size,
 						 [&] {
+	}));
+
+	addEntry(std::make_shared<MainMenuLabel>(m_font, "Quit", m_font_size,
+						 [&] {
+		this->m_exited = true;
+		startExit();
 	}));
 
 	anim = std::make_shared<AnimFadeIn>(false, MENU_OFF_X, [&] {
@@ -412,8 +419,10 @@ void AnimFadeIn::nextFrame(Drawable *t) {
 	}
 }
 
-extern "C" void runMenu(void)
+extern "C" bool runMenu(void)
 {
+	bool exited;
+
 	// Load a font
 	auto fnt = std::make_shared<Font>("/rd/typewriter.txf");
 
@@ -423,6 +432,10 @@ extern "C" void runMenu(void)
 	// Do the menu
 	myMenu->doMenu();
 
+	exited = myMenu->hasExited();
+
 	// Ok, we're all done! The RefPtrs will take care of mem cleanup.
 	myMenu = nullptr;
+
+	return exited;
 }
