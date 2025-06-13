@@ -146,6 +146,7 @@ static pvr_init_params_t pvr_init_params_fsaa = {
 int main(int argc, char **argv)
 {
 	enum vid_display_mode_generic video_mode;
+	bool should_exit;
 
 	if (WITH_GDB)
 		gdb_init();
@@ -157,10 +158,6 @@ int main(int argc, char **argv)
 		ide_init();
 	if (WITH_SDCARD)
 		sdcard_init();
-
-	vid_set_mode(DM_640x480, PM_RGB888P);
-
-	pvr_init_defaults();
 
 	init_config();
 
@@ -176,61 +173,76 @@ int main(int argc, char **argv)
 
 	plugin_call_rearmed_cbs();
 
-	if (WITH_GAME_PATH[0])
-		emu_check_cd(WITH_GAME_PATH);
-	else
-		runMenu();
-
-	ClosePlugins();
-	pvr_shutdown();
-
-	if (WITH_480P)
-		video_mode = DM_640x480;
-	else
-		video_mode = DM_320x240;
-
-	if (WITH_24BPP)
-		vid_set_mode(video_mode, PM_RGB888P); /* 24-bit */
-	else
-		vid_set_mode(video_mode, PM_RGB565); /* 16-bit */
-
-	/* Re-init PVR without translucent polygon autosort, and optional FSAA */
-	pvr_init(&pvr_init_params_fsaa);
-
-	PVR_SET(PVR_OBJECT_CLIP, 0.00001f);
-
-	started = true;
-	OpenPlugins();
-
-	EmuReset();
-
-	if (UsingIso() && !!strncmp(GetIsoFile(), "/cd", sizeof("/cd") - 1))
-		cdrom_spin_down();
-
-	if (is_exe)
-		Load(GetIsoFile());
-	else
-		LoadCdrom();
-
-	mcd_fs_init();
-
-	if (HARDWARE_ACCELERATED)
-		pvr_renderer_init();
-
 	cont_btn_callback(0, CONT_RESET_BUTTONS, emu_exit);
 	cont_btn_callback(0, CONT_START | CONT_DPAD_UP, emu_screenshot);
 
-	while (!stop)
-		psxCpu->Execute();
+	do {
+		started = false;
+
+		if (WITH_GAME_PATH[0]) {
+			emu_check_cd(WITH_GAME_PATH);
+		} else {
+			vid_set_mode(DM_640x480, PM_RGB888P);
+			pvr_init_defaults();
+
+			should_exit = runMenu();
+			pvr_shutdown();
+
+			if (should_exit)
+				break;
+		}
+
+		ClosePlugins();
+
+		if (WITH_480P)
+			video_mode = DM_640x480;
+		else
+			video_mode = DM_320x240;
+
+		if (WITH_24BPP)
+			vid_set_mode(video_mode, PM_RGB888P); /* 24-bit */
+		else
+			vid_set_mode(video_mode, PM_RGB565); /* 16-bit */
+
+		/* Re-init PVR without translucent polygon autosort, and optional FSAA */
+		pvr_init(&pvr_init_params_fsaa);
+
+		PVR_SET(PVR_OBJECT_CLIP, 0.00001f);
+
+		started = true;
+		OpenPlugins();
+
+		EmuReset();
+
+		if (UsingIso() && !!strncmp(GetIsoFile(), "/cd", sizeof("/cd") - 1))
+			cdrom_spin_down();
+
+		if (is_exe)
+			Load(GetIsoFile());
+		else
+			LoadCdrom();
+
+		mcd_fs_init();
+
+		if (HARDWARE_ACCELERATED)
+			pvr_renderer_init();
+
+		stop = 0;
+
+		while (!stop)
+			psxCpu->Execute();
+
+		if (HARDWARE_ACCELERATED)
+			pvr_renderer_shutdown();
+
+		pvr_shutdown();
+		mcd_fs_shutdown();
+	} while (!WITH_GAME_PATH[0]);
 
 	printf("Exit...\n");
 	ClosePlugins();
 	EmuShutdown();
 	ReleasePlugins();
-	mcd_fs_shutdown();
-
-	if (HARDWARE_ACCELERATED)
-		pvr_renderer_shutdown();
 
 	if (WITH_SDCARD)
 		sdcard_shutdown();
