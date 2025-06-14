@@ -1680,10 +1680,9 @@ static void process_gpu_commands(void)
 			/* Monochrome/shaded non-textured polygon */
 			unsigned int i, nb = 3 + !!multiple;
 			const uint32_t *buf = pbuffer->U4;
-			bool flipped, bright = false;
 			uint32_t texcoord[4];
 			uint16_t texpage;
-			uint8_t coord;
+			bool bright = false;
 			uint32_t val;
 
 			poly_alloc_cache(&poly);
@@ -1726,21 +1725,8 @@ static void process_gpu_commands(void)
 
 				if (textured) {
 					texcoord[i] = *buf++;
-					coord = (uint8_t)texcoord[i];
-
-					/* If the texture will render flipped (e.g. from right to
-					 * left, or from bottom to top), we need to increment the
-					 * corresponding U/V coordinate. */
-					flipped = i > 0
-						&& ((poly.coords[i].x < poly.coords[i - 1].x) ^
-						    (coord < poly.coords[i - 1].u));
-					poly.coords[i].u = (int16_t)coord + flipped;
-
-					coord = (uint8_t)(texcoord[i] >> 8);
-					flipped = i > 0
-						&& ((poly.coords[i].y < poly.coords[i - 1].y) ^
-						    (coord < poly.coords[i - 1].v));
-					poly.coords[i].v = (int16_t)coord + flipped;
+					poly.coords[i].u = (uint8_t)texcoord[i];
+					poly.coords[i].v = (uint8_t)(texcoord[i] >> 8);
 				}
 			}
 
