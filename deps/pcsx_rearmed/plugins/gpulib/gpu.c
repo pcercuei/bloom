@@ -506,9 +506,10 @@ static void start_vram_transfer(uint32_t pos_word, uint32_t size_word, int is_re
 
   renderer_flush_queues();
   if (is_read) {
+    const uint16_t *mem = VRAM_MEM_XY(gpu.dma.x, gpu.dma.y);
     gpu.status |= PSX_GPU_STATUS_IMG;
     // XXX: wrong for width 1
-    gpu.gp0 = LE32TOH(*(uint32_t *) VRAM_MEM_XY(gpu.dma.x, gpu.dma.y));
+    gpu.gp0 = LE16TOH(mem[0]) | ((uint32_t)LE16TOH(mem[1]) << 16);
     gpu.state.last_vram_read_frame = *gpu.state.frame_count;
   }
 
