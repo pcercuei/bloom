@@ -202,6 +202,7 @@ struct pvr_renderer {
 
 	int16_t draw_dx;
 	int16_t draw_dy;
+	int16_t start_x, start_y, view_x, view_y;
 
 	uint32_t new_frame :1;
 
@@ -263,6 +264,9 @@ int renderer_init(void)
 	pvr_set_pal_format(PVR_PAL_ARGB1555);
 	pvr_set_pal_entry(0, 0x0000);
 	pvr_set_pal_entry(1, 0xffff);
+
+	pvr.start_x = 0;
+	pvr.start_y = 0;
 
 	return 0;
 }
@@ -811,6 +815,8 @@ void renderer_notify_res_change(void)
 
 void renderer_notify_scanout_change(int x, int y)
 {
+	pvr.view_x = x;
+	pvr.view_y = y;
 }
 
 void renderer_notify_update_lace(int updated)
@@ -823,12 +829,12 @@ void renderer_set_config(const struct rearmed_cbs *cbs)
 
 static inline int16_t x_to_xoffset(int16_t x)
 {
-	return x + pvr.draw_dx - pvr.draw_x1;
+	return x + pvr.draw_dx;
 }
 
 static inline int16_t y_to_yoffset(int16_t y)
 {
-	return y + pvr.draw_dy - pvr.draw_y1;
+	return y + pvr.draw_dy;
 }
 
 static float get_zvalue(uint16_t zoffset, bool set_mask, bool check_mask)
@@ -1632,8 +1638,8 @@ static void process_gpu_commands(void)
 
 			case 0xe5:
 				/* Set drawing offsets */
-				pvr.draw_dx = ((int32_t)pbuffer->U4[0] << 21) >> 21;
-				pvr.draw_dy = ((int32_t)pbuffer->U4[0] << 10) >> 21;
+				pvr.draw_dx = (((int32_t)pbuffer->U4[0] << 21) >> 21) - pvr.start_x;
+				pvr.draw_dy = (((int32_t)pbuffer->U4[0] << 10) >> 21) - pvr.start_y;
 				if (0)
 					pvr_printf("Set drawing offsets to %dx%d\n",
 						   pvr.draw_dx, pvr.draw_dy);
@@ -2089,4 +2095,7 @@ void hw_render_stop(void)
 
 	if (likely(!pvr.new_frame))
 		pvr_scene_finish();
+
+	pvr.start_x = pvr.view_x;
+	pvr.start_y = pvr.view_y;
 }
