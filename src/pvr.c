@@ -7,6 +7,7 @@
 
 #include <arch/cache.h>
 #include <dc/pvr.h>
+#include <dc/video.h>
 #include <gpulib/gpu.h>
 #include <gpulib/gpu_timing.h>
 
@@ -164,6 +165,13 @@ struct vertex_coords {
 	uint16_t v;
 };
 
+struct square_fcoords {
+	float x[4];
+	float y[4];
+	float u[4];
+	float v[4];
+};
+
 #define POLY_BRIGHT		BIT(0)
 #define POLY_IGN_MASK		BIT(1)
 #define POLY_SET_MASK		BIT(2)
@@ -209,6 +217,8 @@ struct pvr_renderer {
 	uint32_t set_mask :1;
 	uint32_t check_mask :1;
 
+	uint32_t overpaint :1;
+
 	uint32_t depthcmp :3;
 
 	pvr_list_t pt_list :3;
@@ -236,6 +246,8 @@ struct pvr_renderer {
 	unsigned int cmdbuf_offt;
 	bool old_blending_is_none;
 	pvr_ptr_t old_tex;
+
+	pvr_ptr_t fake_tex;
 };
 
 static struct pvr_renderer pvr;
@@ -244,11 +256,114 @@ static struct poly polybuf[2048];
 
 static uint32_t cmdbuf[32768];
 
+alignas(4) static const uint16_t fake_tex_data[] = {
+	/* Alternating 0x8000 / 0x0000 but pre-twiddled */
+	0x8000, 0x8000, 0x0000, 0x0000, 0x8000, 0x8000, 0x0000, 0x0000,
+	0x8000, 0x8000, 0x0000, 0x0000, 0x8000, 0x8000, 0x0000, 0x0000,
+	0x8000, 0x8000, 0x0000, 0x0000, 0x8000, 0x8000, 0x0000, 0x0000,
+	0x8000, 0x8000, 0x0000, 0x0000, 0x8000, 0x8000, 0x0000, 0x0000,
+	0x8000, 0x8000, 0x0000, 0x0000, 0x8000, 0x8000, 0x0000, 0x0000,
+	0x8000, 0x8000, 0x0000, 0x0000, 0x8000, 0x8000, 0x0000, 0x0000,
+	0x8000, 0x8000, 0x0000, 0x0000, 0x8000, 0x8000, 0x0000, 0x0000,
+	0x8000, 0x8000, 0x0000, 0x0000, 0x8000, 0x8000, 0x0000, 0x0000,
+};
+
+static const struct square_fcoords fb_render_coords_mask = {
+	.x = { 0.0f, 640.0f, 0.0f, 640.0f },
+	.y = { 0.0f, 0.0f, 480.0f, 480.0f },
+	.u = { 0.0f, 640.0f / 8.0f, 0.0f, 640.0f / 8.0f },
+	.v = { 0.0f, 0.0f, 480.0f / 8.0f, 480.0f / 8.0f },
+};
+
+static const struct square_fcoords fb_fcoords_left = {
+	.x = { 0.0f, 320.0f, 0.0f, 320.0f },
+	.y = { 0.0f, 0.0f, 480.0f, 480.0f },
+	.u = { 0.0f, 640.0f / 1024.0f, 0.0f, 640.0f / 1024.0f },
+	.v = { 0.0f, 0.0f, 960.0f / 1024.0f, 960.0f / 1024.0f },
+};
+
+static const struct square_fcoords fb_fcoords_right = {
+	.x = { 320.0f, 640.0f, 320.0f, 640.0f },
+	.y = { 0.0f, 0.0f, 480.0f, 480.0f },
+	.u = { 0.0f, 640.0f / 1024.0f, 0.0f, 640.0f / 1024.0f },
+	.v = { 1.0f / 1024.0f, 1.0f / 1024.0f, 961.0f / 1024.0f, 961.0f / 1024.0f },
+};
+
+static pvr_poly_hdr_t fake_tex_header = {
+	.m0 = {
+		.txr_en = true,
+		.auto_strip_len = true,
+		.list_type = PVR_LIST_TR_POLY,
+		.hdr_type = PVR_HDR_POLY,
+	},
+	.m1 = {
+		.txr_en = true,
+		.depth_cmp = PVR_DEPTHCMP_GREATER,
+	},
+	.m2 = {
+		.v_size = PVR_UV_SIZE_8,
+		.u_size = PVR_UV_SIZE_8,
+		.shading = PVR_TXRENV_REPLACE,
+		.fog_type = PVR_FOG_DISABLE,
+		.blend_dst = PVR_BLEND_ZERO,
+		.blend_src = PVR_BLEND_ONE,
+	},
+	.m3 = {
+		.pixel_mode = PVR_PIXEL_MODE_ARGB1555,
+	},
+};
+
+static pvr_poly_hdr_t frontbuf_step1_header = {
+	.m0 = {
+		.txr_en = true,
+		.auto_strip_len = true,
+		.list_type = PVR_LIST_TR_POLY,
+		.hdr_type = PVR_HDR_POLY,
+	},
+	.m1 = {
+		.txr_en = true,
+		.depth_cmp = PVR_DEPTHCMP_GREATER,
+	},
+	.m2 = {
+		.v_size = PVR_UV_SIZE_1024,
+		.u_size = PVR_UV_SIZE_1024,
+		.shading = PVR_TXRENV_REPLACE,
+		.txralpha_dis = true,
+		.fog_type = PVR_FOG_DISABLE,
+		.blend_dst = PVR_BLEND_ZERO,
+		.blend_src = PVR_BLEND_DESTALPHA,
+	},
+};
+
+static pvr_poly_hdr_t frontbuf_step2_header = {
+	.m0 = {
+		.txr_en = true,
+		.auto_strip_len = true,
+		.list_type = PVR_LIST_TR_POLY,
+		.hdr_type = PVR_HDR_POLY,
+	},
+	.m1 = {
+		.txr_en = true,
+		.depth_cmp = PVR_DEPTHCMP_GREATER,
+	},
+	.m2 = {
+		.v_size = PVR_UV_SIZE_1024,
+		.u_size = PVR_UV_SIZE_1024,
+		.shading = PVR_TXRENV_REPLACE,
+		.txralpha_dis = true,
+		.fog_type = PVR_FOG_DISABLE,
+		.blend_dst = PVR_BLEND_ONE,
+		.blend_src = PVR_BLEND_INVDESTALPHA,
+	},
+};
+
 void pvr_renderer_init(void)
 {
 	unsigned int i;
 
 	pvr_printf("PVR renderer init\n");
+
+	PVR_SET(PVR_TEXTURE_MODULO, 640/32);
 
 	memset(&pvr, 0, sizeof(pvr));
 	pvr.gp1 = 0x14802000;
@@ -265,6 +380,14 @@ void pvr_renderer_init(void)
 
 	pvr.start_x = 0;
 	pvr.start_y = 0;
+
+	if (!WITH_24BPP) {
+		pvr.fake_tex = pvr_mem_malloc(sizeof(fake_tex_data));
+		pvr_txr_load(fake_tex_data, pvr.fake_tex,
+			     sizeof(fake_tex_data));
+
+		fake_tex_header.m3.txr_base = to_pvr_txr_ptr(pvr.fake_tex);
+	}
 }
 
 int renderer_init(void)
@@ -315,6 +438,8 @@ void pvr_renderer_shutdown(void)
 {
 	pvr_reap_textures();
 	pvr_reap_textures();
+	if (!WITH_24BPP)
+		pvr_mem_free(pvr.fake_tex);
 }
 
 void renderer_finish(void)
@@ -880,6 +1005,12 @@ static void pvr_start_scene(void)
 	pvr_scene_begin();
 
 	pvr.new_frame = 0;
+
+	if (!WITH_24BPP) {
+		pvr.overpaint = pvr.start_x == pvr.view_x
+			&& pvr.start_y == pvr.view_y;
+		vid_set_dithering(!pvr.overpaint);
+	}
 }
 
 __pvr
@@ -922,6 +1053,78 @@ static void draw_prim(pvr_poly_hdr_t *hdr,
 
 		pvr_dr_commit(vert);
 	}
+}
+
+static void render_square(const struct square_fcoords *coords,
+			  float z, float uoffset)
+{
+	pvr_vertex_t *vert;
+	unsigned int i;
+
+	for(i = 0; i < 4; i++) {
+		vert = pvr_dr_target(pvr.dr_state);
+		*vert = (pvr_vertex_t){
+			.flags = i == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
+			.x = coords->x[i],
+			.y = coords->y[i],
+			.z = z,
+			.u = coords->u[i] + uoffset,
+			.v = coords->v[i],
+		};
+		pvr_dr_commit(vert);
+	}
+}
+
+__noinline
+static void pvr_render_fb(void)
+{
+	pvr_poly_hdr_t *sq_hdr;
+	pvr_ptr_t frontbuf;
+	float uoffset, z;
+	bool hi_chip;
+	struct pvr_poly_hdr_mode3 m3;
+
+	__builtin_prefetch(&fake_tex_header);
+
+	z = get_zvalue(0, false, false);
+	frontbuf = pvr_get_front_buffer();
+	hi_chip = (uint32_t)frontbuf & PVR_RAM_SIZE;
+	m3 = (struct pvr_poly_hdr_mode3){
+		.txr_base = to_pvr_txr_ptr(frontbuf),
+		.x32stride = true,
+		.nontwiddled = true,
+		.pixel_mode = PVR_PIXEL_MODE_RGB565,
+	};
+
+	__builtin_prefetch(&frontbuf_step1_header);
+	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	copy32(sq_hdr, &fake_tex_header);
+	pvr_dr_commit(sq_hdr);
+
+	render_square(&fb_render_coords_mask, z, 0.0f);
+
+	__builtin_prefetch(&frontbuf_step2_header);
+
+	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	copy32(sq_hdr, &frontbuf_step1_header);
+	sq_hdr->m3 = m3;
+	pvr_dr_commit(sq_hdr);
+
+	uoffset = hi_chip ? 2.0f / 1024.0f : 0.0f;
+	z = get_zvalue(1, false, false);
+
+	render_square(&fb_fcoords_left, z, uoffset);
+	render_square(&fb_fcoords_right, z, uoffset);
+
+	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	copy32(sq_hdr, &frontbuf_step2_header);
+	sq_hdr->m3 = m3;
+	pvr_dr_commit(sq_hdr);
+
+	z = get_zvalue(2, false, false);
+	uoffset = hi_chip ? 1.0f / 1024.0f : -1.0f / 1024.0f;
+	render_square(&fb_fcoords_left, z, uoffset);
+	render_square(&fb_fcoords_right, z, uoffset);
 }
 
 static inline void poly_alloc_cache(struct poly *poly)
@@ -1285,12 +1488,24 @@ static void poly_draw_now(const struct poly *poly)
 }
 
 __pvr
+static void pvr_start_list(pvr_list_t list)
+{
+	pvr_list_begin(list);
+
+	if (!WITH_24BPP && list == PVR_LIST_TR_POLY && pvr.overpaint) {
+		/* We just opened the TR list; if we need to render the front
+		 * buffer, do it now, as it needs to be in the background. */
+		pvr_render_fb();
+	}
+}
+
+__pvr
 static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 {
 	if (!WITH_HYBRID_RENDERING || likely(list == pvr.list)) {
 		if (unlikely(pvr.new_frame)) {
 			pvr_start_scene();
-			pvr_list_begin(pvr.list);
+			pvr_start_list(pvr.list);
 		}
 
 		poly_draw_now(poly);
@@ -1323,7 +1538,7 @@ static void polybuf_deferred_render(void)
 	if (pvr.polybuf_cnt_start) {
 		poly_prefetch(&polybuf[0]);
 
-		pvr_list_begin(pvr.polybuf_start_list);
+		pvr_start_list(pvr.polybuf_start_list);
 		polybuf_render_from_start(pvr.polybuf_start_list);
 		pvr_list_finish();
 	}
@@ -2057,7 +2272,7 @@ static void reset_texture_pages(void)
 void hw_render_start(void)
 {
 	pvr.new_frame = 1;
-	pvr.zoffset = 0;
+	pvr.zoffset = 3;
 	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
 	pvr.inval_counter_at_start = pvr.inval_counter;
 	pvr.cmdbuf_offt = 0;
@@ -2098,6 +2313,12 @@ void hw_render_stop(void)
 		}
 
 		polybuf_deferred_render();
+	} else if (WITH_HYBRID_RENDERING && !WITH_24BPP
+		   && pvr.polybuf_start_list == PVR_LIST_TR_POLY) {
+		/* The TR list was not opened, but we need to render the front
+		 * buffer - open it now. */
+		pvr_start_list(PVR_LIST_TR_POLY);
+		pvr_list_finish();
 	}
 
 	if (likely(!pvr.new_frame))
