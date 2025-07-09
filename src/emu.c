@@ -25,6 +25,7 @@
 
 #include "bloom-config.h"
 #include "emu.h"
+#include "pvr.h"
 
 int fs_fat_init(void);
 void fs_fat_shutdown(void);
@@ -221,6 +222,9 @@ int main(int argc, char **argv)
 
 	mcd_fs_init();
 
+	if (HARDWARE_ACCELERATED)
+		pvr_renderer_init();
+
 	cont_btn_callback(0, CONT_RESET_BUTTONS, emu_exit);
 	cont_btn_callback(0, CONT_START | CONT_DPAD_UP, emu_screenshot);
 
@@ -232,6 +236,9 @@ int main(int argc, char **argv)
 	EmuShutdown();
 	ReleasePlugins();
 	mcd_fs_shutdown();
+
+	if (HARDWARE_ACCELERATED)
+		pvr_renderer_shutdown();
 
 	if (WITH_SDCARD)
 		sdcard_shutdown();

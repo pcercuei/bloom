@@ -244,13 +244,11 @@ static struct poly polybuf[2048];
 
 static uint32_t cmdbuf[32768];
 
-int renderer_init(void)
+void pvr_renderer_init(void)
 {
 	unsigned int i;
 
 	pvr_printf("PVR renderer init\n");
-
-	gpu.vram = aligned_alloc(32, 1024 * 1024);
 
 	memset(&pvr, 0, sizeof(pvr));
 	pvr.gp1 = 0x14802000;
@@ -267,6 +265,11 @@ int renderer_init(void)
 
 	pvr.start_x = 0;
 	pvr.start_y = 0;
+}
+
+int renderer_init(void)
+{
+	gpu.vram = aligned_alloc(32, 1024 * 1024);
 
 	return 0;
 }
@@ -308,10 +311,14 @@ static void pvr_reap_textures(void)
 	pvr.to_reap[list] = 0;
 }
 
-void renderer_finish(void)
+void pvr_renderer_shutdown(void)
 {
 	pvr_reap_textures();
 	pvr_reap_textures();
+}
+
+void renderer_finish(void)
+{
 	free(gpu.vram);
 }
 

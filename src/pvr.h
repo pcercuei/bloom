@@ -12,6 +12,9 @@
 
 extern float screen_fw, screen_fh;
 
+void pvr_renderer_init(void);
+void pvr_renderer_shutdown(void);
+
 void hw_render_start(void);
 void hw_render_stop(void);
 
