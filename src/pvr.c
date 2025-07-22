@@ -2314,6 +2314,7 @@ void hw_render_stop(void)
 
 		polybuf_deferred_render();
 	} else if (WITH_HYBRID_RENDERING && !WITH_24BPP
+		   && pvr.overpaint
 		   && pvr.polybuf_start_list == PVR_LIST_TR_POLY) {
 		/* The TR list was not opened, but we need to render the front
 		 * buffer - open it now. */
