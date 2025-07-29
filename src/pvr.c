@@ -363,7 +363,7 @@ void pvr_renderer_init(void)
 
 	pvr_printf("PVR renderer init\n");
 
-	PVR_SET(PVR_TEXTURE_MODULO, 640/32);
+	pvr_txr_set_stride(640);
 
 	memset(&pvr, 0, sizeof(pvr));
 	pvr.gp1 = 0x14802000;
