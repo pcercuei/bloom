@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(bloom VERSION 0.1 LANGUAGES C CXX ASM)
 
-include(dreamcast)
+include(kallistios)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
