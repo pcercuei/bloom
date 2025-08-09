@@ -130,7 +130,7 @@ struct texture_page {
 
 struct texture_page_16bpp {
 	struct texture_page base;
-	pvr_ptr_t mask_tex;
+	bool is_mask;
 };
 
 struct texture_clut {
@@ -236,6 +236,7 @@ struct pvr_renderer {
 
 	struct texture_settings settings;
 
+	struct texture_page_16bpp textures16_mask[32];
 	struct texture_page_16bpp textures16[32];
 	struct texture_page_8bpp textures8[32];
 	struct texture_page_4bpp textures4[32];
@@ -371,6 +372,9 @@ void pvr_renderer_init(void)
 	pvr.gp1 = 0x14802000;
 
 	for (i = 0; i < 32; i++) {
+		pvr.textures16_mask[i].base.settings.bpp = TEXTURE_16BPP;
+		pvr.textures16_mask[i].is_mask = true;
+
 		pvr.textures16[i].base.settings.bpp = TEXTURE_16BPP;
 		pvr.textures8[i].base.settings.bpp = TEXTURE_8BPP;
 		pvr.textures4[i].base.settings.bpp = TEXTURE_4BPP;
@@ -660,21 +664,21 @@ load_block_16bpp(struct texture_page_16bpp *page, const uint16_t *src,
 		 unsigned int x, unsigned int y)
 {
 	pvr_ptr_t dst = (pvr_ptr_t)(uintptr_t)(page->base.tex + y * 32 * 512 + x * 64);
-	pvr_ptr_t mask = (pvr_ptr_t)(uintptr_t)(page->mask_tex + y * 32 * 512 + x * 64);
-	alignas(32) uint16_t line[32], mask_line[32];
+	alignas(32) uint16_t line[32];
 	uint16_t px;
 
 	for (y = 0; y < 32; y++) {
 		for (x = 0; x < 32; x++) {
 			px = bgr_to_rgb(src[x]);
+
+			if (page->is_mask && px)
+				px ^= 0x8000;
+
 			line[x] = px;
-			mask_line[x] = px ? px ^ 0x8000 : 0;
 		}
 
 		pvr_txr_load(line, dst, sizeof(line));
-		pvr_txr_load(mask_line, mask, sizeof(mask_line));
 
-		mask += 512;
 		dst += 512;
 		src += 1024;
 	}
@@ -807,9 +811,6 @@ static void pvr_reap_ptr(pvr_ptr_t tex)
 
 static void discard_texture_page(struct texture_page *page)
 {
-	if (page->settings.bpp == TEXTURE_16BPP)
-		pvr_reap_ptr(to_texture_page_16bpp(page)->mask_tex);
-
 	pvr_reap_ptr(page->tex);
 	page->tex = NULL;
 	page->block_mask = 0;
@@ -838,6 +839,7 @@ void invalidate_all_textures(void)
 	pvr.inval_counter++;
 
 	for (i = 0; i < 32; i++) {
+		invalidate_texture(&pvr.textures16_mask[i].base, UINT64_MAX);
 		invalidate_texture(&pvr.textures16[i].base, UINT64_MAX);
 		invalidate_texture(&pvr.textures8[i].base, UINT64_MAX);
 		invalidate_texture(&pvr.textures4[i].base, UINT64_MAX);
@@ -868,23 +870,24 @@ static void invalidate_texture8_area(unsigned int page_offset,
 }
 
 static void invalidate_texture16_area(unsigned int page_offset,
-				      uint64_t block_mask)
+				      uint64_t block_mask,
+				      struct texture_page_16bpp *pages)
 {
-	invalidate_texture(&pvr.textures16[page_offset].base, block_mask);
+	invalidate_texture(&pages[page_offset].base, block_mask);
 
 	if (likely(page_offset > 0)) {
 		/* 16bpp textures overlap; we have to also invalidate the three previous pages */
-		invalidate_texture(&pvr.textures16[page_offset - 1].base,
+		invalidate_texture(&pages[page_offset - 1].base,
 				   block_mask << 2);
 	}
 
 	if (likely(page_offset > 1)) {
-		invalidate_texture(&pvr.textures16[page_offset - 2].base,
+		invalidate_texture(&pages[page_offset - 2].base,
 				   block_mask << 4);
 	}
 
 	if (likely(page_offset > 2)) {
-		invalidate_texture(&pvr.textures16[page_offset - 3].base,
+		invalidate_texture(&pages[page_offset - 3].base,
 				   block_mask << 6);
 	}
 }
@@ -896,7 +899,8 @@ static void invalidate_texture_area(unsigned int page_offset,
 	uint64_t block_mask;
 
 	block_mask = get_block_mask(umin, umax, vmin, vmax);
-	invalidate_texture16_area(page_offset, block_mask);
+	invalidate_texture16_area(page_offset, block_mask, pvr.textures16);
+	invalidate_texture16_area(page_offset, block_mask, pvr.textures16_mask);
 
 	block_mask = get_block_mask(umin << 1, umax << 1, vmin, vmax);
 	invalidate_texture8_area(page_offset, block_mask);
@@ -1178,6 +1182,8 @@ poly_get_texture_page(const struct poly *poly)
 		page = &pvr.textures4[poly->texpage_id].base;
 	else if (poly->bpp == TEXTURE_8BPP)
 		page = &pvr.textures8[poly->texpage_id].base;
+	else if (poly->clut & CLUT_IS_MASK)
+		page = &pvr.textures16_mask[poly->texpage_id].base;
 	else
 		page = &pvr.textures16[poly->texpage_id].base;
 
@@ -1190,13 +1196,6 @@ poly_get_texture_page(const struct poly *poly)
 			page16->base.tex = pvr_mem_malloc(256 * 256 * 2);
 			if (!page16->base.tex)
 				return NULL;
-
-			page16->mask_tex = pvr_mem_malloc(256 * 256 * 2);
-			if (!page16->mask_tex) {
-				pvr_mem_free(page16->base.tex);
-				page16->base.tex = NULL;
-				return NULL;
-			}
 		} else {
 			page->vq = pvr_mem_malloc(sizeof(*page->vq));
 			if (!page->vq)
@@ -1557,10 +1556,7 @@ static void process_poly(struct poly *poly)
 		page = poly_get_texture_page(poly);
 
 		if (unlikely(poly->bpp == TEXTURE_16BPP)) {
-			if (poly->clut & CLUT_IS_MASK)
-				poly->tex = to_texture_page_16bpp(page)->mask_tex;
-			else
-				poly->tex = page->tex;
+			poly->tex = page->tex;
 		} else {
 			codebook = find_texture_codebook(page, poly->clut);
 			poly->voffset = get_voffset(poly->bpp, codebook);
@@ -2268,6 +2264,7 @@ static void reset_texture_pages(void)
 	unsigned int i;
 
 	for (i = 0; i < 32; i++) {
+		reset_texture_page(&pvr.textures16_mask[i].base);
 		reset_texture_page(&pvr.textures16[i].base);
 		reset_texture_page(&pvr.textures8[i].base);
 		reset_texture_page(&pvr.textures4[i].base);
