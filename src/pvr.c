@@ -812,6 +812,7 @@ static void discard_texture_page(struct texture_page *page)
 
 	pvr_reap_ptr(page->tex);
 	page->tex = NULL;
+	page->block_mask = 0;
 }
 
 static void invalidate_texture(struct texture_page *page, uint64_t block_mask)
