@@ -1703,10 +1703,10 @@ static uint32_t get_tex_vertex_color(uint32_t color)
 
 static bool overlap_draw_area(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
-	return x < pvr.draw_x2
-		&& y < pvr.draw_y2
-		&& x + w > pvr.draw_x1
-		&& y + h > pvr.draw_y1;
+	return x < pvr.start_x + gpu.screen.hres
+		&& y < pvr.start_y + gpu.screen.vres
+		&& x + w > pvr.start_x
+		&& y + h > pvr.start_y;
 }
 
 static void clear_framebuffer(uint16_t x0, uint16_t y0,
@@ -1754,10 +1754,10 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 	if (overlap_draw_area(x0, y0, w0, h0)) {
 		color32 = __builtin_bswap32(pbuffer->U4[0]) >> 8;
 
-		x13 = x_to_xoffset(max32(x0, pvr.draw_x1));
-		y01 = y_to_yoffset(max32(y0, pvr.draw_y1));
-		x02 = x_to_xoffset(min32(x0 + w0, pvr.draw_x2));
-		y23 = y_to_yoffset(min32(y0 + h0, pvr.draw_y2));
+		x13 = max32(x0, pvr.start_x) - pvr.start_x;
+		y01 = max32(y0, pvr.start_y) - pvr.start_y;
+		x02 = min32(x0 + w0, pvr.start_x + gpu.screen.hres) - pvr.start_x;
+		y23 = min32(y0 + h0, pvr.start_y + gpu.screen.vres) - pvr.start_y;
 
 		poly_alloc_cache(&poly);
 
