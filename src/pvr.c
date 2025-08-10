@@ -123,6 +123,7 @@ struct texture_page {
 	};
 	uint64_t block_mask;
 	uint64_t inuse_mask;
+	uint64_t old_inuse_mask;
 };
 
 struct texture_page_16bpp {
@@ -830,17 +831,7 @@ static void discard_texture_page(struct texture_page *page)
 
 static void invalidate_texture(struct texture_page *page, uint64_t block_mask)
 {
-	if (page->block_mask) {
-		page->block_mask &= ~block_mask;
-
-		/* If we cleared all texture blocks, we can toss away the page.
-		 * If we cleared a texture block that was already used for this
-		 * frame, we have to make sure that it won't be overwritten, so
-		 * create a new texture page as well. */
-		if (!page->block_mask || (page->inuse_mask & block_mask))
-			discard_texture_page(page);
-	}
-
+	page->block_mask &= ~block_mask;
 	page->inval_counter = pvr.inval_counter;
 }
 
@@ -1134,7 +1125,7 @@ poly_get_texture_page(const struct poly *poly)
 	struct texture_page_16bpp *page16;
 	struct texture_page_8bpp *page8;
 	struct texture_page_4bpp *page4;
-	uint64_t block_mask, to_load;
+	uint64_t block_mask, locked_mask, to_load;
 
 	if (likely(poly->bpp == TEXTURE_4BPP))
 		page = &pvr.textures4[poly->texpage_id].base;
@@ -1144,6 +1135,20 @@ poly_get_texture_page(const struct poly *poly)
 		page = &pvr.textures16_mask[poly->texpage_id].base;
 	else
 		page = &pvr.textures16[poly->texpage_id].base;
+
+	block_mask = poly_get_block_mask(poly);
+
+	if (likely(page->tex)) {
+		locked_mask = (page->inuse_mask | page->old_inuse_mask)
+			& ~page->block_mask;
+
+		if (unlikely(locked_mask & block_mask)) {
+			/* We want to draw from blocks that are already in use,
+			 * but has been invalidated. This is not possible, so we
+			 * have to create a new texture page now. */
+			discard_texture_page(page);
+		}
+	}
 
 	if (unlikely(!page->tex)) {
 		/* Texture page not loaded */
@@ -1173,11 +1178,10 @@ poly_get_texture_page(const struct poly *poly)
 		/* Init the base fields */
 		page->block_mask = 0;
 		page->inuse_mask = 0;
+		page->old_inuse_mask = 0;
 	}
 
-	block_mask = poly_get_block_mask(poly);
 	to_load = ~page->block_mask & block_mask;
-
 	page->inuse_mask |= block_mask;
 
 	if (unlikely(to_load))
@@ -2390,6 +2394,7 @@ out:
 static void reset_texture_page(struct texture_page *page)
 {
 	if (page->tex) {
+		page->old_inuse_mask = page->inuse_mask;
 		page->inuse_mask = 0;
 	}
 }
