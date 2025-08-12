@@ -33,7 +33,7 @@ int lightrec_init_mmap(void)
 
 	psxH = (s8 *)_arch_mem_top;
 	psxR = (s8 *)(_arch_mem_top + 0x10000);
-	psxP = (s8 *)(_arch_mem_top + 0x20000);
+	psxP = (s8 *)(_arch_mem_top + 0x90000);
 	psxM = (s8 *)(_arch_mem_top + 0xa0000);
 	code_buffer = (void *)(_arch_mem_top + 0x2a0000);
 
@@ -96,6 +96,7 @@ int lightrec_init_mmap(void)
 	/* Clear pages */
 	memset(psxM, 0x0, 0x200000);
 	memset(psxH, 0x0, 0x10000);
+	memset(psxP, 0xff, 0x10000);
 
 	printf("Memory-map succeeded.\n"
 	       "RAM: 0x%x BIOS: 0x%x SCRATCH: 0x%x CODE: 0x%x\n",
