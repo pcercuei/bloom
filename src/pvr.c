@@ -1782,11 +1782,11 @@ __pvr
 static void process_gpu_commands(void)
 {
 	bool multicolor, multiple, semi_trans, textured, raw_tex;
+	unsigned int cmd_offt, len_polyline = 0;
 	const union PacketBuffer *pbuffer;
 	enum blending_mode blending_mode;
 	bool new_set, new_check;
 	struct poly poly;
-	unsigned int cmd_offt;
 	uint32_t cmd, len;
 
 	for (cmd_offt = 0; cmd_offt < pvr.cmdbuf_offt; cmd_offt += 1 + len) {
@@ -1795,13 +1795,24 @@ static void process_gpu_commands(void)
 		cmd = pbuffer->U4[0] >> 24;
 		len = cmd_lengths[cmd];
 
-		dcache_pref_block(&cmdbuf[cmd_offt + 1 + len]);
-
 		multicolor = cmd & 0x10;
 		multiple = cmd & 0x08;
 		textured = cmd & 0x04;
 		semi_trans = cmd & 0x02;
 		raw_tex = cmd & 0x01;
+
+		if ((cmd >> 5) == 0x2) {
+			if (multiple) {
+				len_polyline = get_line_length((uint32_t *)pbuffer,
+							       (uint32_t *)0xffffffff,
+							       multicolor);
+				len += (len_polyline - 2) << !!multicolor;
+			} else {
+				len_polyline = 2;
+			}
+		}
+
+		dcache_pref_block(&cmdbuf[cmd_offt + 1 + len]);
 
 		blending_mode = semi_trans ? pvr.blending_mode : BLENDING_MODE_NONE;
 
@@ -1987,13 +1998,9 @@ static void process_gpu_commands(void)
 		case 0x2: {
 			/* Monochrome/shaded line */
 			const uint32_t *buf = pbuffer->U4;
-			unsigned int i, nb = 2;
 			uint32_t oldcolor, color, val;
 			int16_t x, y, oldx, oldy;
-
-			if (multiple)
-				nb = get_line_length((uint32_t *)pbuffer,
-						     (uint32_t *)0xffffffff, multicolor);
+			unsigned int i;
 
 			/* BGR->RGB swap */
 			color = __builtin_bswap32(*buf++) >> 8;
@@ -2003,7 +2010,7 @@ static void process_gpu_commands(void)
 			oldx = x_to_xoffset((int16_t)val);
 			oldy = y_to_yoffset((int16_t)(val >> 16));
 
-			for (i = 0; i < nb - 1; i++) {
+			for (i = 0; i < len_polyline - 1; i++) {
 				if (multicolor)
 					color = __builtin_bswap32(*buf++) >> 8;
 
@@ -2122,12 +2129,28 @@ int do_cmd_list(uint32_t *list, int list_len,
 	uint32_t *list_start = list;
 	uint32_t *list_end = list + list_len;
 	const union PacketBuffer *pbuffer;
+	unsigned int i, len_polyline;
 
 	for (; list < list_end; list += 1 + len)
 	{
 		cmd = *list >> 24;
+		multicolor = cmd & 0x10;
+		multiple = cmd & 0x08;
+		textured = cmd & 0x04;
 
 		len = cmd_lengths[cmd];
+
+		if ((cmd >> 5) == 0x2) {
+			if (multiple) {
+				/* Handle polylines */
+				len_polyline = get_line_length(list, list_end,
+							       multicolor);
+				len += (len_polyline - 2) << !!multicolor;
+			} else {
+				len_polyline = 2;
+			}
+		}
+
 		if (unlikely(list + 1 + len > list_end)) {
 			cmd = -1;
 			break;
@@ -2143,10 +2166,6 @@ int do_cmd_list(uint32_t *list, int list_len,
 		pvr.cmdbuf_offt += len + 1;
 
 		pbuffer = (const union PacketBuffer *)list;
-
-		multicolor = cmd & 0x10;
-		multiple = cmd & 0x08;
-		textured = cmd & 0x04;
 
 		switch (cmd >> 5) {
 		case 0x0:
@@ -2198,20 +2217,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 		case 0x2: {
 			/* Monochrome/shaded line */
-			unsigned int i, nb = 2;
-
-			if (multiple) {
-				nb = get_line_length(list, list_end, multicolor);
-
-				len += (nb - 2) << !!multicolor;
-
-				if (list + len >= list_end) {
-					cmd = -1;
-					break;
-				}
-			}
-
-			for (i = 0; i < nb - 1; i++)
+			for (i = 0; i < len_polyline - 1; i++)
 				gput_sum(cpu_cycles_sum, cpu_cycles, gput_line(0));
 			break;
 		}
