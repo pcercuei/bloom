@@ -135,6 +135,10 @@ add_library(libpcsxcore STATIC
 	${PCSX_REAL_DIR}/plugins/gpulib/gpu.c
 	${PCSX_REAL_DIR}/plugins/gpulib/vout_pl.c
 )
+set_source_files_properties(
+	${PCSX_REAL_DIR}/libpcsxcore/psxmem.c
+	PROPERTIES COMPILE_DEFINITIONS psxMemReset=psxMemReset_dummy
+)
 target_include_directories(libpcsxcore PUBLIC
 	${PCSX_REAL_DIR}/include
 	${PCSX_REAL_DIR}
@@ -319,6 +323,18 @@ if (WITH_CHD)
 
 	target_link_libraries(libpcsxcore PUBLIC libchdr)
 endif(WITH_CHD)
+
+set(WITH_EMBEDDED_BIOS_PATH
+	"${CMAKE_SOURCE_DIR}/openbios/openbios.bin"
+	CACHE PATH "Path to an optional BIOS file to pack"
+)
+
+if (WITH_EMBEDDED_BIOS_PATH)
+	add_custom_command(TARGET bloom POST_BUILD
+		COMMAND ${CMAKE_SOURCE_DIR}/openbios/insert_bios.sh
+		ARGS ${WITH_EMBEDDED_BIOS_PATH} $<TARGET_FILE:bloom>
+	)
+endif()
 
 set(WITH_BIOS_PATH "" CACHE PATH "Runtime path to the (optional) BIOS file")
 set(WITH_GAME_PATH "" CACHE PATH "If set, auto-boot the CD image at the given path")

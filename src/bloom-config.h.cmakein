@@ -26,5 +26,6 @@
 #cmakedefine01 WITH_BILINEAR
 #cmakedefine01 WITH_480P
 #cmakedefine01 WITH_HYBRID_RENDERING
+#cmakedefine01 WITH_EMBEDDED_BIOS_PATH
 
 #endif /* BLOOM_CONFIG_H */

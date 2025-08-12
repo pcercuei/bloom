@@ -14,6 +14,7 @@
 #include <libpcsxcore/misc.h>
 #include <libpcsxcore/plugins.h>
 #include <libpcsxcore/psxcommon.h>
+#include <libpcsxcore/psxmem.h>
 #include <libpcsxcore/sio.h>
 #include <psemu_plugin_defs.h>
 
@@ -33,6 +34,8 @@ void fs_fat_shutdown(void);
 static bool is_exe;
 
 extern int stop;
+extern uintptr_t _bss_start;
+extern uint32_t _arch_mem_top;
 
 bool started;
 
@@ -61,23 +64,12 @@ void SysMessage(const char *fmt, ...) {
 
 static void init_config(void)
 {
-	struct stat stat_buf;
-
 	memset(&Config, 0, sizeof(Config));
 
 	Config.PsxAuto = 1;
 	Config.cycle_multiplier = CYCLE_MULT_DEFAULT;
 	Config.GpuListWalking = -1;
 	Config.FractionalFramerate = -1;
-
-	if (sizeof(WITH_BIOS_PATH) > 1
-	    && !fs_stat(WITH_BIOS_PATH, &stat_buf, 0)) {
-		Config.SlowBoot = 1;
-		strcpy(Config.BiosDir, "");
-		strcpy(Config.Bios, WITH_BIOS_PATH);
-	} else {
-		strcpy(Config.Bios, "HLE");
-	}
 
 	strcpy(Config.Mcd1, WITH_MCD1_PATH);
 	strcpy(Config.Mcd2, WITH_MCD2_PATH);
@@ -266,4 +258,30 @@ void lightrec_code_inv(void *ptr, uint32_t len)
 
 	dcache_flush_range((uint32_t)ptr, len);
 	icache_flush_range((uint32_t)ptr, len);
+}
+
+static void copy_bios(void)
+{
+	uint8_t *bss_start = (uint8_t *)&_bss_start;
+
+	if (WITH_EMBEDDED_BIOS_PATH)
+		memcpy((uint8_t *)(_arch_mem_top + 0x10000), bss_start, 0x80000);
+}
+KOS_INIT_EARLY(copy_bios);
+
+void psxMemReset() {
+	bool success = false;
+	file_t fd;
+
+	if (WITH_BIOS_PATH[0]) {
+		fd = fs_open(WITH_BIOS_PATH, O_RDONLY);
+
+		if (fd != -1) {
+			success = fs_read(fd, psxR, 0x80000) == 0x80000;
+			fs_close(fd);
+		}
+	}
+
+	Config.HLE = !success && !WITH_EMBEDDED_BIOS_PATH;
+	Config.SlowBoot = 1;
 }
