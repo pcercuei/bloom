@@ -116,8 +116,7 @@ bool emu_check_cd(const char *path)
 		return false;
 	}
 
-	if (strstr(path, ".exe"))
-		is_exe = true;
+	is_exe = !!strstr(path, ".exe");
 
 	if (!is_exe && CheckCdrom() != 0) {
 		ClosePlugins();
