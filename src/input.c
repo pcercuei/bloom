@@ -16,6 +16,10 @@
 #include <stdio.h>
 #include <stdint.h>
 
+/* Scale factor of analog sticks / 128.
+ * sqrtf(128^2 + 128^2) == ~181.02f */
+#define SCALE_FACTOR 181
+
 unsigned short in_keystate[8];
 
 static bool use_multitap;
@@ -126,6 +130,21 @@ static long reportMouse(maple_device_t *dev, PadDataS *pad)
 	return 0;
 }
 
+static inline uint8_t clamp8(int value)
+{
+	if (value < 0)
+		return 0;
+	if (value > 255)
+		return 255;
+
+	return (uint8_t)value;
+}
+
+static inline uint8_t analog_scale(uint8_t val)
+{
+	return clamp8((uint32_t)val * SCALE_FACTOR / 128 + 128 - SCALE_FACTOR);
+}
+
 long PAD1__readPort1(PadDataS *pad) {
         maple_device_t *dev;
 	cont_state_t *state;
@@ -185,10 +204,10 @@ long PAD1__readPort1(PadDataS *pad) {
 	pad->buttonStatus = ~buttons;
 
 	if (pad->controllerType == PSE_PAD_TYPE_ANALOGPAD) {
-		pad->rightJoyX = state->joy2x + 128;
-		pad->rightJoyY = state->joy2y + 128;
-		pad->leftJoyX = state->joyx + 128;
-		pad->leftJoyY = state->joyy + 128;
+		pad->rightJoyX = analog_scale(state->joy2x + 128);
+		pad->rightJoyY = analog_scale(state->joy2y + 128);
+		pad->leftJoyX = analog_scale(state->joyx + 128);
+		pad->leftJoyY = analog_scale(state->joyy + 128);
 
 		if (state->buttons & CONT_DPAD2_RIGHT)
 			pad->ds.padMode ^= 1;
