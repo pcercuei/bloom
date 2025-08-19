@@ -940,10 +940,6 @@ void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 	pvr_printf("Update caches %dx%d -> %dx%d\n", x, y, x + w, y + h);
 }
 
-void renderer_flush_queues(void)
-{
-}
-
 void renderer_sync(void)
 {
 }
@@ -2337,4 +2333,9 @@ void hw_render_stop(void)
 	pvr.start_y = pvr.view_y;
 	pvr.draw_offt_x = pvr.draw_dx - pvr.start_x;
 	pvr.draw_offt_y = pvr.draw_dy - pvr.start_y;
+}
+
+void renderer_flush_queues(void)
+{
+	process_gpu_commands();
 }
