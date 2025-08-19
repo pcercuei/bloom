@@ -180,18 +180,18 @@ int main(int argc, char **argv)
 
 		if (WITH_GAME_PATH[0]) {
 			emu_check_cd(WITH_GAME_PATH);
+			ClosePlugins();
 		} else {
 			vid_set_mode(DM_640x480, PM_RGB888P);
 			pvr_init_defaults();
 
 			should_exit = runMenu();
+			ClosePlugins();
 			pvr_shutdown();
 
 			if (should_exit)
 				break;
 		}
-
-		ClosePlugins();
 
 		if (WITH_480P)
 			video_mode = DM_640x480;
@@ -234,12 +234,12 @@ int main(int argc, char **argv)
 		if (HARDWARE_ACCELERATED)
 			pvr_renderer_shutdown();
 
+		ClosePlugins();
 		pvr_shutdown();
 		mcd_fs_shutdown();
 	} while (!WITH_GAME_PATH[0]);
 
 	printf("Exit...\n");
-	ClosePlugins();
 	EmuShutdown();
 	ReleasePlugins();
 
