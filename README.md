@@ -17,6 +17,9 @@ It is built on top of other open-source projects:
 - GNU Lightning, an arch-independent run-time assembler
   (https://www.gnu.org/software/lightning)
 
+- OpenBIOS, a Playstation 1 BIOS re-implementation
+  (https://pcsx-redux.consoledev.net/openbios/)
+
 Features
 --------
 
@@ -27,7 +30,7 @@ Features
 
 - Can load image files from CD, IDE (hard drive) or SD cards
 
-- Using HLE emulation for the BIOS, no BIOS file required (but one can optionally be supplied)
+- Using OpenBIOS for the BIOS, but official BIOS dumps can optionally be used.
 
 - Experimental PVR renderer, faster with low compatibility
 
