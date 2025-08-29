@@ -266,6 +266,7 @@ target_link_libraries(bloom PUBLIC libpcsxcore gpu spu tsunami
 )
 
 option(WITH_CDROM_DMA "Read CD-ROM sectors using DMA" ON)
+set(WITH_CDROM_CACHE_SIZE 16 CACHE STRING "CD-ROM cache size in sectors")
 
 option(WITH_SDCARD "Enable SD cards support" ON)
 if (WITH_SDCARD)

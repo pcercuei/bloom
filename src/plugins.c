@@ -8,6 +8,7 @@
 #include <libpcsxcore/cdrom-async.h>
 #include <libpcsxcore/plugins.h>
 
+#include "bloom-config.h"
 #include "emu.h"
 
 void SPUirq(int);
@@ -17,7 +18,7 @@ static unsigned long gpuDisp;
 static int _OpenPlugins() {
 	int ret;
 
-	cdra_set_buf_count(16);
+	cdra_set_buf_count(WITH_CDROM_CACHE_SIZE);
 
 	ret = cdra_open();
 	if (ret < 0) { SysPrintf("Error Opening CDR Plugin\n"); return -1; }
