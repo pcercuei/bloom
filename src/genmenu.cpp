@@ -23,6 +23,7 @@ extern "C" {
 #include <functional>
 #include <vector>
 
+#include "background.h"
 #include "emu.h"
 #include "genmenu.h"
 #include "bloom-config.h"
@@ -126,13 +127,15 @@ void MainMenuLabel::cancel()
 
 MyMenu::MyMenu(std::shared_ptr<Font> fnt, const fs::path &path)
 {
+	m_bg = std::make_shared<Background>();
+
+	m_bg->setTint(Color(1.0f, 0.7f, 0.7f, 0.7f));
+
 	m_top_scene = std::make_shared<Scene>();
+	m_scene->subAdd(m_bg);
 	m_scene->subAdd(m_top_scene);
 
 	m_top_scene->setTranslate(Vector(-MENU_OFF_X, MENU_OFF_Y, 10));
-
-	// Set a grey background
-	setBg(0.6f, 0.6f, 0.6f);
 
 	m_color0 = Color(1, 1, 1, 1);
 	m_color1 = Color(1, 0.7f, 0.7f, 0.7f);
@@ -360,6 +363,9 @@ void MyMenu::startExit() {
 		m->triggerAdd(std::make_shared<Death>());
 		m_entries[i]->animAdd(m);
 	}
+
+	auto f = std::make_shared<AlphaFader>(0.0f, -1.0f / 60.0f);
+	m_bg->animAdd(f);
 
 	GenericMenu::startExit();
 }
