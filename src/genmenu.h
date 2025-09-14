@@ -132,6 +132,8 @@ private:
 	unsigned int m_font_size;
 	std::shared_ptr<Font> m_font;
 	bool m_exited;
+
+	std::shared_ptr<Scene> m_top_scene;
 };
 
 

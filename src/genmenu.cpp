@@ -126,7 +126,10 @@ void MainMenuLabel::cancel()
 
 MyMenu::MyMenu(std::shared_ptr<Font> fnt, const fs::path &path)
 {
-	m_scene->setTranslate(Vector(-MENU_OFF_X, MENU_OFF_Y, 10));
+	m_top_scene = std::make_shared<Scene>();
+	m_scene->subAdd(m_top_scene);
+
+	m_top_scene->setTranslate(Vector(-MENU_OFF_X, MENU_OFF_Y, 10));
 
 	// Set a grey background
 	setBg(0.6f, 0.6f, 0.6f);
@@ -144,7 +147,7 @@ MyMenu::MyMenu(std::shared_ptr<Font> fnt, const fs::path &path)
 void MyMenu::addEntry(std::shared_ptr<MyLabel> entry)
 {
 	entry->setTranslate(Vector(0, m_font_size * m_entries.size(), 0));
-	m_scene->subAdd(entry);
+	m_top_scene->subAdd(entry);
 
 	if (m_entries.empty())
 		entry->select();
@@ -159,9 +162,9 @@ void MyMenu::populate_dft()
 	std::shared_ptr<AnimFadeIn> anim;
 
 	m_entries.clear();
-	m_scene->animRemoveAll();
-	m_scene->subRemoveAll();
-	m_scene->setTranslate(Vector(800.0f, MENU_OFF_Y, 10));
+	m_top_scene->animRemoveAll();
+	m_top_scene->subRemoveAll();
+	m_top_scene->setTranslate(Vector(800.0f, MENU_OFF_Y, 10));
 
 	addEntry(std::make_shared<MainMenuLabel>(m_font, "Run CD-ROM", m_font_size,
 						 [&] {
@@ -193,10 +196,10 @@ void MyMenu::populate_dft()
 	}));
 
 	anim = std::make_shared<AnimFadeIn>(false, MENU_OFF_X, [&] {
-		m_scene->animRemoveAll();
+		m_top_scene->animRemoveAll();
 	});
-	m_scene->animRemoveAll();
-	m_scene->animAdd(anim);
+	m_top_scene->animRemoveAll();
+	m_top_scene->animAdd(anim);
 
 	m_input_allowed = true;
 	m_cursel = 0;
@@ -213,9 +216,9 @@ void MyMenu::populate(fs::path path, bool back)
 	m_font_size = ENTRY_SIZE;
 
 	m_entries.clear();
-	m_scene->animRemoveAll();
-	m_scene->subRemoveAll();
-	m_scene->setTranslate(Vector(dx * -800.0f, MENU_OFF_Y, 10));
+	m_top_scene->animRemoveAll();
+	m_top_scene->subRemoveAll();
+	m_top_scene->setTranslate(Vector(dx * -800.0f, MENU_OFF_Y, 10));
 
 	fd = fs_open(path.c_str(), O_DIR);
 	if (fd == -1) {
@@ -256,10 +259,10 @@ void MyMenu::populate(fs::path path, bool back)
 	}
 
 	anim = std::make_shared<AnimFadeIn>(false, MENU_OFF_X, [&] {
-		m_scene->animRemoveAll();
+		m_top_scene->animRemoveAll();
 	});
-	m_scene->animRemoveAll();
-	m_scene->animAdd(anim);
+	m_top_scene->animRemoveAll();
+	m_top_scene->animAdd(anim);
 	fs_close(fd);
 
 	m_path = path;
@@ -280,8 +283,8 @@ void MyMenu::preparePopulate(fs::path path, bool back, bool dft)
 				populate(path, back);
 		});
 
-		m_scene->animRemoveAll();
-		m_scene->animAdd(anim);
+		m_top_scene->animRemoveAll();
+		m_top_scene->animAdd(anim);
 		m_input_allowed = false;
 	}
 }
@@ -295,8 +298,8 @@ void MyMenu::setEntry(unsigned int entry) {
 	offset_y = MENU_OFF_Y + (int)entry * -(int)m_font_size;
 
 	m_entries[entry]->select();
-	m_scene->animRemoveAll();
-	m_scene->animAdd(std::make_shared<LogXYMover>(MENU_OFF_X, offset_y));
+	m_top_scene->animRemoveAll();
+	m_top_scene->animAdd(std::make_shared<LogXYMover>(MENU_OFF_X, offset_y));
 }
 
 void MyMenu::inputEvent(const Event & evt) {
