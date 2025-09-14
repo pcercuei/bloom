@@ -219,6 +219,7 @@ elseif(SPU_PLUGIN STREQUAL AICA)
 endif()
 
 add_executable(bloom
+	src/background.cpp
 	src/cdr.c
 	src/copy32.s
 	src/dynload.c

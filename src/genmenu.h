@@ -20,6 +20,8 @@ namespace fs = std::filesystem;
 
 typedef std::function<void(void)> Action;
 
+class Background;
+
 class MyLabel : public Label {
 public:
 	MyLabel(std::shared_ptr<Font> fh, const std::string &text, int size,
@@ -132,6 +134,7 @@ private:
 	unsigned int m_font_size;
 	std::shared_ptr<Font> m_font;
 	bool m_exited;
+	std::shared_ptr<Background> m_bg;
 
 	std::shared_ptr<Scene> m_top_scene;
 };
