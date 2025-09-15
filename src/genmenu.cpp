@@ -51,6 +51,14 @@ MyLabel::MyLabel(std::shared_ptr<Font> fh, const std::string& text, int size,
 	deselect();
 }
 
+void MyLabel::draw(int list)
+{
+	const Vector &p = getPosition();
+
+	if (p.y <= 480 + (int)m_size && p.y >= -(int)m_size)
+		Label::draw(list);
+}
+
 class AnimFadeAway : public Animation {
 public:
 	AnimFadeAway(bool vertical, float delta, float max, const Action &action) {
