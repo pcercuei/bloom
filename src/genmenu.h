@@ -48,7 +48,9 @@ public:
 	virtual void activate() = 0;
 	virtual void cancel() = 0;
 
-private:
+	void draw(int list);
+
+protected:
 	Color m_color_selected, m_color_deselected;
 	std::string m_label;
 	std::shared_ptr<Font> m_font;
