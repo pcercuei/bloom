@@ -144,7 +144,7 @@ MyMenu::MyMenu(std::shared_ptr<Font> fnt, const fs::path &path)
 	m_scene->subAdd(m_bg);
 	m_scene->subAdd(m_top_scene);
 
-	m_top_scene->setTranslate(Vector(-MENU_OFF_X, MENU_OFF_Y, 10));
+	m_top_scene->setTranslate(Vector(-m_xoffset, MENU_OFF_Y, 10));
 
 	m_color0 = Color(1, 1, 1, 1);
 	m_color1 = Color(1, 0.7f, 0.7f, 0.7f);
@@ -170,6 +170,7 @@ void MyMenu::addEntry(std::shared_ptr<MyLabel> entry)
 void MyMenu::populate_dft()
 {
 	m_font_size = MENU_ENTRY_SIZE;
+	m_xoffset = MENU_OFF_X;
 
 	std::shared_ptr<AnimFadeIn> anim;
 
@@ -207,7 +208,7 @@ void MyMenu::populate_dft()
 		startExit();
 	}));
 
-	anim = std::make_shared<AnimFadeIn>(false, MENU_OFF_X, [&] {
+	anim = std::make_shared<AnimFadeIn>(false, m_xoffset, [&] {
 		m_top_scene->animRemoveAll();
 	});
 	m_top_scene->animRemoveAll();
@@ -228,6 +229,7 @@ void MyMenu::populate(fs::path path, bool back)
 	int fd;
 
 	m_font_size = ENTRY_SIZE;
+	m_xoffset = 200;
 
 	m_entries.clear();
 	m_top_scene->animRemoveAll();
@@ -284,7 +286,7 @@ void MyMenu::populate(fs::path path, bool back)
 						     true, m_font_size));
 	}
 
-	anim = std::make_shared<AnimFadeIn>(false, MENU_OFF_X, [&] {
+	anim = std::make_shared<AnimFadeIn>(false, m_xoffset, [&] {
 		m_top_scene->animRemoveAll();
 	});
 	m_top_scene->animRemoveAll();
@@ -325,7 +327,7 @@ void MyMenu::setEntry(unsigned int entry) {
 
 	m_entries[entry]->select();
 	m_top_scene->animRemoveAll();
-	m_top_scene->animAdd(std::make_shared<LogXYMover>(MENU_OFF_X, offset_y));
+	m_top_scene->animAdd(std::make_shared<LogXYMover>(m_xoffset, offset_y));
 }
 
 void MyMenu::inputEvent(const Event & evt) {
