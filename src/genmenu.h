@@ -25,7 +25,7 @@ class Background;
 class MyLabel : public Label {
 public:
 	MyLabel(std::shared_ptr<Font> fh, const std::string &text, int size,
-		const Color& selected, const Color& deselected);
+		bool centered, const Color& selected, const Color& deselected);
 
 	~MyLabel() {}
 
@@ -60,7 +60,7 @@ protected:
 class PathLabel : public MyLabel {
 public:
 	PathLabel(std::shared_ptr<Font> fh, const std::string& text, bool is_file, int size)
-		: MyLabel(fh, text, size,
+		: MyLabel(fh, text, size, true,
 			  is_file ? Color(1.0f, 0.7f, 0.7f, 1.0f) : Color(1.0f, 1.0f, 1.0f, 1.0f),
 			  is_file ? Color(1.0f, 0.3f, 0.3f, 1.0f) : Color(1.0f, 0.7f, 0.7f, 0.7f))
 	{
@@ -83,7 +83,7 @@ public:
 
 	MainMenuLabel(std::shared_ptr<Font> fh, const std::string& text, int size,
 		      const Action& action)
-		: MyLabel(fh, text, size,
+		: MyLabel(fh, text, size, true,
 			  Color(1.0f, 1.0f, 1.0f, 1.0f),
 			  Color(1.0f, 0.7f, 0.7f, 0.7f)),
 		m_action(action)
