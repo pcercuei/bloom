@@ -33,7 +33,7 @@ extern "C" {
 #define MENU_OFF_Y 200
 
 #define MENU_ENTRY_SIZE 32
-#define ENTRY_SIZE 24
+#define ENTRY_SIZE 20
 
 #define TOP_PATH "/"
 
@@ -147,7 +147,7 @@ MyMenu::MyMenu(std::shared_ptr<Font> fnt, const fs::path &path)
 	m_top_scene->setTranslate(Vector(-m_xoffset, MENU_OFF_Y, 10));
 
 	m_color0 = Color(1, 1, 1, 1);
-	m_color1 = Color(1, 0.7f, 0.7f, 0.7f);
+	m_color1 = Color(1, 0.5f, 0.5f, 0.5f);
 	m_input_allowed = false;
 
 	m_font = fnt;
