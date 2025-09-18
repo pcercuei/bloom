@@ -40,8 +40,8 @@ extern "C" {
 static std::shared_ptr<MyMenu> myMenu;
 
 MyLabel::MyLabel(std::shared_ptr<Font> fh, const std::string& text, int size,
-		 const Color& selected, const Color& deselected) :
-	Label(fh, "", size, true, false),
+		 bool centered, const Color& selected, const Color& deselected) :
+	Label(fh, "", size, centered, false),
 	m_color_selected(selected),
 	m_color_deselected(deselected),
 	m_font(fh), m_size(size)
