@@ -62,7 +62,7 @@ public:
 	PathLabel(std::shared_ptr<Font> fh, const std::string& text, bool is_file, int size)
 		: MyLabel(fh, text, size, true,
 			  is_file ? Color(1.0f, 0.7f, 0.7f, 1.0f) : Color(1.0f, 1.0f, 1.0f, 1.0f),
-			  is_file ? Color(1.0f, 0.3f, 0.3f, 1.0f) : Color(1.0f, 0.7f, 0.7f, 0.7f))
+			  is_file ? Color(1.0f, 0.3f, 0.3f, 1.0f) : Color(1.0f, 0.5f, 0.5f, 0.5f))
 	{
 	}
 
@@ -85,7 +85,7 @@ public:
 		      const Action& action)
 		: MyLabel(fh, text, size, true,
 			  Color(1.0f, 1.0f, 1.0f, 1.0f),
-			  Color(1.0f, 0.7f, 0.7f, 0.7f)),
+			  Color(1.0f, 0.5f, 0.5f, 0.5f)),
 		m_action(action)
 	{
 	}
