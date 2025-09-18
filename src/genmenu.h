@@ -134,6 +134,7 @@ private:
 	fs::path m_path;
 	unsigned int m_cursel;
 	unsigned int m_font_size;
+	unsigned int m_xoffset;
 	std::shared_ptr<Font> m_font;
 	bool m_exited;
 	std::shared_ptr<Background> m_bg;
