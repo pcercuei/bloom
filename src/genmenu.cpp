@@ -21,6 +21,7 @@ extern "C" {
 #include <tsu/triggers/death.h>
 
 #include <functional>
+#include <set>
 #include <vector>
 
 #include "background.h"
@@ -220,6 +221,8 @@ void MyMenu::populate(fs::path path, bool back)
 {
 	float dx = back ? 1.0f : -1.0f;
 	std::shared_ptr<AnimFadeIn> anim;
+	std::set<fs::path> fileset;
+	std::set<fs::path> dirset;
 	dirent_t *d;
 	bool is_file;
 	int fd;
@@ -239,8 +242,8 @@ void MyMenu::populate(fs::path path, bool back)
 	}
 
 	while ((d = fs_readdir(fd))) {
-		fs::path filepath = path / d->name;
-		is_file = fs::is_regular_file(filepath);
+		fs::path filepath = d->name;
+		is_file = fs::is_regular_file(path / filepath);
 
 		if (is_file) {
 			const std::string& ext = filepath.extension();
@@ -265,8 +268,20 @@ void MyMenu::populate(fs::path path, bool back)
 			}
 		}
 
-		addEntry(std::make_shared<PathLabel>(m_font, d->name,
-						     is_file, m_font_size));
+		if (is_file)
+			fileset.insert(filepath);
+		else
+			dirset.insert(filepath);
+	}
+
+	for (fs::path filepath : dirset) {
+		addEntry(std::make_shared<PathLabel>(m_font, filepath,
+						     false, m_font_size));
+	}
+
+	for (fs::path filepath : fileset) {
+		addEntry(std::make_shared<PathLabel>(m_font, filepath,
+						     true, m_font_size));
 	}
 
 	anim = std::make_shared<AnimFadeIn>(false, MENU_OFF_X, [&] {
