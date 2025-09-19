@@ -1,0 +1,11 @@
+Tsunami builds upon Parallax to provide a "scene graph" library in C++.
+Most of the code is pulled directly from Feet of Fury's code base or
+designed around the same concepts will replace the corresponding pieces
+in FoF.
+
+https://github.com/KallistiOS/libtsunami/
+
+Licensed under a 3-clause BSD license.
+
+Copyright (C) 2002 Megan Potter
+Copyright (C) 1997-2025 KallistiOS Contributors

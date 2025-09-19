@@ -1,0 +1,72 @@
+KallistiOS is a development library and operating system for the Sega Dreamcast
+game console, developed independently from Sega entirely by free software
+developers.
+
+https://github.com/KallistiOS/KallistiOS/
+
+Licensed under a 3-clause BSD license.
+
+Copyright (C) 1997-2025 KallistiOS Contributors
+
+Files with Specific licenses:
+-----------------------------
+kernel/arch/dreamcast/kernel/gdb_stub.c:
+
+This is originally based on an m68k software stub written by Glenn Engel at HP,
+released for use in the public domain, but has changed quite a bit.
+
+Modifications for the SH by Ben Lee and Steve Chamberlain
+
+Modifications for KOS by Megan Potter (earlier) and Richard Moats (more
+recently).
+
+KallistiOS Authors List
+-----------------------
+The following is a list of all of the attributed authors for KallistiOS, as well
+as the year(s) of their contributions. As KallistiOS is copyrighted computer
+software, any use of any parts of KallistiOS must give attribution to the
+authors who produced it. The names here are listed in no particular order. It is
+the responsibility of any contributors to KallistiOS to add themselves to this
+file in order to document their contributions. Note that this list covers only
+KallistiOS itself, and not any utilities that are bundled with it nor any
+external libraries that it may use on any given platform (such as Newlib or
+libgcc). Please consult a legal professional if you intend to use KallistiOS for
+any commercial purposes to clarify the licensing restrictions that may be placed
+on your software due to its use of KallistiOS or other libraries.
+
+Also, keep in mind that libraries included in kos-ports are also not covered by
+this list, and may have differing license restrictions than KallistiOS itself.
+Once again, if in doubt, contact a legal professional.
+
+For more information about the license that KallistiOS is distributed under,
+please see the README.KOS file in the doc directory.
+
+Contributors list (under the normal KOS license):
+-------------------------------------------------
+Megan Potter: 1997, 2000-2004
+Lawrence Sebald: 2005-2024
+Sam Steele: 2004
+Gil Megidish: 2002
+Florian Schulze: 2002
+Walter van Niftrik: 2005
+Donald Haase: 2008, 2014, 2023-2025
+Andrew Kieschnick: 2000-2003
+Jordan DeLong: 2000-2002
+Bero: 2002
+Kazuaki Matsumoto: 2002
+Anders Clerwall (scav): 2001
+Nick Kochakian: 2002, 2004
+Vincent Penne: 2004
+Roger Cattermole: 2002
+Paul Boese: 2002
+Brian Paul: 1999, 2000, 2001
+Josh Pearson: 2013-2016
+Joe Fenton: 2016
+Stefan Galowicz: 2016-2017
+Luke Benstead: 2020-2023
+Eric Fradella: 2023-2025
+Falco Girgis: 2023-2025
+Ruslan Rostovtsev: 2014, 2016, 2023-2025
+Colton Pawielski: 2023
+Andy Barajas: 2023-2024
+Paul Cercueil: 2023-2025

@@ -1,0 +1,7 @@
+libchdr is a standalone library for reading MAME's CHDv1-v5 formats.
+
+https://github.com/rtissera/libchdr/
+
+Licensed under a 3-clause BSD license.
+
+Copyright Romain Tisserand

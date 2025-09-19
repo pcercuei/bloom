@@ -20,6 +20,7 @@ extern "C" {
 #include <tsu/anims/alphafader.h>
 #include <tsu/triggers/death.h>
 
+#include <fstream>
 #include <functional>
 #include <set>
 #include <vector>
@@ -34,6 +35,7 @@ extern "C" {
 
 #define MENU_ENTRY_SIZE 32
 #define ENTRY_SIZE 20
+#define CREDITS_ENTRY_SIZE 11
 
 #define TOP_PATH "/"
 
@@ -110,7 +112,11 @@ void PathLabel::activate()
 	fs::path path = back ? pwd.parent_path() : pwd / name;
 
 	if (!back && fs::is_regular_file(path)) {
-		if (emu_check_cd(path.c_str())) {
+		const std::string& ext = path.extension();
+
+		if (ext.empty()) {
+			myMenu->prepareCredits(path);
+		} else if (emu_check_cd(path.c_str())) {
 			/* Launch ISO! */
 			myMenu->startExit();
 		} else {
@@ -124,14 +130,24 @@ void PathLabel::activate()
 void PathLabel::cancel()
 {
 	fs::path path = myMenu->pwd().parent_path();
+	bool to_menu = path == myMenu->pwd() || path == "/rd";
 
-	myMenu->preparePopulate(path, true,
-				path == myMenu->pwd());
+	myMenu->preparePopulate(path, true, to_menu);
 }
 
 void MainMenuLabel::cancel()
 {
 	/* No action for cancel on the main menu */
+}
+
+void TextLabel::activate()
+{
+	/* No action for activate on regular text */
+}
+
+void TextLabel::cancel()
+{
+	myMenu->preparePopulate("/rd/credits", true, false);
 }
 
 MyMenu::MyMenu(std::shared_ptr<Font> fnt, const fs::path &path)
@@ -200,6 +216,7 @@ void MyMenu::populate_dft()
 
 	addEntry(std::make_shared<MainMenuLabel>(m_font, "Credits", m_font_size,
 						 [&] {
+		myMenu->preparePopulate("/rd/credits", false, false);
 	}));
 
 	addEntry(std::make_shared<MainMenuLabel>(m_font, "Quit", m_font_size,
@@ -226,6 +243,7 @@ void MyMenu::populate(fs::path path, bool back)
 	std::set<fs::path> dirset;
 	dirent_t *d;
 	bool is_file;
+	bool is_credits = path.compare("/rd/credits") == 0;
 	int fd;
 
 	m_font_size = ENTRY_SIZE;
@@ -256,6 +274,7 @@ void MyMenu::populate(fs::path path, bool back)
 			    && ext != ".exe"
 			    && ext != ".mds"
 			    && (!WITH_CHD || ext != ".chd")
+			    && (!is_credits || !ext.empty())
 			    && ext != ".pbp") {
 				continue;
 			}
@@ -268,6 +287,11 @@ void MyMenu::populate(fs::path path, bool back)
 			    && name != "sd") {
 				continue;
 			}
+		} else if (is_credits) {
+			const std::string& name = d->name;
+
+			if (name == "." || name == "..")
+				continue;
 		}
 
 		if (is_file)
@@ -315,6 +339,48 @@ void MyMenu::preparePopulate(fs::path path, bool back, bool dft)
 		m_top_scene->animAdd(anim);
 		m_input_allowed = false;
 	}
+}
+
+void MyMenu::prepareCredits(fs::path path)
+{
+	auto anim = std::make_shared<AnimFadeAway>(false, -1.0f,
+						   -800.0f, [=] {
+		populateCredits(path);
+	});
+
+	m_top_scene->animRemoveAll();
+	m_top_scene->animAdd(anim);
+	m_input_allowed = false;
+}
+
+void MyMenu::populateCredits(fs::path path)
+{
+	std::ifstream fd(path);
+	std::shared_ptr<AnimFadeIn> anim;
+	std::string line;
+
+	if (!fd.is_open())
+		return;
+
+	m_xoffset = 10;
+
+	m_entries.clear();
+	m_top_scene->animRemoveAll();
+	m_top_scene->subRemoveAll();
+	m_top_scene->setTranslate(Vector(800.0f, MENU_OFF_Y, 10));
+
+	while (std::getline(fd, line)) {
+		addEntry(std::make_shared<TextLabel>(m_font, line,
+						     CREDITS_ENTRY_SIZE));
+	}
+
+	anim = std::make_shared<AnimFadeIn>(false, m_xoffset, [&] {
+		m_top_scene->animRemoveAll();
+	});
+	m_top_scene->animAdd(anim);
+
+	m_input_allowed = true;
+	m_cursel = 0;
 }
 
 void MyMenu::setEntry(unsigned int entry) {

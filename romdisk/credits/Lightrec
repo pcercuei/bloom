@@ -1,0 +1,7 @@
+Lightrec, a MIPS-to-everything dynamic compiler for PSX emulators
+
+https://github.com/pcercuei/lightrec/
+
+Licensed under the LGPL v2.1+.
+
+Copyright (C) 2014-2025 Paul Cercueil

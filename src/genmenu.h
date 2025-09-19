@@ -72,6 +72,21 @@ public:
 	virtual void cancel();
 };
 
+class TextLabel : public MyLabel {
+public:
+	TextLabel(std::shared_ptr<Font> fh, const std::string& text, int size)
+		: MyLabel(fh, text, size, false,
+			  Color(1.0f, 1.0f, 1.0f, 1.0f),
+			  Color(1.0f, 1.0f, 1.0f, 1.0f))
+	{
+	}
+
+	~TextLabel() {}
+
+	virtual void activate();
+	virtual void cancel();
+};
+
 class MainMenuLabel : public MyLabel {
 public:
 	enum MainMenuAction {
@@ -110,8 +125,10 @@ public:
 
 	void populate_dft();
 	void populate(fs::path path, bool back);
+	void populateCredits(fs::path path);
 
 	void preparePopulate(fs::path path, bool back, bool dft);
+	void prepareCredits(fs::path path);
 
 	void setEntry(unsigned int entry);
 

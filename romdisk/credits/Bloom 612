@@ -1,0 +1,16 @@
+A 256-byte procedural graphics program for the Sega Dreamcast video game
+console, released at Lovebyte 2025, originally written by Julien Verneuil.
+
+Rewritten from the Javascript algorithm to C by Paul Cercueil, and heavily
+modified to use floats instead of fixed-point and matrix multiplications to
+speed up computations on the SH4.
+
+https://www.onirom.fr/wiki/codegolf/bloom_612/
+
+The original Javascript code is licensed under a BSD 3-clause license.
+
+Copyright (C) Julien Verneuil
+
+The rewritten C code uses the same license as Bloom, which is GPL v2.
+
+Copyright (C) Paul Cercueil
