@@ -206,6 +206,8 @@ int main(int argc, char **argv)
 		/* Re-init PVR without translucent polygon autosort, and optional FSAA */
 		pvr_init(&pvr_init_params_fsaa);
 
+		pvr_set_vertical_scale(1.0f);
+
 		PVR_SET(PVR_OBJECT_CLIP, 0.00001f);
 
 		started = true;
