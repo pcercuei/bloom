@@ -34,7 +34,6 @@ void fs_fat_shutdown(void);
 static bool is_exe;
 
 extern int stop;
-extern uintptr_t _bss_start;
 extern uint32_t _arch_mem_top;
 
 bool started;
@@ -275,10 +274,8 @@ void lightrec_code_inv(void *ptr, uint32_t len)
 
 static void copy_bios(void)
 {
-	uint8_t *bss_start = (uint8_t *)&_bss_start;
-
 	if (WITH_EMBEDDED_BIOS_PATH)
-		memcpy((uint8_t *)(_arch_mem_top + 0x10000), bss_start, 0x80000);
+		memcpy((uint8_t *)(_arch_mem_top + 0x10000), _bss_start, 0x80000);
 }
 KOS_INIT_EARLY(copy_bios);
 
