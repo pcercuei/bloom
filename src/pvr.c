@@ -1523,6 +1523,7 @@ static void polybuf_render_from_start(pvr_list_t list)
 		poly_prefetch(&polybuf[i + 1]);
 
 		poly_draw_now(&polybuf[i]);
+		poly_discard(&polybuf[i]);
 	}
 
 	pvr.polybuf_cnt_start = 0;
