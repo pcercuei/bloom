@@ -250,6 +250,8 @@ struct pvr_renderer {
 	pvr_ptr_t fake_tex;
 };
 
+static void process_poly(struct poly *poly);
+
 static struct pvr_renderer pvr;
 
 static struct poly polybuf[2048];
@@ -1548,13 +1550,174 @@ static void polybuf_deferred_render(void)
 	}
 }
 
+static inline struct vertex_coords
+vertex_coords_cut(struct vertex_coords a, struct vertex_coords b,
+		  unsigned int ucut)
+{
+	unsigned int factor = ((ucut - a.u) << 16) / (b.u - a.u);
+
+	return (struct vertex_coords){
+		.x = a.x + ((unsigned int)(b.x - a.x) * factor >> 16),
+		.y = a.y + ((unsigned int)(b.y - a.y) * factor >> 16),
+		.u = ucut,
+		.v = a.v + ((unsigned int)(b.v - a.v) * factor >> 16),
+	};
+}
+
+static inline uint16_t poly_get_umin(const struct poly *poly)
+{
+	uint16_t umin = poly->coords[0].u;
+	unsigned int i;
+
+	for (i = 1; i < poly_get_vertex_count(poly); i++)
+		if (poly->coords[i].u < umin)
+			umin = poly->coords[i].u;
+
+	return umin;
+}
+
+static inline uint16_t poly_get_umax(const struct poly *poly)
+{
+	uint16_t umax = poly->coords[0].u;
+	unsigned int i;
+
+	for (i = 1; i < poly_get_vertex_count(poly); i++)
+		if (poly->coords[i].u > umax)
+			umax = poly->coords[i].u;
+
+	return umax;
+}
+
+__noinline
+static void process_poly_multipage(struct poly *poly)
+{
+	unsigned int i, j, idx, nb, umin, ucut;
+	struct poly poly2;
+	bool single_left, left[3];
+
+	if (poly->flags & POLY_4VERTEX) {
+		/* 4-point multipage poly we need to scissor.
+		 * To simplify things, cut it into two
+		 * 3-point polys. */
+
+		poly->flags &= ~POLY_4VERTEX;
+
+		poly_copy(&poly2, poly);
+
+		for (i = 1; i < 4; i++) {
+			poly2.colors[i - 1] = poly2.colors[i];
+			poly2.coords[i - 1] = poly2.coords[i];
+		}
+
+		process_poly(&poly2);
+	}
+
+	/* 3-point multipage poly */
+
+	/* Get the U coordinate where to cut */
+	umin = poly_get_umin(poly);
+	ucut = __align_up(umin, 1 << (8 - poly->bpp));
+
+	if (ucut == umin)
+		ucut += 1 << (8 - poly->bpp);
+
+	/* Count the number of vertices on the left side */
+	for (i = 0, nb = 0; i < 3; i++) {
+		left[i] = poly->coords[i].u < ucut;
+		nb += left[i];
+	}
+
+	if (nb == 3) {
+		/* False positive; all the points are in the same multipage. */
+		return;
+	}
+
+	poly_copy(&poly2, poly);
+
+	single_left = nb == 1;
+
+	/* Get index of the vertex that's alone on its side */
+	for (idx = 0; idx < 3 && (left[idx] ^ single_left); idx++);
+
+	if (nb == 2) {
+		/* 2 vertices on the left side, one on the right side */
+
+		/* Update our poly from a triangle to a quad, where the vertices
+		 * are the two points on the left, and the two intersection
+		 * points. Then, create a second 3-point poly where the vertices
+		 * are the point on the right, and the two intersection
+		 * points. */
+		for (i = 0, j = 0; i < 3; i++) {
+			if (i == idx)
+				continue;
+
+			poly->coords[j++] = poly2.coords[i];
+
+			poly2.coords[i] = vertex_coords_cut(poly2.coords[i],
+							    poly2.coords[idx],
+							    ucut);
+
+			poly->coords[j++] = poly2.coords[i];
+		}
+
+		poly->flags |= POLY_4VERTEX;
+	} else {
+		/* One vertex on the left side, two on the right side */
+
+		/* Update our poly from a triangle to a quad, where the vertices
+		 * are the two points on the left, and the two intersection
+		 * points. Then, create a second 3-point poly where the vertices
+		 * are the point on the right, and the two intersection
+		 * points. */
+		for (i = 0, j = 0; i < 3; i++) {
+			if (i == idx)
+				continue;
+
+			poly2.coords[j++] = vertex_coords_cut(poly->coords[idx],
+							      poly->coords[i],
+							      ucut);
+			poly2.coords[j++] = poly->coords[i];
+
+			poly->coords[i] = poly2.coords[j - 2];
+		}
+
+		poly2.flags |= POLY_4VERTEX;
+	}
+
+	/* Repeat the process on the right side */
+	process_poly(&poly2);
+}
+
 __pvr
 static void process_poly(struct poly *poly)
 {
 	struct texture_page *page;
+	unsigned int i, offt;
+	uint16_t umin, umax;
 	uint8_t codebook;
 
 	if (poly->flags & POLY_TEXTURED) {
+		if (unlikely(poly->bpp != TEXTURE_4BPP)) {
+			umin = poly_get_umin(poly);
+			umax = poly_get_umax(poly) - 1;
+
+			/* If all our U values are above the page threshold, we
+			 * can use the next page instead. */
+			offt = umin >> (8 - poly->bpp);
+
+			if (offt) {
+				for (i = 0; i < poly_get_vertex_count(poly); i++)
+					poly->coords[i].u -= offt << (8 - poly->bpp);
+
+				poly->texpage_id += offt;
+			}
+
+			/* If the U values overlap a page boundary, cut our poly
+			 * into smaller ones. */
+			if (unlikely(offt != (umax >> (8 - poly->bpp))))
+				process_poly_multipage(poly);
+		}
+
 		page = poly_get_texture_page(poly);
 
 		if (unlikely(poly->bpp == TEXTURE_16BPP)) {
