@@ -94,7 +94,7 @@ struct texture_vq {
 		};
 		struct pvr_vq_codebook_8bpp codebook8[NB_CODEBOOKS_8BPP];
 	};
-	uint8_t frame[256 * 256];
+	uint8_t frame[];
 };
 
 _Static_assert(sizeof_field(struct texture_vq, codebook4) + 1792
@@ -665,7 +665,7 @@ static void
 load_block_16bpp(struct texture_page_16bpp *page, const uint16_t *src,
 		 unsigned int x, unsigned int y)
 {
-	pvr_ptr_t dst = (pvr_ptr_t)(uintptr_t)(page->base.tex + y * 32 * 512 + x * 64);
+	pvr_ptr_t dst = (pvr_ptr_t)(uintptr_t)(page->base.tex + y * 32 * 128 + x * 64);
 	alignas(32) uint16_t line[32];
 	uint16_t px;
 
@@ -685,7 +685,7 @@ load_block_16bpp(struct texture_page_16bpp *page, const uint16_t *src,
 
 		pvr_txr_load(line, dst, sizeof(line));
 
-		dst += 512;
+		dst += 128;
 		src += 1024;
 	}
 }
@@ -693,7 +693,7 @@ load_block_16bpp(struct texture_page_16bpp *page, const uint16_t *src,
 static void load_block_8bpp(struct texture_page *page, const uint8_t *src,
 			    unsigned int x, unsigned int y)
 {
-	pvr_ptr_t dst = &page->vq->frame[y * 32 * 256 + x * 32];
+	pvr_ptr_t dst = &page->vq->frame[y * 32 * 128 + x * 32];
 	uint32_t *sq;
 
 	sq = sq_lock(pvr_ptr_get_sq_addr(dst));
@@ -703,7 +703,7 @@ static void load_block_8bpp(struct texture_page *page, const uint8_t *src,
 		dcache_wback_sq(sq);
 
 		src += 2048;
-		sq += 256 / sizeof(*sq);
+		sq += 128 / sizeof(*sq);
 	}
 
 	sq_unlock();
@@ -1057,7 +1057,6 @@ static void draw_prim(pvr_poly_hdr_t *hdr,
 		vert->z = z;
 		vert->argb = color[i];
 		vert->oargb = oargb;
-
 		vert->x = fr0;
 		vert->y = fr1;
 		vert->u = fr2 + COORDS_U_OFFSET;
@@ -1169,7 +1168,7 @@ static inline uint16_t get_voffset(enum texture_bpp bpp, uint8_t codebook)
 		return NB_CODEBOOKS_4BPP - 1 - codebook;
 
 	if (bpp == TEXTURE_8BPP)
-		return (NB_CODEBOOKS_8BPP - 1 - codebook) * 8;
+		return (NB_CODEBOOKS_8BPP - 1 - codebook) * 16;
 
 	return 0;
 }
@@ -1198,21 +1197,23 @@ poly_get_texture_page(const struct poly *poly)
 		if (unlikely(poly->bpp == TEXTURE_16BPP)) {
 			page16 = to_texture_page_16bpp(page);
 
-			page16->base.tex = pvr_mem_malloc(256 * 256 * 2);
+			page16->base.tex = pvr_mem_malloc(64 * 256 * 2);
 			if (!page16->base.tex)
 				return NULL;
-		} else {
-			page->vq = pvr_mem_malloc(sizeof(*page->vq));
+		} else if (unlikely(poly->bpp == TEXTURE_8BPP)) {
+			page->vq = pvr_mem_malloc(sizeof(*page->vq) + 128 * 256);
 			if (!page->vq)
 				return NULL;
 
-			if (poly->bpp == TEXTURE_8BPP) {
-				page8 = to_texture_page_8bpp(page);
-				page8->nb_cluts = 0;
-			} else {
-				page4 = to_texture_page_4bpp(page);
-				page4->nb_cluts = 0;
-			}
+			page8 = to_texture_page_8bpp(page);
+			page8->nb_cluts = 0;
+		} else {
+			page->vq = pvr_mem_malloc(sizeof(*page->vq) + 256 * 256);
+			if (!page->vq)
+				return NULL;
+
+			page4 = to_texture_page_4bpp(page);
+			page4->nb_cluts = 0;
 		}
 
 		/* Init the base fields */
@@ -1321,8 +1322,12 @@ static void poly_draw_now(const struct poly *poly)
 			.pixel_mode = PVR_PIXEL_MODE_ARGB1555,
 		};
 
-		if (unlikely(poly->bpp == TEXTURE_16BPP))
-			hdr.m2.u_size = PVR_UV_SIZE_256;
+		if (unlikely(poly->bpp != TEXTURE_4BPP)) {
+			if (poly->bpp == TEXTURE_16BPP)
+				hdr.m2.u_size = PVR_UV_SIZE_64;
+			else
+				hdr.m2.u_size = PVR_UV_SIZE_512;
+		}
 	}
 
 	if (unlikely(poly->depthcmp != PVR_DEPTHCMP_GEQUAL))
@@ -1716,6 +1721,9 @@ static void process_poly(struct poly *poly)
 			 * into smaller ones. */
 			if (unlikely(offt != (umax >> (8 - poly->bpp))))
 				process_poly_multipage(poly);
+
+			for (i = 0; i < poly_get_vertex_count(poly); i++)
+				poly->coords[i].u <<= poly->bpp;
 		}
 
 		page = poly_get_texture_page(poly);
