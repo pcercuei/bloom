@@ -914,6 +914,9 @@ void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 	unsigned int x2, y2, dx, dy, page_offset;
 	uint16_t umin, umax, vmin, vmax;
 
+	if (screen_bpp == 24)
+		return;
+
 	pvr.inval_counter++;
 
 	/* Compute bottom-right point coordinates */

@@ -44,7 +44,8 @@ static uint32_t *pvram_sq;
 static bool frame_was_24bpp;
 
 float screen_fw, screen_fh;
-static unsigned int screen_w, screen_h, screen_bpp;
+static unsigned int screen_w, screen_h;
+unsigned int screen_bpp;
 
 static void dc_alloc_pvram(void)
 {
