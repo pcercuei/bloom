@@ -1233,7 +1233,7 @@ static pvr_poly_hdr_t poly_textured = {
 		.depth_cmp = PVR_DEPTHCMP_GEQUAL,
 	},
 	.m2 = {
-		.v_size = PVR_UV_SIZE_512,
+		.v_size = PVR_UV_SIZE_1024,
 		.u_size = PVR_UV_SIZE_1024,
 		.shading = PVR_TXRENV_MODULATE,
 		.filter_mode = FILTER_MODE,

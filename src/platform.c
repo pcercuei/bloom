@@ -101,7 +101,7 @@ static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 			{ screen_fw, 0.0f, 0.0f, 0.0f },
 			{ 0.0f, screen_fh, 0.0f, 0.0f },
 			{ 0.0f, 0.0f, 1.0f / 256.0f, 0.0f },
-			{ 0.0f, 0.0f, 0.0f, 1.0f / 512.0f },
+			{ 0.0f, 0.0f, 0.0f, 1.0f / 1024.0f },
 		};
 
 		mat_load(&matrix);
