@@ -202,6 +202,7 @@ option(WITH_24BPP "Enable 24-bit framebuffer (no dithering)" OFF)
 option(WITH_BILINEAR "Enable bilinear texture filtering" OFF)
 option(WITH_480P "Enable high-resolution 480p mode" ON)
 option(WITH_HYBRID_RENDERING "Enable hybrid rendering" OFF)
+option(WITH_MAGENTA_BG "Enable magenta background to detect painting issues" OFF)
 
 if (NOT SPU_PLUGIN)
 	set(SPU_PLUGIN AICA CACHE STRING "SPU plugin" FORCE)

@@ -365,6 +365,9 @@ void pvr_renderer_init(void)
 
 	pvr_txr_set_stride(640);
 
+	if (WITH_MAGENTA_BG)
+		pvr_set_bg_color(1.0f, 0.0f, 1.0f);
+
 	memset(&pvr, 0, sizeof(pvr));
 	pvr.gp1 = 0x14802000;
 
