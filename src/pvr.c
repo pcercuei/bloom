@@ -2035,11 +2035,11 @@ static void process_gpu_commands(void)
 			uint32_t color;
 			uint8_t flags = POLY_4VERTEX;
 
-			if (raw_tex) {
-				color = 0xffffff;
-			} else {
+			if (!textured || !raw_tex) {
 				/* BGR->RGB swap */
 				color = __builtin_bswap32(pbuffer->U4[0]) >> 8;
+			} else {
+				color = 0xffffff;
 			}
 
 			if (textured && !raw_tex) {
