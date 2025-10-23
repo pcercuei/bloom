@@ -1421,7 +1421,7 @@ static void poly_draw_now(const struct poly *poly)
 	case BLENDING_MODE_HALF:
 		/* B/2 + F/2 blending.
 		 * The F/2 part is done by dividing the input color values.
-		 * B/2 has to be done conditionally based on the destination
+		 * B/2 has to be done conditionally based on the source
 		 * alpha value. This is done in three steps, described below. */
 
 		/* Step 1: render a solid grey polygon (color #FF808080 and use
@@ -1457,6 +1457,7 @@ static void poly_draw_now(const struct poly *poly)
 			draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 
 			hdr.m2.blend_src_acc2 = false;
+			hdr.m2.shading = PVR_TXRENV_MODULATE;
 		} else {
 			for (i = 0; i < nb; i++)
 				colors_alt[i] = 0xff808080;
