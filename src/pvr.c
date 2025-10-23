@@ -1338,10 +1338,10 @@ static void poly_draw_now(const struct poly *poly)
 		if (bright) {
 			/* Use F/2 instead of F/4 if we need brighter colors. */
 			for (i = 0; i < nb; i++)
-				colors_alt[i] = (colors[i] & 0x00fefefe) >> 1;
+				colors_alt[i] = (colors[i] & 0xfefefe) >> 1;
 		} else {
 			for (i = 0; i < nb; i++)
-				colors_alt[i] = (colors[i] & 0x00fcfcfc) >> 2;
+				colors_alt[i] = (colors[i] & 0xfcfcfc) >> 2;
 		}
 
 		/* Regular additive blending */
@@ -1430,7 +1430,7 @@ static void poly_draw_now(const struct poly *poly)
 
 		if (textured) {
 			for (i = 0; i < nb; i++)
-				colors_alt[i] = 0xff000000;
+				colors_alt[i] = 0x000000;
 
 			hdr.m0.oargb_en = true;
 			hdr.m2.blend_dst = PVR_BLEND_ZERO;
@@ -1457,7 +1457,7 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.shading = PVR_TXRENV_MODULATE;
 		} else {
 			for (i = 0; i < nb; i++)
-				colors_alt[i] = 0xff808080;
+				colors_alt[i] = 0x808080;
 
 			hdr.m2.blend_src = PVR_BLEND_DESTCOLOR;
 			hdr.m2.blend_dst = PVR_BLEND_ZERO;
@@ -1469,7 +1469,7 @@ static void poly_draw_now(const struct poly *poly)
 			/* Use F instead of F/2 if we need brighter colors. */
 		} else {
 			for (i = 0; i < nb; i++)
-				colors_alt[i] = (colors[i] & 0x00fefefe) >> 1;
+				colors_alt[i] = (colors[i] & 0xfefefe) >> 1;
 
 			colors = colors_alt;
 		}
