@@ -1406,7 +1406,7 @@ static void poly_draw_now(const struct poly *poly)
 			draw_prim(NULL, coords, voffset, colors, nb, z, 0);
 		}
 
-		hdr.m2.alpha = true;
+		hdr.m2.alpha = false;
 		hdr.m2.blend_src = PVR_BLEND_INVDESTCOLOR;
 		hdr.m2.blend_dst = PVR_BLEND_ZERO;
 		hdr.m0.txr_en = hdr.m1.txr_en = false;
