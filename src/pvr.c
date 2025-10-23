@@ -1265,11 +1265,8 @@ static pvr_poly_hdr_t poly_nontextured = {
 	},
 	.m2 = {
 		.fog_type = PVR_FOG_DISABLE,
-		.blend_dst = PVR_BLEND_INVSRCALPHA,
-		.blend_src = PVR_BLEND_SRCALPHA,
-	},
-	.m3 = {
-		.pixel_mode = PVR_PIXEL_MODE_ARGB1555,
+		.blend_dst = PVR_BLEND_ZERO,
+		.blend_src = PVR_BLEND_ONE,
 	},
 };
 
