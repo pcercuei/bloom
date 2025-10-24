@@ -671,8 +671,12 @@ load_block_16bpp(struct texture_page_16bpp *page, const uint16_t *src,
 		for (x = 0; x < 32; x++) {
 			px = bgr_to_rgb(src[x]);
 
-			if (page->is_mask && px)
-				px ^= 0x8000;
+			if (likely(px)) {
+				if (page->is_mask)
+					px ^= 0x8000;
+				else
+					px |= 0x8000;
+			}
 
 			line[x] = px;
 		}
