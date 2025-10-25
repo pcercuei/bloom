@@ -1461,6 +1461,8 @@ static void pvr_start_list(pvr_list_t list)
 		 * buffer, do it now, as it needs to be in the background. */
 		pvr_render_fb();
 	}
+
+	pvr.list = list;
 }
 
 __pvr
