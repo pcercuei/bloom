@@ -21,6 +21,14 @@ extern u32 _arch_mem_top;
 uintptr_t arch_stack_16m = 0x8cd60000 - CODE_BUFFER_SIZE;
 uintptr_t arch_stack_32m = 0x8dd60000 - CODE_BUFFER_SIZE;
 
+static void *do_memset(void *dst, int c, size_t len)
+{
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnonnull"
+	return memset(dst, c, len);
+#pragma GCC diagnostic pop
+}
+
 int lightrec_init_mmap(void)
 {
 	unsigned int i;
@@ -94,9 +102,9 @@ int lightrec_init_mmap(void)
 	psxR = (void *)(OFFSET + 0x1fc00000);
 
 	/* Clear pages */
-	memset(psxM, 0x0, 0x200000);
-	memset(psxH, 0x0, 0x10000);
-	memset(psxP, 0xff, 0x10000);
+	do_memset(psxM, 0x0, 0x200000);
+	do_memset(psxH, 0x0, 0x10000);
+	do_memset(psxP, 0xff, 0x10000);
 
 	printf("Memory-map succeeded.\n"
 	       "RAM: 0x%x BIOS: 0x%x SCRATCH: 0x%x CODE: 0x%x\n",
