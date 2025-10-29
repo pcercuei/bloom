@@ -870,7 +870,8 @@ void invalidate_all_textures(void)
 	pvr_reap_textures();
 }
 
-void renderer_update_caches(int x, int y, int w, int h, int state_changed)
+__noinline
+static void pvr_update_caches(int x, int y, int w, int h)
 {
 	unsigned int x2, y2, dx, dy, page_offset;
 	uint16_t umin, umax, vmin, vmax;
@@ -904,6 +905,11 @@ void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 	}
 
 	pvr_printf("Update caches %dx%d -> %dx%d\n", x, y, x + w, y + h);
+}
+
+void renderer_update_caches(int x, int y, int w, int h, int state_changed)
+{
+	pvr_update_caches(x, y, w, h);
 }
 
 void renderer_sync(void)
@@ -1904,6 +1910,7 @@ static void clear_framebuffer(uint16_t x0, uint16_t y0,
 	}
 }
 
+__noinline
 static void cmd_clear_image(const union PacketBuffer *pbuffer)
 {
 	uint16_t x0, y0, w0, h0, color;
@@ -2483,7 +2490,6 @@ void hw_render_start(void)
 	poly_nontextured.m0.list_type = pvr.list;
 }
 
-__pvr
 void hw_render_stop(void)
 {
 	process_gpu_commands();
