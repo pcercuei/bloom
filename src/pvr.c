@@ -1529,6 +1529,29 @@ vertex_coords_cut(struct vertex_coords a, struct vertex_coords b,
 	};
 }
 
+static inline uint32_t color_lerp(struct vertex_coords v1, struct vertex_coords v2,
+				  unsigned int ucut, uint32_t c1, uint32_t c2)
+{
+	uint32_t maskRB = 0x00FF00FF; /* Mask for Red & Blue channels */
+	uint32_t maskG = 0x0000FF00;  /* Mask for Green channel */
+	unsigned int factor;
+	uint32_t rb, g;
+
+	if (unlikely(c1 != c2)) {
+		factor = ((ucut - v1.u) << 8) / (v2.u - v1.u);
+
+		/* Interpolate Red & Blue */
+		rb = ((c2 & maskRB) - (c1 & maskRB)) * factor >> 8;
+
+		/* Interpolate Green */
+		g = ((c2 & maskG) - (c1 & maskG)) * factor >> 8;
+
+		c1 += (rb & maskRB) | (g & maskG);
+	}
+
+	return c1;
+}
+
 static inline uint16_t poly_get_umin(const struct poly *poly)
 {
 	uint16_t umin = poly->coords[0].u;
@@ -1616,12 +1639,17 @@ static void process_poly_multipage(struct poly *poly)
 			if (i == idx)
 				continue;
 
+			poly->colors[j] = poly2.colors[i];
 			poly->coords[j++] = poly2.coords[i];
 
+			poly2.colors[i] = color_lerp(poly2.coords[i],
+						     poly2.coords[idx], ucut,
+						     poly2.colors[i], poly2.colors[idx]);
 			poly2.coords[i] = vertex_coords_cut(poly2.coords[i],
 							    poly2.coords[idx],
 							    ucut);
 
+			poly->colors[j] = poly2.colors[i];
 			poly->coords[j++] = poly2.coords[i];
 		}
 
@@ -1638,11 +1666,17 @@ static void process_poly_multipage(struct poly *poly)
 			if (i == idx)
 				continue;
 
+			poly2.colors[j] = color_lerp(poly->coords[idx],
+						     poly->coords[i], ucut,
+						     poly->colors[idx],
+						     poly->colors[i]);
 			poly2.coords[j++] = vertex_coords_cut(poly->coords[idx],
 							      poly->coords[i],
 							      ucut);
+			poly2.colors[j] = poly->colors[i];
 			poly2.coords[j++] = poly->coords[i];
 
+			poly->colors[i] = poly2.colors[j - 2];
 			poly->coords[i] = poly2.coords[j - 2];
 		}
 
