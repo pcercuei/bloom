@@ -128,6 +128,7 @@ struct texture_page {
 
 struct texture_page_16bpp {
 	struct texture_page base;
+	uint64_t bgload_mask;
 	bool is_mask;
 };
 
@@ -176,6 +177,7 @@ struct square_fcoords {
 #define POLY_CHECK_MASK		BIT(3)
 #define POLY_TEXTURED		BIT(4)
 #define POLY_4VERTEX		BIT(5)
+#define POLY_FB			BIT(6)
 
 struct poly {
 	alignas(32)
@@ -213,6 +215,7 @@ struct pvr_renderer {
 	int16_t start_x, start_y, view_x, view_y;
 
 	uint32_t new_frame :1;
+	uint32_t has_bg :1;
 
 	uint32_t set_mask :1;
 	uint32_t check_mask :1;
@@ -879,12 +882,77 @@ static bool overlap_draw_area(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1
 		&& y1 > pvr.start_y;
 }
 
-static void invalidate_texture_area(unsigned int page_offset, uint64_t block_mask)
+static void invalidate_texture_area(unsigned int page_offset,
+				    uint16_t xmin, uint16_t xmax,
+				    uint16_t ymin, uint16_t ymax,
+				    bool invalidate_only)
 {
+	uint16_t umin, umax, vmin, vmax;
+	uint64_t block_mask;
+	struct poly poly;
+
+	umin = xmin % 64;
+	vmin = ymin % 256;
+	umax = (xmax - 1) % 64;
+	vmax = (ymax - 1) % 256;
+
+	block_mask = get_block_mask(umin << 2, umax << 2, vmin, vmax);
 	invalidate_texture(&pvr.textures16[page_offset].base, block_mask);
 	invalidate_texture(&pvr.textures16_mask[page_offset].base, block_mask);
 	invalidate_texture(&pvr.textures8[page_offset].base, block_mask);
 	invalidate_texture(&pvr.textures4[page_offset].base, block_mask);
+
+	if (invalidate_only || !overlap_draw_area(xmin, ymin, xmax, ymax))
+		return;
+
+	pvr.textures16[page_offset].bgload_mask |= block_mask;
+	pvr.has_bg = 1;
+
+	/* The 16bpp texture has transparency, which we don't want here (as VRAM
+	 * writes overwrite whatever was there before). Add a black square
+	 * behind the textured one to make sure the transparent pixels end up
+	 * black. */
+
+	xmin -= pvr.start_x;
+	xmax -= pvr.start_x;
+	ymin -= pvr.start_y;
+	ymax -= pvr.start_y;
+
+	poly_alloc_cache(&poly);
+
+	poly = (struct poly){
+		.blending_mode = BLENDING_MODE_NONE,
+		.depthcmp = PVR_DEPTHCMP_ALWAYS,
+		.flags = POLY_4VERTEX,
+		.colors = { 0x0, 0x0, 0x0, 0x0 },
+		.coords = {
+			{ xmin, ymin },
+			{ xmax, ymin },
+			{ xmin, ymax },
+			{ xmax, ymax },
+		},
+	};
+
+	process_poly(&poly);
+
+	poly_alloc_cache(&poly);
+
+	poly = (struct poly){
+		.texpage_id = page_offset,
+		.bpp = TEXTURE_16BPP,
+		.blending_mode = BLENDING_MODE_NONE,
+		.depthcmp = PVR_DEPTHCMP_ALWAYS,
+		.flags = POLY_TEXTURED | POLY_4VERTEX | POLY_FB,
+		.colors = { 0xffffff, 0xffffff, 0xffffff, 0xffffff },
+		.coords = {
+			{ xmin, ymin, umin, vmin },
+			{ xmax, ymin, umax + 1, vmin },
+			{ xmin, ymax, umin, vmax + 1 },
+			{ xmax, ymax, umax + 1, vmax + 1 },
+		},
+	};
+
+	process_poly(&poly);
 }
 
 void invalidate_all_textures(void)
@@ -893,8 +961,12 @@ void invalidate_all_textures(void)
 
 	pvr.inval_counter++;
 
-	for (i = 0; i < 32; i++)
-		invalidate_texture_area(i, UINT64_MAX);
+	for (i = 0; i < 32; i++) {
+		invalidate_texture(&pvr.textures16[i].base, UINT64_MAX);
+		invalidate_texture(&pvr.textures16_mask[i].base, UINT64_MAX);
+		invalidate_texture(&pvr.textures8[i].base, UINT64_MAX);
+		invalidate_texture(&pvr.textures4[i].base, UINT64_MAX);
+	}
 
 	pvr_reap_textures();
 
@@ -903,11 +975,10 @@ void invalidate_all_textures(void)
 }
 
 __noinline
-static void pvr_update_caches(int x, int y, int w, int h)
+static void pvr_update_caches(int x, int y, int w, int h, bool invalidate_only)
 {
 	unsigned int x2, y2, dx, dy, page_offset;
-	uint16_t umin, umax, vmin, vmax;
-	uint64_t block_mask;
+	uint16_t xmin, xmax, ymin, ymax;
 
 	if (screen_bpp == 24)
 		return;
@@ -924,15 +995,15 @@ static void pvr_update_caches(int x, int y, int w, int h)
 			 * page covered by the update coordinates.
 			 * Note that the coordinates are in 16-bit
 			 * words and not in pixels. */
-			umin = max32(dx, x) & 63;
-			vmin = max32(dy, y) & 255;
-			umax = min32(63, x2 - dx);
-			vmax = min32(255, y2 - dy);
+			xmin = max32(dx, x);
+			ymin = max32(dy, y);
+			xmax = min32(dx + 64, x2);
+			ymax = min32(dy + 256, y2);
 			page_offset = ((dy & 511) >> 4) + ((dx & 1023) >> 6);
 
-			block_mask = get_block_mask(umin << 2, umax << 2, vmin, vmax);
-
-			invalidate_texture_area(page_offset, block_mask);
+			invalidate_texture_area(page_offset,
+						xmin, xmax, ymin, ymax,
+						invalidate_only);
 		}
 	}
 
@@ -941,7 +1012,7 @@ static void pvr_update_caches(int x, int y, int w, int h)
 
 void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 {
-	pvr_update_caches(x, y, w, h);
+	pvr_update_caches(x, y, w, h, false);
 }
 
 void renderer_sync(void)
@@ -1208,7 +1279,10 @@ poly_get_texture_page(const struct poly *poly)
 		page->old_inuse_mask = 0;
 	}
 
-	maybe_update_texture(page, poly->texpage_id, block_mask);
+	if (unlikely(poly->flags & POLY_FB))
+		to_texture_page_16bpp(page)->bgload_mask |= block_mask;
+	else
+		maybe_update_texture(page, poly->texpage_id, block_mask);
 
 	return page;
 }
@@ -1475,6 +1549,22 @@ static void poly_draw_now(const struct poly *poly)
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 		break;
+	}
+}
+
+static void pvr_load_bg(void)
+{
+	struct texture_page_16bpp *page16;
+	unsigned int i;
+
+	for (i = 0; i < 32; i++) {
+		page16 = &pvr.textures16[i];
+
+		if (!page16->bgload_mask)
+			continue;
+
+		maybe_update_texture(&page16->base, i, page16->bgload_mask);
+		page16->bgload_mask = 0;
 	}
 }
 
@@ -1932,9 +2022,9 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 
 	clear_framebuffer(x0, y0, w0, h0, color);
 
-	renderer_update_caches(x0, y0, w0, h0, 0);
+	pvr_update_caches(x0, y0, w0, h0, true);
 
-	if (overlap_draw_area(x0, y0, w0, h0)) {
+	if (overlap_draw_area(x0, y0, x0 + w0, y0 + h0)) {
 		color32 = __builtin_bswap32(pbuffer->U4[0]) >> 8;
 
 		x13 = max32(x0, pvr.start_x) - pvr.start_x;
@@ -2464,6 +2554,7 @@ static void reset_texture_pages(void)
 void hw_render_start(void)
 {
 	pvr.new_frame = 1;
+	pvr.has_bg = 0;
 	pvr.zoffset = 3;
 	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
 	pvr.inval_counter_at_start = pvr.inval_counter;
@@ -2513,8 +2604,16 @@ void hw_render_stop(void)
 		pvr_list_finish();
 	}
 
-	if (likely(!pvr.new_frame))
+	if (likely(!pvr.new_frame)) {
+		if (pvr.has_bg)
+			pvr_load_bg();
+
 		pvr_scene_finish();
+
+		/* Discard any textures covered by the draw area */
+		pvr_update_caches(pvr.start_x, pvr.start_y,
+				  gpu.screen.hres, gpu.screen.vres, true);
+	}
 
 	pvr.start_x = pvr.view_x;
 	pvr.start_y = pvr.view_y;
