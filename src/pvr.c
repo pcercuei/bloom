@@ -473,6 +473,13 @@ static inline uint16_t bgr_to_rgb(uint16_t bgr)
 		| (bgr & 0x83e0);
 }
 
+static inline uint32_t bgr_to_rgb32(uint32_t bgr)
+{
+	return ((bgr & 0x7c007c00) >> 10)
+		| ((bgr & 0x001f001f) << 10)
+		| (bgr & 0x83e083e0);
+}
+
 static inline uint32_t min32(uint32_t a, uint32_t b)
 {
 	return a < b ? a : b;
@@ -666,62 +673,58 @@ static const void * texture_page_get_addr(unsigned int page_offset)
 }
 
 static void
-load_block_16bpp(struct texture_page_16bpp *page, const uint16_t *src,
-		 unsigned int x, unsigned int y)
+load_block_16bpp(struct texture_page_16bpp *page,
+		 uint32_t *sq, const uint16_t *src)
 {
-	pvr_ptr_t dst = (pvr_ptr_t)(uintptr_t)(page->base.tex + y * 16 * 128 + x * 32);
-	alignas(32) uint16_t line[16];
-	uint16_t px;
+	uint32_t px, *src32 = (uint32_t *)src;
+	unsigned int y, x;
 
 	for (y = 0; y < 16; y++) {
-		for (x = 0; x < 16; x++) {
-			px = bgr_to_rgb(src[x]);
+		for (x = 0; x < 8; x++) {
+			px = bgr_to_rgb32(src32[x]);
 
-			if (likely(px)) {
-				if (page->is_mask)
+			if (likely(px >> 16)) {
+				if (unlikely(page->is_mask))
+					px ^= 0x80000000;
+				else
+					px |= 0x80000000;
+			}
+
+			if (likely((uint16_t)px)) {
+				if (unlikely(page->is_mask))
 					px ^= 0x8000;
 				else
 					px |= 0x8000;
 			}
 
-			line[x] = px;
+			sq[x] = px;
 		}
 
-		pvr_txr_load(line, dst, sizeof(line));
-
-		dst += 128;
-		src += 1024;
+		sq_flush(sq);
+		sq += 128 / sizeof(*sq);
+		src32 += 2048 / sizeof(*src32);
 	}
 }
 
-static void load_block_8bpp(struct texture_page *page, const uint8_t *src,
-			    unsigned int x, unsigned int y)
+static void load_block_8bpp(struct texture_page *page,
+			    uint32_t *sq, const uint8_t *src)
 {
-	pvr_ptr_t dst = &page->vq->frame[y * 16 * 128 + x * 32];
-	uint32_t *sq;
-
-	sq = sq_lock(pvr_ptr_get_sq_addr(dst));
+	unsigned int y;
 
 	for (y = 0; y < 16; y++) {
 		copy32(sq, src);
-		dcache_wback_sq(sq);
+		sq_flush(sq);
 
 		src += 2048;
 		sq += 128 / sizeof(*sq);
 	}
-
-	sq_unlock();
 }
 
-static void load_block_4bpp(struct texture_page *page, const uint8_t *src,
-			    unsigned int x, unsigned int y)
+static void load_block_4bpp(struct texture_page *page,
+			    uint32_t *sq, const uint8_t *src)
 {
-	pvr_ptr_t dst = &page->vq->frame[y * 16 * 256 + x * 64];
+	unsigned int y, x, i;
 	uint8_t px1, px2;
-	unsigned int i;
-	uint32_t *sq;
-
-	sq = sq_lock(pvr_ptr_get_sq_addr(dst));
 
 	for (y = 0; y < 16; y++) {
 		for (i = 0; i < 2; i++) {
@@ -742,23 +745,35 @@ static void load_block_4bpp(struct texture_page *page, const uint8_t *src,
 		sq += 192 / sizeof(*sq);
 		src += 2048 - 64 / 2;
 	}
-
-	sq_unlock();
 }
 
 static void load_block(struct texture_page *page, unsigned int page_offset,
 		       unsigned int x, unsigned int y)
 {
 	const void *src = texture_page_get_addr(page_offset);
+	uint32_t *sq;
+	pvr_ptr_t dst;
 
 	src += y * 16 * 2048 + x * 32;
 
-	if (likely(page->settings.bpp == TEXTURE_4BPP))
-		load_block_4bpp(page, src, x, y);
-	else if (page->settings.bpp == TEXTURE_8BPP)
-		load_block_8bpp(page, src, x, y);
-	else
-		load_block_16bpp(to_texture_page_16bpp(page), src, x, y);
+	if (likely(page->settings.bpp == TEXTURE_4BPP)) {
+		dst = &page->vq->frame[y * 16 * 256 + x * 64];
+		sq = sq_lock(pvr_ptr_get_sq_addr(dst));
+
+		load_block_4bpp(page, sq, src);
+	} else if (page->settings.bpp == TEXTURE_8BPP) {
+		dst = &page->vq->frame[y * 16 * 128 + x * 32];
+		sq = sq_lock(pvr_ptr_get_sq_addr(dst));
+
+		load_block_8bpp(page, sq, src);
+	} else {
+		dst = (pvr_ptr_t)(uintptr_t)(page->tex + y * 16 * 128 + x * 32);
+		sq = sq_lock(pvr_ptr_get_sq_addr(dst));
+
+		load_block_16bpp(to_texture_page_16bpp(page), sq, src);
+	}
+
+	sq_unlock();
 }
 
 __noinline
