@@ -772,6 +772,18 @@ static void update_texture(struct texture_page *page,
 	}
 }
 
+static void maybe_update_texture(struct texture_page *page,
+				 unsigned int texpage_id, uint64_t block_mask)
+{
+	uint64_t to_load;
+
+	to_load = ~page->block_mask & block_mask;
+	page->inuse_mask |= block_mask;
+
+	if (unlikely(to_load))
+		update_texture(page, texpage_id, to_load);
+}
+
 static uint64_t
 get_block_mask(uint16_t umin, uint16_t umax, uint16_t vmin, uint16_t vmax)
 {
@@ -1125,7 +1137,8 @@ poly_get_texture_page(const struct poly *poly)
 	struct texture_page_16bpp *page16;
 	struct texture_page_8bpp *page8;
 	struct texture_page_4bpp *page4;
-	uint64_t block_mask, locked_mask, to_load;
+	uint64_t locked_mask;
+	uint64_t block_mask;
 
 	if (likely(poly->bpp == TEXTURE_4BPP))
 		page = &pvr.textures4[poly->texpage_id].base;
@@ -1181,11 +1194,7 @@ poly_get_texture_page(const struct poly *poly)
 		page->old_inuse_mask = 0;
 	}
 
-	to_load = ~page->block_mask & block_mask;
-	page->inuse_mask |= block_mask;
-
-	if (unlikely(to_load))
-		update_texture(page, poly->texpage_id, to_load);
+	maybe_update_texture(page, poly->texpage_id, block_mask);
 
 	return page;
 }
