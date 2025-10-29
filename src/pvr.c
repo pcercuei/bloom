@@ -828,6 +828,30 @@ static uint64_t poly_get_block_mask(const struct poly *poly)
 	return get_block_mask(umin, umax, vmin, vmax);
 }
 
+static inline void poly_alloc_cache(struct poly *poly)
+{
+	dcache_alloc_block(poly, 0);
+	dcache_alloc_block((char *)poly + 32, 0);
+}
+
+static inline void poly_prefetch(const struct poly *poly)
+{
+	__builtin_prefetch(poly);
+	__builtin_prefetch((char *)poly + 32);
+}
+
+static inline void poly_discard(struct poly *poly)
+{
+	asm inline("ocbi @%1\n"
+		   "ocbi @%2\n" : "=m"(*poly) : "r"(poly), "r"((char *)poly + 32));
+}
+
+static inline void poly_copy(struct poly *dst, const struct poly *src)
+{
+	copy32(dst, src);
+	copy32((char *)dst + 32, (char *)src + 32);
+}
+
 static void pvr_reap_ptr(pvr_ptr_t tex)
 {
 	unsigned int idx = pvr.to_reap[pvr.reap_bank]++;
@@ -845,6 +869,14 @@ static void invalidate_texture(struct texture_page *page, uint64_t block_mask)
 {
 	page->block_mask &= ~block_mask;
 	page->inval_counter = pvr.inval_counter;
+}
+
+static bool overlap_draw_area(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
+{
+	return x0 < pvr.start_x + gpu.screen.hres
+		&& y0 < pvr.start_y + gpu.screen.vres
+		&& x1 > pvr.start_x
+		&& y1 > pvr.start_y;
 }
 
 static void invalidate_texture_area(unsigned int page_offset, uint64_t block_mask)
@@ -1099,30 +1131,6 @@ static void pvr_render_fb(void)
 	uoffset = hi_chip ? 1.0f / 1024.0f : -1.0f / 1024.0f;
 	render_square(&fb_fcoords_left, z, uoffset);
 	render_square(&fb_fcoords_right, z, uoffset);
-}
-
-static inline void poly_alloc_cache(struct poly *poly)
-{
-	dcache_alloc_block(poly, 0);
-	dcache_alloc_block((char *)poly + 32, 0);
-}
-
-static inline void poly_prefetch(const struct poly *poly)
-{
-	__builtin_prefetch(poly);
-	__builtin_prefetch((char *)poly + 32);
-}
-
-static inline void poly_discard(struct poly *poly)
-{
-	asm inline("ocbi @%1\n"
-		   "ocbi @%2\n" : "=m"(*poly) : "r"(poly), "r"((char *)poly + 32));
-}
-
-static inline void poly_copy(struct poly *dst, const struct poly *src)
-{
-	copy32(dst, src);
-	copy32((char *)dst + 32, (char *)src + 32);
 }
 
 static inline uint16_t get_voffset(enum texture_bpp bpp, uint8_t codebook)
@@ -1881,14 +1889,6 @@ static uint32_t get_tex_vertex_color(uint32_t color)
 	return ((color & 0x7f7f7f) << 1)
 		| (color & 0x010101)
 		| mask;
-}
-
-static bool overlap_draw_area(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
-{
-	return x < pvr.start_x + gpu.screen.hres
-		&& y < pvr.start_y + gpu.screen.vres
-		&& x + w > pvr.start_x
-		&& y + h > pvr.start_y;
 }
 
 static void clear_framebuffer(uint16_t x0, uint16_t y0,
