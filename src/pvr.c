@@ -254,7 +254,7 @@ struct pvr_renderer {
 	pvr_ptr_t fake_tex;
 };
 
-static void process_poly(struct poly *poly);
+static void process_poly(struct poly *poly, bool scissor);
 
 static struct pvr_renderer pvr;
 
@@ -948,7 +948,7 @@ static void invalidate_texture_area(unsigned int page_offset,
 		},
 	};
 
-	process_poly(&poly);
+	process_poly(&poly, false);
 
 	poly_alloc_cache(&poly);
 
@@ -967,7 +967,7 @@ static void invalidate_texture_area(unsigned int page_offset,
 		},
 	};
 
-	process_poly(&poly);
+	process_poly(&poly, true);
 }
 
 void invalidate_all_textures(void)
@@ -1725,7 +1725,7 @@ static void process_poly_multipage(struct poly *poly)
 			poly2.coords[i - 1] = poly2.coords[i];
 		}
 
-		process_poly(&poly2);
+		process_poly(&poly2, true);
 	}
 
 	/* 3-point multipage poly */
@@ -1812,11 +1812,11 @@ static void process_poly_multipage(struct poly *poly)
 	}
 
 	/* Repeat the process on the right side */
-	process_poly(&poly2);
+	process_poly(&poly2, true);
 }
 
 __pvr
-static void process_poly(struct poly *poly)
+static void process_poly(struct poly *poly, bool scissor)
 {
 	struct texture_page *page;
 	unsigned int i, offt;
@@ -1824,7 +1824,7 @@ static void process_poly(struct poly *poly)
 	uint8_t codebook;
 
 	if (poly->flags & POLY_TEXTURED) {
-		if (unlikely(poly->bpp != TEXTURE_4BPP)) {
+		if (scissor && unlikely(poly->bpp != TEXTURE_4BPP)) {
 			umin = poly_get_umin(poly);
 			umax = poly_get_umax(poly) - 1;
 
@@ -1899,7 +1899,7 @@ static void process_poly(struct poly *poly)
 			poly->clut |= CLUT_IS_MASK;
 
 			/* Process the mask poly as a regular one */
-			process_poly(poly);
+			process_poly(poly, false);
 			return;
 		}
 	}
@@ -1939,7 +1939,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 		},
 	};
 
-	process_poly(&poly);
+	process_poly(&poly, false);
 
 	poly_alloc_cache(&poly);
 
@@ -1956,7 +1956,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 		},
 	};
 
-	process_poly(&poly);
+	process_poly(&poly, false);
 }
 
 static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded)
@@ -2062,7 +2062,7 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 			},
 		};
 
-		process_poly(&poly);
+		process_poly(&poly, false);
 	}
 }
 
@@ -2279,7 +2279,7 @@ static void process_gpu_commands(void)
 			if (bright)
 				poly.flags |= POLY_BRIGHT;
 
-			process_poly(&poly);
+			process_poly(&poly, textured);
 			break;
 		}
 
@@ -2395,7 +2395,7 @@ static void process_gpu_commands(void)
 				poly.coords[2].v = poly.coords[3].v = pbuffer->U1[9] + h;
 			}
 
-			process_poly(&poly);
+			process_poly(&poly, textured);
 			break;
 		}
 
