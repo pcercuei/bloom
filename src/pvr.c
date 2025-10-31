@@ -363,6 +363,22 @@ static pvr_poly_hdr_t frontbuf_step2_header = {
 	},
 };
 
+static const pvr_poly_hdr_t op_black_header = {
+	.m0 = {
+		.auto_strip_len = true,
+		.list_type = PVR_LIST_OP_POLY,
+		.hdr_type = PVR_HDR_POLY,
+	},
+	.m1 = {
+		.depth_cmp = PVR_DEPTHCMP_ALWAYS,
+	},
+	.m2 = {
+		.fog_type = PVR_FOG_DISABLE,
+		.blend_dst = PVR_BLEND_ZERO,
+		.blend_src = PVR_BLEND_ONE,
+	},
+};
+
 void pvr_renderer_init(void)
 {
 	unsigned int i;
@@ -2596,6 +2612,44 @@ void hw_render_start(void)
 	poly_nontextured.m0.list_type = pvr.list;
 }
 
+static void pvr_render_black_square(uint16_t x0, uint16_t x1,
+				    uint16_t y0, uint16_t y1,
+				    float z)
+{
+	struct vertex_coords coords[4] = {
+		{ x0, y0 }, { x1, y0 }, { x0, y1 }, { x1, y1 },
+	};
+	static const uint32_t colors[4] = { 0 };
+
+	draw_prim(NULL, coords, 0.0f, colors, 4, z, 0);
+}
+
+static void pvr_render_outlines(void)
+{
+	float z = get_zvalue(pvr.zoffset++, false, false);
+	pvr_poly_hdr_t *sq_hdr;
+
+	pvr_start_list(PVR_LIST_OP_POLY);
+
+	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	copy32(sq_hdr, &op_black_header);
+	pvr_dr_commit(sq_hdr);
+
+	if (gpu.screen.x)
+		pvr_render_black_square(0, gpu.screen.x, 0, gpu.screen.vres, z);
+	if (gpu.screen.x + gpu.screen.w < gpu.screen.hres)
+		pvr_render_black_square(gpu.screen.x + gpu.screen.w, gpu.screen.hres,
+					0, gpu.screen.vres, z);
+	if (gpu.screen.y)
+		pvr_render_black_square(0, gpu.screen.hres, 0, gpu.screen.y, z);
+	if (gpu.screen.y + gpu.screen.h < gpu.screen.vres)
+		pvr_render_black_square(0, gpu.screen.hres,
+					gpu.screen.y + gpu.screen.h,
+					gpu.screen.vres, z);
+
+	pvr_list_finish();
+}
+
 void hw_render_stop(void)
 {
 	process_gpu_commands();
@@ -2622,6 +2676,8 @@ void hw_render_stop(void)
 	if (likely(!pvr.new_frame)) {
 		if (pvr.has_bg)
 			pvr_load_bg();
+
+		pvr_render_outlines();
 
 		pvr_scene_finish();
 
