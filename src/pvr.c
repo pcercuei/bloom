@@ -2160,8 +2160,8 @@ static void process_gpu_commands(void)
 				/* Set drawing offsets */
 				pvr.draw_dx = ((int32_t)pbuffer->U4[0] << 21) >> 21;
 				pvr.draw_dy = ((int32_t)pbuffer->U4[0] << 10) >> 21;
-				pvr.draw_offt_x = pvr.draw_dx - pvr.start_x;
-				pvr.draw_offt_y = pvr.draw_dy - pvr.start_y;
+				pvr.draw_offt_x = pvr.draw_dx - pvr.start_x + gpu.screen.x;
+				pvr.draw_offt_y = pvr.draw_dy - pvr.start_y + gpu.screen.y;
 				if (0)
 					pvr_printf("Set drawing offsets to %dx%d\n",
 						   pvr.draw_dx, pvr.draw_dy);
@@ -2632,8 +2632,8 @@ void hw_render_stop(void)
 
 	pvr.start_x = pvr.view_x;
 	pvr.start_y = pvr.view_y;
-	pvr.draw_offt_x = pvr.draw_dx - pvr.start_x;
-	pvr.draw_offt_y = pvr.draw_dy - pvr.start_y;
+	pvr.draw_offt_x = pvr.draw_dx - pvr.start_x + gpu.screen.x;
+	pvr.draw_offt_y = pvr.draw_dy - pvr.start_y + gpu.screen.y;
 }
 
 void renderer_flush_queues(void)
