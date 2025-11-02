@@ -67,7 +67,7 @@
 /* These reduce the visible gaps in the seams between polys.
  * They probably correspond to something but I don't know what. */
 #define COORDS_U_OFFSET (1.0f / 2048.0f)
-#define COORDS_V_OFFSET (1.0f / 16384.0f)
+#define COORDS_V_OFFSET (1.0f / 32768.0f)
 
 #define __pvr __attribute__((section(".sub0")))
 
