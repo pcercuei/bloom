@@ -952,29 +952,12 @@ static void invalidate_texture_area(unsigned int page_offset,
 	poly_alloc_cache(&poly);
 
 	poly = (struct poly){
-		.blending_mode = BLENDING_MODE_NONE,
-		.depthcmp = PVR_DEPTHCMP_ALWAYS,
-		.flags = POLY_4VERTEX,
-		.colors = { 0x0, 0x0, 0x0, 0x0 },
-		.coords = {
-			{ xmin, ymin },
-			{ xmax, ymin },
-			{ xmin, ymax },
-			{ xmax, ymax },
-		},
-	};
-
-	process_poly(&poly, false);
-
-	poly_alloc_cache(&poly);
-
-	poly = (struct poly){
 		.texpage_id = page_offset,
 		.bpp = TEXTURE_16BPP,
 		.blending_mode = BLENDING_MODE_NONE,
 		.depthcmp = PVR_DEPTHCMP_ALWAYS,
 		.flags = POLY_TEXTURED | POLY_4VERTEX | POLY_FB,
-		.colors = { 0xffffff, 0xffffff, 0xffffff, 0xffffff },
+		.colors = { 0x0, 0x0, 0x0, 0x0 },
 		.coords = {
 			{ xmin, ymin, umin, vmin },
 			{ xmax, ymin, umax + 1, vmin },
@@ -1424,6 +1407,9 @@ static void poly_draw_now(const struct poly *poly)
 
 	switch (poly->blending_mode) {
 	case BLENDING_MODE_NONE:
+		if (unlikely(poly->flags & POLY_FB))
+			hdr.m2.shading = PVR_TXRENV_DECAL;
+
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 		break;
 
