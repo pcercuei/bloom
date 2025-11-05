@@ -249,6 +249,8 @@ struct pvr_renderer {
 
 	unsigned int cmdbuf_offt;
 	bool old_blending_is_none;
+	bool old_set_mask;
+	bool old_check_mask;
 	pvr_ptr_t old_tex;
 
 	pvr_ptr_t fake_tex;
@@ -1068,24 +1070,13 @@ static float get_zvalue(uint16_t zoffset, bool set_mask, bool check_mask)
 		unsigned int vint;
 		float vf;
 	} fint32;
-	unsigned int z = (unsigned int)zoffset << 8;
 
 	/* Craft a floating-point value, using a higher exponent for the masked
 	 * bits, and using a mantissa that increases by (1 << 8) for each poly
 	 * rendered. This is done so because the PVR seems to discard the lower
 	 * 8 bits of the Z value. */
 
-	if (likely(!set_mask))
-		fint32.vint = 125 << 23;
-	else if (check_mask)
-		fint32.vint = 126 << 23;
-	else
-		fint32.vint = 127 << 23;
-
-	if (unlikely(set_mask && check_mask))
-		fint32.vint -= z;
-	else
-		fint32.vint += z;
+	fint32.vint = (125 << 23) + ((unsigned int)zoffset << 8);
 
 	return fint32.vf;
 }
@@ -1344,6 +1335,23 @@ static pvr_poly_hdr_t poly_nontextured = {
 	},
 };
 
+static pvr_poly_hdr_t poly_set_mask = {
+	.m0 = {
+		.hdr_type = PVR_HDR_POLY,
+		.list_type = PVR_LIST_TR_POLY,
+		.auto_strip_len = true,
+	},
+	.m1 = {
+		.culling = PVR_CULLING_SMALL,
+		.depth_cmp = PVR_DEPTHCMP_GEQUAL,
+	},
+	.m2 = {
+		.fog_type = PVR_FOG_DISABLE,
+		.blend_dst = PVR_BLEND_INVDESTCOLOR,
+		.blend_src = PVR_BLEND_ZERO,
+	},
+};
+
 __pvr
 static void poly_draw_now(const struct poly *poly)
 {
@@ -1364,6 +1372,8 @@ static void poly_draw_now(const struct poly *poly)
 		voffset = poly->voffset;
 		tex = poly->tex;
 		poly_hdr = &poly_textured;
+	} else if (unlikely(set_mask)) {
+		poly_hdr = &poly_set_mask;
 	} else {
 		poly_hdr = &poly_nontextured;
 	}
@@ -1374,12 +1384,29 @@ static void poly_draw_now(const struct poly *poly)
 
 	if (likely(poly->blending_mode == BLENDING_MODE_NONE
 		   && pvr.old_blending_is_none
+		   && pvr.old_set_mask == set_mask
+		   && pvr.old_check_mask == check_mask
 		   && tex == pvr.old_tex)) {
 		draw_prim(NULL, coords, voffset, colors, nb, z, 0);
 		return;
 	}
 
+	pvr.old_blending_is_none = poly->blending_mode == BLENDING_MODE_NONE;
+	pvr.old_set_mask = set_mask;
+	pvr.old_check_mask = check_mask;
+	pvr.old_tex = tex;
+
 	copy32(&hdr, poly_hdr);
+
+	if (unlikely(set_mask)) {
+		for (i = 0; i < nb; i++)
+			colors_alt[i] = 0x0;
+
+		colors = colors_alt;
+
+		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
+		return;
+	}
 
 	if (textured) {
 		hdr.m3 = (struct pvr_poly_hdr_mode3){
@@ -1400,13 +1427,14 @@ static void poly_draw_now(const struct poly *poly)
 	if (unlikely(poly->depthcmp != PVR_DEPTHCMP_GEQUAL))
 		hdr.m1.depth_cmp = poly->depthcmp;
 
-	pvr.old_blending_is_none = poly->blending_mode == BLENDING_MODE_NONE;
-	pvr.old_tex = tex;
-
 	switch (poly->blending_mode) {
 	case BLENDING_MODE_NONE:
-		if (unlikely(poly->flags & POLY_FB))
+		if (unlikely(poly->flags & POLY_FB)) {
 			hdr.m2.shading = PVR_TXRENV_DECAL;
+		} else if (unlikely(check_mask)) {
+			hdr.m2.blend_src = PVR_BLEND_DESTALPHA;
+			hdr.m2.blend_dst = PVR_BLEND_INVDESTALPHA;
+		}
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 		break;
@@ -1426,6 +1454,8 @@ static void poly_draw_now(const struct poly *poly)
 		}
 
 		/* Regular additive blending */
+		if (unlikely(check_mask))
+			hdr.m2.blend_src = PVR_BLEND_DESTALPHA;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 
 		draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
@@ -1438,6 +1468,10 @@ static void poly_draw_now(const struct poly *poly)
 		/* The source alpha is set for opaque pixels.
 		 * The destination alpha is set for transparent or
 		 * semi-transparent pixels. */
+		if (unlikely(check_mask))
+			hdr.m2.blend_src = PVR_BLEND_DESTALPHA;
+		else
+			hdr.m2.blend_src = PVR_BLEND_ONE;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
@@ -1472,7 +1506,10 @@ static void poly_draw_now(const struct poly *poly)
 		draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 
 		hdr.m2.alpha = true;
-		hdr.m2.blend_src = PVR_BLEND_ONE;
+		if (unlikely(check_mask))
+			hdr.m2.blend_src = PVR_BLEND_INVDESTALPHA;
+		else
+			hdr.m2.blend_src = PVR_BLEND_ONE;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 		hdr.m0.txr_en = hdr.m1.txr_en = textured;
 		z = get_zvalue(zoffset + 1, set_mask, check_mask);
@@ -1535,7 +1572,6 @@ static void poly_draw_now(const struct poly *poly)
 			draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 
 			hdr.m2.blend_src_acc2 = false;
-			hdr.m2.shading = PVR_TXRENV_MODULATE;
 		} else {
 			for (i = 0; i < nb; i++)
 				colors_alt[i] = 0x808080;
@@ -1545,6 +1581,21 @@ static void poly_draw_now(const struct poly *poly)
 
 			draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 		}
+
+		if (unlikely(check_mask)) {
+			for (i = 0; !textured && i < nb; i++)
+				colors_alt[i] = 0xffffff;
+
+			/* Some sticky pixels may have been incorrectly halved...
+			 * Restore them using additive blending. */
+			hdr.m2.blend_src = PVR_BLEND_DESTCOLOR;
+			hdr.m2.blend_dst = PVR_BLEND_INVDESTALPHA;
+
+			z = get_zvalue(zoffset + 2, set_mask, check_mask);
+			draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
+		}
+
+		hdr.m2.shading = PVR_TXRENV_MODULATE;
 
 		if (bright) {
 			/* Use F instead of F/2 if we need brighter colors. */
@@ -1557,10 +1608,13 @@ static void poly_draw_now(const struct poly *poly)
 
 		/* Step 2: Render the polygon normally, with additive
 		 * blending. */
-		hdr.m2.blend_src = PVR_BLEND_SRCALPHA;
+		if (unlikely(check_mask))
+			hdr.m2.blend_src = PVR_BLEND_DESTALPHA;
+		else
+			hdr.m2.blend_src = PVR_BLEND_ONE;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 		hdr.m0.txr_en = hdr.m1.txr_en = textured;
-		z = get_zvalue(zoffset + 2, set_mask, check_mask);
+		z = get_zvalue(zoffset + 3, set_mask, check_mask);
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 		break;
@@ -1822,6 +1876,7 @@ static void process_poly(struct poly *poly, bool scissor)
 	unsigned int i, offt;
 	uint16_t umin, umax;
 	uint8_t codebook;
+	bool check_mask, set_mask;
 
 	if (poly->flags & POLY_TEXTURED) {
 		if (scissor && unlikely(poly->bpp != TEXTURE_4BPP)) {
@@ -1864,25 +1919,35 @@ static void process_poly(struct poly *poly, bool scissor)
 	}
 
 	if (likely(!(poly->flags & POLY_IGN_MASK))) {
-		if (pvr.set_mask)
-			poly->flags |= POLY_SET_MASK;
-		if (pvr.check_mask)
-			poly->flags |= POLY_CHECK_MASK;
+		set_mask = pvr.set_mask;
+		check_mask = pvr.check_mask;
+	} else {
+		set_mask = false;
+		check_mask = false;
 	}
 
 	if (likely(poly->blending_mode == BLENDING_MODE_NONE)) {
 		poly->zoffset = pvr.zoffset++;
 
-		/* TODO: support opaque polys */
-		poly_enqueue(pvr.pt_list, poly);
+		if (unlikely(check_mask)) {
+			poly->flags |= POLY_CHECK_MASK;
+			poly_enqueue(PVR_LIST_TR_POLY, poly);
+		} else {
+			poly_enqueue(pvr.pt_list, poly);
+		}
 
 		if (unlikely(poly->flags & POLY_BRIGHT)) {
 			/* Process a bright poly as a regular poly with additive
 			 * blending */
 			poly->flags &= ~POLY_BRIGHT;
 			poly->blending_mode = BLENDING_MODE_ADD;
-			poly->zoffset = pvr.zoffset++;
+			poly_enqueue(PVR_LIST_TR_POLY, poly);
+		}
 
+		if (unlikely(set_mask)) {
+			poly->blending_mode = BLENDING_MODE_NONE;
+			poly->flags |= POLY_SET_MASK;
+			poly->zoffset = pvr.zoffset++;
 			poly_enqueue(PVR_LIST_TR_POLY, poly);
 		}
 	} else {
@@ -1891,10 +1956,22 @@ static void process_poly(struct poly *poly, bool scissor)
 		poly->zoffset = pvr.zoffset;
 		pvr.zoffset += 4;
 
+		if (unlikely(check_mask))
+			poly->flags |= POLY_CHECK_MASK;
+
 		poly_enqueue(PVR_LIST_TR_POLY, poly);
+		poly->flags &= ~POLY_CHECK_MASK;
+
+		if (unlikely(set_mask)) {
+			poly->flags |= POLY_SET_MASK;
+			poly->zoffset = pvr.zoffset++;
+			poly_enqueue(PVR_LIST_TR_POLY, poly);
+
+			poly->flags &= ~POLY_SET_MASK;
+		}
 
 		/* Mask poly */
-		if (poly->flags & POLY_TEXTURED) {
+		if ((poly->flags & POLY_TEXTURED) && !check_mask) {
 			poly->blending_mode = BLENDING_MODE_NONE;
 			poly->clut |= CLUT_IS_MASK;
 
