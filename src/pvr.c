@@ -783,7 +783,7 @@ static void load_block(struct texture_page *page, unsigned int page_offset,
 
 		load_block_8bpp(page, sq, src);
 	} else {
-		dst = (pvr_ptr_t)(uintptr_t)(page->tex + y * 16 * 128 + x * 32);
+		dst = (pvr_ptr_t)((uintptr_t)page->tex + y * 16 * 128 + x * 32);
 		sq = sq_lock(pvr_ptr_get_sq_addr(dst));
 
 		load_block_16bpp(to_texture_page_16bpp(page), sq, src);
@@ -905,6 +905,14 @@ static void invalidate_texture(struct texture_page *page, uint64_t block_mask)
 	page->inval_counter = pvr.inval_counter;
 }
 
+static void invalidate_textures(unsigned int page_offset, uint64_t block_mask)
+{
+	invalidate_texture(&pvr.textures16[page_offset].base, block_mask);
+	invalidate_texture(&pvr.textures16_mask[page_offset].base, block_mask);
+	invalidate_texture(&pvr.textures8[page_offset].base, block_mask);
+	invalidate_texture(&pvr.textures4[page_offset].base, block_mask);
+}
+
 static bool overlap_draw_area(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
 {
 	return x0 < pvr.start_x + gpu.screen.hres
@@ -928,10 +936,7 @@ static void invalidate_texture_area(unsigned int page_offset,
 	vmax = (ymax - 1) % 256;
 
 	block_mask = get_block_mask(umin << 2, umax << 2, vmin, vmax);
-	invalidate_texture(&pvr.textures16[page_offset].base, block_mask);
-	invalidate_texture(&pvr.textures16_mask[page_offset].base, block_mask);
-	invalidate_texture(&pvr.textures8[page_offset].base, block_mask);
-	invalidate_texture(&pvr.textures4[page_offset].base, block_mask);
+	invalidate_textures(page_offset, block_mask);
 
 	if (invalidate_only || !overlap_draw_area(xmin, ymin, xmax, ymax))
 		return;
@@ -975,12 +980,8 @@ void invalidate_all_textures(void)
 
 	pvr.inval_counter++;
 
-	for (i = 0; i < 32; i++) {
-		invalidate_texture(&pvr.textures16[i].base, UINT64_MAX);
-		invalidate_texture(&pvr.textures16_mask[i].base, UINT64_MAX);
-		invalidate_texture(&pvr.textures8[i].base, UINT64_MAX);
-		invalidate_texture(&pvr.textures4[i].base, UINT64_MAX);
-	}
+	for (i = 0; i < 32; i++)
+		invalidate_textures(i, UINT64_MAX);
 
 	pvr_reap_textures();
 
@@ -1233,7 +1234,6 @@ static inline struct texture_page *
 poly_get_texture_page(const struct poly *poly)
 {
 	struct texture_page *page;
-	struct texture_page_16bpp *page16;
 	struct texture_page_8bpp *page8;
 	struct texture_page_4bpp *page4;
 	uint64_t locked_mask;
@@ -1266,10 +1266,8 @@ poly_get_texture_page(const struct poly *poly)
 		/* Texture page not loaded */
 
 		if (unlikely(poly->bpp == TEXTURE_16BPP)) {
-			page16 = to_texture_page_16bpp(page);
-
-			page16->base.tex = pvr_mem_malloc(64 * 256 * 2);
-			if (!page16->base.tex)
+			page->tex = pvr_mem_malloc(64 * 256 * 2);
+			if (!page->tex)
 				return NULL;
 		} else if (unlikely(poly->bpp == TEXTURE_8BPP)) {
 			page->vq = pvr_mem_malloc(sizeof(*page->vq) + 128 * 256);
