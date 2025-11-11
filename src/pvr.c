@@ -203,10 +203,10 @@ struct pvr_renderer {
 	unsigned int zoffset;
 	uint32_t dr_state;
 
-	uint16_t draw_x1;
-	uint16_t draw_y1;
-	uint16_t draw_x2;
-	uint16_t draw_y2;
+	int16_t draw_x1;
+	int16_t draw_y1;
+	int16_t draw_x2;
+	int16_t draw_y2;
 
 	int16_t draw_dx;
 	int16_t draw_dy;
@@ -2120,6 +2120,7 @@ static void process_gpu_commands(void)
 	enum blending_mode blending_mode;
 	struct poly poly;
 	uint32_t cmd, len;
+	uint16_t draw_x, draw_y;
 
 	for (cmd_offt = 0; cmd_offt < pvr.cmdbuf_offt; cmd_offt += 1 + len) {
 		pbuffer = (const union PacketBuffer *)&cmdbuf[cmd_offt];
@@ -2184,20 +2185,20 @@ static void process_gpu_commands(void)
 
 			case 0xe3:
 				/* Set top-left corner of drawing area */
-				pvr.draw_x1 = pbuffer->U4[0] & 0x3ff;
-				pvr.draw_y1 = (pbuffer->U4[0] >> 10) & 0x1ff;
-				if (0)
-					pvr_printf("Set top-left corner to %ux%u\n",
-						   pvr.draw_x1, pvr.draw_y1);
+				draw_x = pbuffer->U4[0] & 0x3ff;
+				draw_y = (pbuffer->U4[0] >> 10) & 0x1ff;
+
+				pvr.draw_x1 = draw_x - pvr.start_x;
+				pvr.draw_y1 = draw_y - pvr.start_y;
 				break;
 
 			case 0xe4:
 				/* Set bottom-right corner of drawing area */
-				pvr.draw_x2 = (pbuffer->U4[0] & 0x3ff) + 1;
-				pvr.draw_y2 = ((pbuffer->U4[0] >> 10) & 0x1ff) + 1;
-				if (0)
-					pvr_printf("Set bottom-right corner to %ux%u\n",
-						   pvr.draw_x2, pvr.draw_y2);
+				draw_x = (pbuffer->U4[0] & 0x3ff) + 1;
+				draw_y = ((pbuffer->U4[0] >> 10) & 0x1ff) + 1;
+
+				pvr.draw_x2 = draw_x - pvr.start_x;
+				pvr.draw_y2 = draw_y - pvr.start_y;
 				break;
 
 			case 0xe5:
