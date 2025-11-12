@@ -2253,6 +2253,8 @@ static void process_gpu_commands(void)
 
 		case 0x1: {
 			/* Monochrome/shaded non-textured polygon */
+			int16_t x, x_min = INT16_MAX, x_max = INT16_MIN;
+			int16_t y, y_min = INT16_MAX, y_max = INT16_MIN;
 			unsigned int i, nb = 3 + !!multiple;
 			const uint32_t *buf = pbuffer->U4;
 			uint32_t texcoord[4];
@@ -2294,14 +2296,31 @@ static void process_gpu_commands(void)
 				}
 
 				val = *buf++;
-				poly.coords[i].x = x_to_xoffset(val);
-				poly.coords[i].y = y_to_yoffset(val >> 16);
+				x = val;
+				y = val >> 16;
+
+				if (x < x_min)
+					x_min = x;
+				if (x > x_max)
+					x_max = x;
+				if (y < y_min)
+					y_min = y;
+				if (y > y_max)
+					y_max = y;
+
+				poly.coords[i].x = x_to_xoffset(x);
+				poly.coords[i].y = y_to_yoffset(y);
 
 				if (textured) {
 					texcoord[i] = *buf++;
 					poly.coords[i].u = (uint8_t)texcoord[i];
 					poly.coords[i].v = (uint8_t)(texcoord[i] >> 8);
 				}
+			}
+
+			if (x_max - x_min >= 1024 || y_max - y_min >= 512) {
+				/* Poly is too big */
+				break;
 			}
 
 			if (textured && !raw_tex && !bright) {
