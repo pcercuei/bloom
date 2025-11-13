@@ -209,6 +209,9 @@ int main(int argc, char **argv)
 
 		PVR_SET(PVR_OBJECT_CLIP, 0.00001f);
 
+		if (HARDWARE_ACCELERATED)
+			pvr_renderer_init();
+
 		started = true;
 		OpenPlugins();
 
@@ -224,18 +227,16 @@ int main(int argc, char **argv)
 
 		mcd_fs_init();
 
-		if (HARDWARE_ACCELERATED)
-			pvr_renderer_init();
-
 		stop = 0;
 
 		while (!stop)
 			psxCpu->Execute();
 
+		ClosePlugins();
+
 		if (HARDWARE_ACCELERATED)
 			pvr_renderer_shutdown();
 
-		ClosePlugins();
 		pvr_shutdown();
 		mcd_fs_shutdown();
 	} while (!WITH_GAME_PATH[0]);
