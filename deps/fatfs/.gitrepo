@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/DC-SWAT/FatFs.git
+	branch = master
+	commit = 0639ed41c159bd6574a2f6ffc7c5fcd8caa095ff
+	parent = 0a6bb3708dd7f3a984e97b9e62ffe8561d47b954
+	method = merge
+	cmdver = 0.4.9
