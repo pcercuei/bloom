@@ -1281,6 +1281,26 @@ static inline uint16_t get_voffset(enum texture_bpp bpp, uint8_t codebook)
 	return 0;
 }
 
+static void pvr_maybe_free_page(struct texture_page *page)
+{
+	if (page->tex && !page->inuse_mask && !page->old_inuse_mask) {
+		pvr_mem_free(page->tex);
+		page->tex = NULL;
+	}
+}
+
+static void pvr_free_unused_pages(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < 32; i++) {
+		pvr_maybe_free_page(&pvr.textures4[i].base);
+		pvr_maybe_free_page(&pvr.textures8[i].base);
+		pvr_maybe_free_page(&pvr.textures16[i].base);
+		pvr_maybe_free_page(&pvr.textures16_mask[i].base);
+	}
+}
+
 static inline struct texture_page *
 poly_get_texture_page(const struct poly *poly)
 {
@@ -1289,6 +1309,11 @@ poly_get_texture_page(const struct poly *poly)
 	struct texture_page_4bpp *page4;
 	uint64_t locked_mask;
 	uint64_t block_mask;
+	static const size_t texpage_size[] = {
+		[TEXTURE_4BPP] = sizeof(*page->vq) + 256 * 256,
+		[TEXTURE_8BPP] = sizeof(*page->vq) + 128 * 256,
+		[TEXTURE_16BPP] = 64 * 256 * 2,
+	};
 
 	if (likely(poly->bpp == TEXTURE_4BPP))
 		page = &pvr.textures4[poly->texpage_id].base;
@@ -1316,24 +1341,18 @@ poly_get_texture_page(const struct poly *poly)
 	if (unlikely(!page->tex)) {
 		/* Texture page not loaded */
 
-		if (unlikely(poly->bpp == TEXTURE_16BPP)) {
-			page->tex = pvr_mem_malloc(64 * 256 * 2);
-			if (!page->tex)
-				return NULL;
-		} else if (unlikely(poly->bpp == TEXTURE_8BPP)) {
-			page->vq = pvr_mem_malloc(sizeof(*page->vq) + 128 * 256);
-			if (!page->vq)
-				return NULL;
+		page->tex = pvr_mem_malloc(texpage_size[poly->bpp]);
+		if (unlikely(!page->tex)) {
+			pvr_free_unused_pages();
+			page->tex = pvr_mem_malloc(texpage_size[poly->bpp]);
+		}
 
-			page8 = to_texture_page_8bpp(page);
-			page8->nb_cluts = 0;
-		} else {
-			page->vq = pvr_mem_malloc(sizeof(*page->vq) + 256 * 256);
-			if (!page->vq)
-				return NULL;
-
+		if (likely(poly->bpp == TEXTURE_4BPP)) {
 			page4 = to_texture_page_4bpp(page);
 			page4->nb_cluts = 0;
+		} else if (poly->bpp == TEXTURE_8BPP) {
+			page8 = to_texture_page_8bpp(page);
+			page8->nb_cluts = 0;
 		}
 
 		/* Init the base fields */
