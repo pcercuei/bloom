@@ -2,17 +2,26 @@
 #ifdef __GNUC__
 # define likely(x)       __builtin_expect((x),1)
 # define unlikely(x)     __builtin_expect((x),0)
+# define preload         __builtin_prefetch
 # ifdef __clang__
 #  define noinline       __attribute__((noinline))
 # else
 #  define noinline       __attribute__((noinline,noclone))
 # endif
-# define unused          __attribute__((unused))
+# define attr_unused     __attribute__((unused))
 #else
 # define likely(x)       (x)
 # define unlikely(x)     (x)
+# define preload         (x)
 # define noinline
-# define unused
+# define attr_unused
+#endif
+
+// doesn't work on Android, mingw...
+#if defined(__GNUC__) && !defined(ANDROID) && !defined(__MINGW32__)
+# define attr_weak       __attribute__((weak))
+#else
+# define attr_weak
 #endif
 
 #ifndef __has_builtin

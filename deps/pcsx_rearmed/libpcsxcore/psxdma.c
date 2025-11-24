@@ -143,7 +143,7 @@ void psxDma2(u32 madr, u32 bcr, u32 chcr) { // GPU
 	madr &= ~3;
 	switch (chcr) {
 		case 0x01000200: // vram2mem
-			PSXDMA_LOG("*** DMA2 GPU - vram2mem *** %lx addr = %lx size = %lx\n", chcr, madr, bcr);
+			PSXDMA_LOG("*** DMA2 GPU - vram2mem *** %x addr = %x size = %x\n", chcr, madr, bcr);
 			ptr = getDmaRam(madr, &words_max);
 			if (ptr == INVALID_PTR) {
 				log_unhandled("bad dma2 madr %x\n", madr);
@@ -167,7 +167,7 @@ void psxDma2(u32 madr, u32 bcr, u32 chcr) { // GPU
 			return;
 
 		case 0x01000201: // mem2vram
-			PSXDMA_LOG("*** DMA 2 - GPU mem2vram *** %lx addr = %lx size = %lx\n", chcr, madr, bcr);
+			PSXDMA_LOG("*** DMA 2 - GPU mem2vram *** %x addr = %x size = %x\n", chcr, madr, bcr);
 			words = words_left = (bcr >> 16) * (bcr & 0xffff);
 			while (words_left > 0) {
 				ptr = getDmaRam(madr, &words_max);
@@ -190,12 +190,13 @@ void psxDma2(u32 madr, u32 bcr, u32 chcr) { // GPU
 			return;
 
 		case 0x01000401: // dma chain
-			PSXDMA_LOG("*** DMA 2 - GPU dma chain *** %lx addr = %lx size = %lx\n", chcr, madr, bcr);
+			PSXDMA_LOG("*** DMA 2 - GPU dma chain *** %x addr = %x size = %x\n", chcr, madr, bcr);
 			// when not emulating walking progress, end immediately
+			// (some games abort the dma and read madr so break out of that logic)
 			madr_next = 0xffffff;
 
 			do_walking = Config.GpuListWalking;
-			if (do_walking < 0 || Config.hacks.gpu_timing1024)
+			if (do_walking < 0)
 				do_walking = Config.hacks.gpu_slow_list_walking;
 			madr_next_p = do_walking ? &madr_next : NULL;
 
@@ -204,13 +205,14 @@ void psxDma2(u32 madr, u32 bcr, u32 chcr) { // GPU
 
 			HW_DMA2_MADR = SWAPu32(madr_next);
 
-			// a hack for Judge Dredd which is annoyingly sensitive to timing
-			if (Config.hacks.gpu_timing1024)
-				cycles_sum = 1024;
+			// timing hack with some lame heuristics
+			if (Config.gpu_timing_override && (do_walking || cycles_sum > 64)
+			    && !(HW_GPU_STATUS & SWAP32(PSXGPU_DHEIGHT | PSXGPU_RGB24)))
+				cycles_sum = Config.gpu_timing_override;
 
 			psxRegs.gpuIdleAfter = psxRegs.cycle + cycles_sum + cycles_last_cmd;
 			set_event(PSXINT_GPUDMA, cycles_sum);
-			//printf("%u dma2cf: %6d,%4d %08x %08x %08x %08x\n", psxRegs.cycle,
+			//printf("%u dma2cf: %6ld,%4d %08x %08x %08x %08x\n", psxRegs.cycle,
 			//  cycles_sum, cycles_last_cmd, madr, bcr, chcr, HW_DMA2_MADR);
 			return;
 
@@ -226,19 +228,21 @@ void psxDma2(u32 madr, u32 bcr, u32 chcr) { // GPU
 void gpuInterrupt() {
 	if (HW_DMA2_CHCR == SWAP32(0x01000401) && !(HW_DMA2_MADR & SWAP32(0x800000)))
 	{
-		u32 madr_next = 0xffffff, madr = SWAPu32(HW_DMA2_MADR);
+		u32 madr_next = SWAPu32(HW_DMA2_MADR);
+		s32 cycles_sum = psxRegs.gpuIdleAfter - psxRegs.cycle;
 		s32 cycles_last_cmd = 0;
-		long cycles_sum;
 
-		cycles_sum = GPU_dmaChain((u32 *)psxM, madr & 0x1fffff,
-				&madr_next, &cycles_last_cmd);
+		do {
+			cycles_sum += cycles_last_cmd;
+			cycles_sum += GPU_dmaChain((u32 *)psxM, madr_next & 0x1fffff,
+					&madr_next, &cycles_last_cmd);
+		}
+		while (cycles_sum <= 0 && !(madr_next & 0x800000));
 		HW_DMA2_MADR = SWAPu32(madr_next);
-		if ((s32)(psxRegs.gpuIdleAfter - psxRegs.cycle) > 0)
-			cycles_sum += psxRegs.gpuIdleAfter - psxRegs.cycle;
 		psxRegs.gpuIdleAfter = psxRegs.cycle + cycles_sum + cycles_last_cmd;
 		set_event(PSXINT_GPUDMA, cycles_sum);
 		//printf("%u dma2cn: %6d,%4d %08x\n", psxRegs.cycle, cycles_sum,
-		//	cycles_last_cmd, HW_DMA2_MADR);
+		//  cycles_last_cmd, HW_DMA2_MADR);
 		return;
 	}
 	if (HW_DMA2_CHCR & SWAP32(0x01000000))

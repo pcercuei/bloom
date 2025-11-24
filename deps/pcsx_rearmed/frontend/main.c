@@ -14,6 +14,9 @@
 #if !defined(_WIN32) && !defined(NO_DYLIB)
 #include <dlfcn.h>
 #endif
+#ifdef HAVE_RTHREADS
+#include "../frontend/libretro-rthreads.h"
+#endif
 
 #include "main.h"
 #include "plugin.h"
@@ -25,6 +28,7 @@
 #include "../libpcsxcore/cheat.h"
 #include "../libpcsxcore/sio.h"
 #include "../libpcsxcore/database.h"
+#include "../libpcsxcore/cdrom-async.h"
 #include "../libpcsxcore/new_dynarec/new_dynarec.h"
 #include "../plugins/cdrcimg/cdrcimg.h"
 #include "../plugins/dfsound/spu_config.h"
@@ -42,6 +46,7 @@
 #endif
 
 #ifndef NO_FRONTEND
+#include <sys/stat.h>
 #include "libpicofe/input.h"
 #include "libpicofe/plat.h"
 #include "libpicofe/readpng.h"
@@ -49,6 +54,11 @@
 static void toggle_fast_forward(int force_off);
 static void check_profile(void);
 static void check_memcards(void);
+static int get_gameid_filename(char *buf, int size, const char *fmt, int i);
+static const char *get_home_dir(void);
+#define MAKE_PATH(buf, dir, fname) \
+	emu_make_path(buf, sizeof(buf), dir, fname)
+
 #endif
 #ifndef BOOT_MSG
 #define BOOT_MSG "Booting up..."
@@ -66,68 +76,33 @@ enum sched_action emu_action, emu_action_old;
 char hud_msg[64];
 int hud_new_msg;
 
-static void make_path(char *buf, size_t size, const char *dir, const char *fname)
-{
-	if (fname)
-		snprintf(buf, size, ".%s%s", dir, fname);
-	else
-		snprintf(buf, size, ".%s", dir);
-}
-#define MAKE_PATH(buf, dir, fname) \
-	make_path(buf, sizeof(buf), dir, fname)
-
-static int get_gameid_filename(char *buf, int size, const char *fmt, int i) {
-	char trimlabel[33];
-	int j;
-
-	strncpy(trimlabel, CdromLabel, 32);
-	trimlabel[32] = 0;
-	for (j = 31; j >= 0; j--)
-		if (trimlabel[j] == ' ')
-			trimlabel[j] = 0;
-		else
-			continue;
-
-	snprintf(buf, size, fmt, trimlabel, CdromId, i);
-
-	return 0;
-}
-
 void set_cd_image(const char *fname)
 {
-	const char *ext = NULL;
-	
-	if (fname != NULL)
-		ext = strrchr(fname, '.');
-
-	if (ext && (
-	    strcasecmp(ext, ".z") == 0 || strcasecmp(ext, ".bz") == 0 ||
-	    strcasecmp(ext, ".znx") == 0 /*|| strcasecmp(ext, ".pbp") == 0*/)) {
-		SetIsoFile(NULL);
-		cdrcimg_set_fname(fname);
-		strcpy(Config.Cdr, "builtin_cdrcimg");
-	} else {
-		SetIsoFile(fname);
-		strcpy(Config.Cdr, "builtin_cdr");
-	}
+	SetIsoFile(fname);
 }
 
 static void set_default_paths(void)
 {
 #ifndef NO_FRONTEND
-	snprintf(Config.PatchesDir, sizeof(Config.PatchesDir), "." PATCHES_DIR);
+	const char *home = get_home_dir();
+	struct stat st;
+	MAKE_PATH(Config.PatchesDir, PATCHES_DIR, NULL);
 	MAKE_PATH(Config.Mcd1, MEMCARD_DIR, "card1.mcd");
 	MAKE_PATH(Config.Mcd2, MEMCARD_DIR, "card2.mcd");
-	strcpy(Config.BiosDir, "bios");
+	MAKE_PATH(Config.BiosDir, BIOS_DIR, NULL);
+
+	emu_make_data_path(Config.PluginsDir, "plugins", sizeof(Config.PluginsDir));
+
+	// prefer bios in working dir for compatibility
+	if (!strcmp(home, ".") && !stat("bios", &st))
+		strcpy(Config.BiosDir, "bios");
+
+	SysPrintf("dirs: profile=%s" PCSX_DOT_DIR ", bios=%s, plugins=%s\n",
+		home, Config.BiosDir, Config.PluginsDir);
 #endif
 
-	strcpy(Config.PluginsDir, "plugins");
 	strcpy(Config.Gpu, "builtin_gpu");
 	strcpy(Config.Spu, "builtin_spu");
-	strcpy(Config.Cdr, "builtin_cdr");
-	strcpy(Config.Pad1, "builtin_pad");
-	strcpy(Config.Pad2, "builtin_pad");
-	strcpy(Config.Net, "Disabled");
 }
 
 void emu_set_default_config(void)
@@ -140,21 +115,17 @@ void emu_set_default_config(void)
 	Config.GpuListWalking = -1;
 	Config.FractionalFramerate = -1;
 
+	pl_rearmed_cbs.dithering = 1;
 	pl_rearmed_cbs.gpu_neon.allow_interlace = 2; // auto
 	pl_rearmed_cbs.gpu_neon.enhancement_enable =
 	pl_rearmed_cbs.gpu_neon.enhancement_no_main = 0;
 	pl_rearmed_cbs.gpu_neon.enhancement_tex_adj = 1;
-	pl_rearmed_cbs.gpu_peops.iUseDither = 0;
 	pl_rearmed_cbs.gpu_peops.dwActFixes = 1<<7;
+	pl_rearmed_cbs.gpu_unai.old_renderer = 0;
 	pl_rearmed_cbs.gpu_unai.ilace_force = 0;
-	pl_rearmed_cbs.gpu_unai.pixel_skip = 0;
 	pl_rearmed_cbs.gpu_unai.lighting = 1;
 	pl_rearmed_cbs.gpu_unai.fast_lighting = 0;
 	pl_rearmed_cbs.gpu_unai.blending = 1;
-	pl_rearmed_cbs.gpu_unai.dithering = 0;
-	pl_rearmed_cbs.gpu_unai_old.abe_hack =
-	pl_rearmed_cbs.gpu_unai_old.no_light =
-	pl_rearmed_cbs.gpu_unai_old.no_blend = 0;
 	memset(&pl_rearmed_cbs.gpu_peopsgl, 0, sizeof(pl_rearmed_cbs.gpu_peopsgl));
 	pl_rearmed_cbs.gpu_peopsgl.iVRamSize = 64;
 	pl_rearmed_cbs.gpu_peopsgl.iTexGarbageCollection = 1;
@@ -173,11 +144,18 @@ void emu_set_default_config(void)
 	spu_config.iTempo = 1;
 #endif
 #endif
-	new_dynarec_hacks = 0;
+#if defined(MIYOO)
+	pl_rearmed_cbs.dithering = 0;
+	pl_rearmed_cbs.gpu_unai.fast_lighting = 1;
+	pl_rearmed_cbs.gpu_unai.scale_hires = 1;
+#endif
+	ndrc_g.hacks = 0;
 
 	in_type[0] = PSE_PAD_TYPE_STANDARD;
 	in_type[1] = PSE_PAD_TYPE_STANDARD;
 }
+
+#ifndef NO_FRONTEND
 
 void do_emu_action(void)
 {
@@ -194,7 +172,6 @@ void do_emu_action(void)
 		ret = emu_save_state(state_slot);
 		snprintf(hud_msg, sizeof(hud_msg), ret == 0 ? "SAVED" : "FAIL!");
 		break;
-#ifndef NO_FRONTEND
 	case SACTION_ENTER_MENU:
 		toggle_fast_forward(1);
 		menu_loop();
@@ -264,12 +241,14 @@ do_state_slot:
 
 			scrbuf = pl_prepare_screenshot(&w, &h, &bpp);
 			get_gameid_filename(buf, sizeof(buf),
-				"screenshots/%.32s-%.9s.%d.png", ti);
-			ret = -1;
+				"%s" SCREENSHOTS_DIR "%.32s-%.9s.%d.png", ti);
+			ret = -2;
 			if (scrbuf != 0 && bpp == 16)
 				ret = writepng(buf, scrbuf, w, h);
 			if (ret == 0)
 				snprintf(hud_msg, sizeof(hud_msg), "SCREENSHOT TAKEN");
+			else
+				SysPrintf("writepng %s: %d\n", buf, ret);
 			break;
 		}
 	case SACTION_VOLUME_UP:
@@ -296,13 +275,14 @@ do_state_slot:
 		ret = padToggleAnalog(0);
 		snprintf(hud_msg, sizeof(hud_msg), "ANALOG %s", ret ? "ON" : "OFF");
 		break;
-#endif
 	default:
 		return;
 	}
 
 	hud_new_msg = 3;
 }
+
+#endif
 
 static char basic_lcase(char c)
 {
@@ -451,49 +431,6 @@ static void log_wrong_cpu(void)
 #endif // DO_CPU_CHECKS
 }
 
-#define MKSTR2(x) #x
-#define MKSTR(x) MKSTR2(x)
-static const char *get_build_info(void)
-{
-	return " ("
-#ifdef __VERSION__
-		"cc " __VERSION__ " "
-#endif
-#if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8
-		"64bit "
-#elif defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 4
-		"32bit "
-#endif
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-		"be "
-#endif
-#if defined(__PIC__) || defined(__pic__)
-		"pic "
-#endif
-#if defined(__aarch64__)
-		"arm64"
-#elif defined(__arm__)
-		"arm"
-#endif
-#ifdef __ARM_ARCH
-		"v" MKSTR(__ARM_ARCH) " "
-#endif
-#if defined(__AVX__)
-		"avx "
-#elif defined(__SSSE3__)
-		"ssse3 "
-#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
-		"neon "
-#endif
-#if defined(LIGHTREC)
-		"lightrec "
-#elif !defined(DRC_DISABLE)
-		"ari64 "
-#endif
-		"gpu=" MKSTR(BUILTIN_GPU)
-		")";
-}
-
 int emu_core_preinit(void)
 {
 	// what is the name of the config file?
@@ -523,8 +460,22 @@ int emu_core_preinit(void)
 
 int emu_core_init(void)
 {
-	SysPrintf("Starting PCSX-ReARMed " REV "%s\n", get_build_info());
+	SysPrintf("Starting PCSX-ReARMed " REV " (%s)\n", get_build_info());
+	SysPrintf("build time: " __DATE__ " " __TIME__ "\n");
 
+#if defined(__arm__) && defined(__ARM_FP)
+	// RunFast mode
+	u32 fpscr = ~0;
+	__asm__ volatile("vmrs %0, fpscr" : "=r"(fpscr));
+	SysPrintf("old fpscr = %08x\n", fpscr);
+	fpscr &= ~0x00009f9f;
+	fpscr |=  0x03000000; // DN | FZ
+	__asm__ volatile("vmsr fpscr, %0" :: "r"(fpscr));
+#endif
+
+#ifdef HAVE_RTHREADS
+	pcsxr_sthread_init();
+#endif
 #ifndef NO_FRONTEND
 	check_profile();
 	check_memcards();
@@ -546,7 +497,7 @@ int emu_core_init(void)
 
 void emu_core_ask_exit(void)
 {
-	stop++;
+	psxRegs.stop++;
 	g_emu_want_quit = 1;
 }
 
@@ -554,6 +505,45 @@ void emu_core_ask_exit(void)
 
 #include <sys/stat.h>
 #include <sys/types.h>
+
+static const char *get_home_dir(void)
+{
+#if defined(PANDORA) || !defined(__unix__) || defined(MIYOO)
+	return ".";
+#else
+	static const char *home = NULL;
+	struct stat st;
+	if (home)
+		return home;
+	// for compatibility with older versions, look for .pcsx in the working dir
+	if (stat(PCSX_DOT_DIR + 1, &st) != 0)
+		home = getenv("HOME");
+	if (home == NULL)
+		home = ".";
+	return home;
+#endif
+}
+
+void emu_make_path(char *buf, size_t size, const char *dir, const char *fname)
+{
+	const char *home = get_home_dir();
+	if (fname)
+		snprintf(buf, size, "%s%s%s", home, dir, fname);
+	else
+		snprintf(buf, size, "%s%s", home, dir);
+}
+
+void emu_make_data_path(char *buff, const char *end, int size)
+{
+	int pos, end_len;
+
+	end_len = strlen(end);
+	pos = plat_get_root_dir(buff, size);
+	strncpy(buff + pos, end, size - pos);
+	buff[size - 1] = 0;
+	if (pos + end_len > size - 1)
+		printf("Warning: path truncated: %s\n", buff);
+}
 
 static void create_profile_dir(const char *directory) {
 	char path[MAXPATHLEN];
@@ -569,12 +559,10 @@ static void check_profile(void) {
 	create_profile_dir(BIOS_DIR);
 	create_profile_dir(MEMCARD_DIR);
 	create_profile_dir(STATES_DIR);
-	create_profile_dir(PLUGINS_DIR);
-	create_profile_dir(PLUGINS_CFG_DIR);
 	create_profile_dir(CHEATS_DIR);
 	create_profile_dir(PATCHES_DIR);
-	create_profile_dir(PCSX_DOT_DIR "cfg");
-	create_profile_dir("/screenshots/");
+	create_profile_dir(CFG_DIR);
+	create_profile_dir(SCREENSHOTS_DIR);
 }
 
 static void check_memcards(void)
@@ -584,7 +572,8 @@ static void check_memcards(void)
 	int i;
 
 	for (i = 1; i <= 9; i++) {
-		snprintf(buf, sizeof(buf), ".%scard%d.mcd", MEMCARD_DIR, i);
+		snprintf(buf, sizeof(buf), "%s%scard%d.mcd",
+			get_home_dir(), MEMCARD_DIR, i);
 
 		f = fopen(buf, "rb");
 		if (f == NULL) {
@@ -647,7 +636,8 @@ int main(int argc, char *argv[])
 							"\t-cdfile FILE\tRuns a CD image file\n"
 							"\t-cfg FILE\tLoads desired configuration file (default: ~/.pcsx/pcsx.cfg)\n"
 							"\t-psxout\t\tEnable PSX output\n"
-							"\t-load STATENUM\tLoads savestate STATENUM (1-5)\n"
+							"\t-load STATENUM\tLoads savestate STATENUM (1-9)\n"
+							"\t-loadf FILE\tLoads savestate from FILE\n"
 							"\t-h -help\tDisplay this message\n"
 							"\tfile\t\tLoads a PSX EXE file\n"));
 			 return 0;
@@ -686,7 +676,8 @@ int main(int argc, char *argv[])
 		// FIXME: this recovery doesn't work, just delete bad config and bail out
 		// SysMessage("could not load plugins, retrying with defaults\n");
 		set_default_paths();
-		snprintf(path, sizeof(path), "." PCSX_DOT_DIR "%s", cfgfile_basename);
+		snprintf(path, sizeof(path), "%s" PCSX_DOT_DIR "%s",
+			get_home_dir(), cfgfile_basename);
 		remove(path);
 		SysMessage("Failed loading plugins!");
 		return 1;
@@ -696,24 +687,17 @@ int main(int argc, char *argv[])
 	if (OpenPlugins() == -1) {
 		return 1;
 	}
-	plugin_call_rearmed_cbs();
 
 	CheckCdrom();
+	plugin_call_rearmed_cbs();
 	SysReset();
 
 	if (file[0] != '\0') {
 		if (Load(file) != -1)
 			ready_to_go = 1;
 	} else {
-		if (cdfile) {
-			if (LoadCdrom() == -1) {
-				ClosePlugins();
-				SysPrintf(_("Could not load CD-ROM!\n"));
-				return -1;
-			}
-			emu_on_new_cd(!loadst);
-			ready_to_go = 1;
-		}
+		if (cdfile)
+			ready_to_go = menu_load_cd_image(cdfile) == 0;
 	}
 
 	if (loadst_f) {
@@ -724,28 +708,28 @@ int main(int argc, char *argv[])
 	}
 
 	if (ready_to_go) {
-		if (menu_load_config(1) != 0)
-			menu_load_config(0);
 		menu_prepare_emu();
 
-		// If a state has been specified, then load that
-		if (loadst) {
+		// If a state slot has been specified, then load that
+		if (cdfile && loadst) {
 			int ret = emu_load_state(loadst - 1);
-			SysPrintf("%s state %d\n",
+			SysPrintf("%s state slot %d\n",
 				ret ? "failed to load" : "loaded", loadst);
 		}
 	}
 	else
 		menu_loop();
 
+#ifndef LIGHTREC_DEBUG
 	pl_start_watchdog();
+#endif
 
 	while (!g_emu_want_quit)
 	{
-		stop = 0;
+		psxRegs.stop = 0;
 		emu_action = SACTION_NONE;
 
-		psxCpu->Execute();
+		psxCpu->Execute(&psxRegs);
 		if (emu_action != SACTION_NONE)
 			do_emu_action();
 	}
@@ -794,55 +778,32 @@ static void toggle_fast_forward(int force_off)
 }
 
 static void SignalExit(int sig) {
+	SysPrintf("got signal %d\n", sig);
 	// only to restore framebuffer/resolution on some devices
 	plat_finish();
 	_exit(1);
 }
-#endif
 
-void SysRunGui() {
-        printf("SysRunGui\n");
-}
+static int get_gameid_filename(char *buf, int size, const char *fmt, int i) {
+	char trimlabel[33];
+	int j;
 
-static void CALLBACK dummy_lace()
-{
-}
+	strncpy(trimlabel, CdromLabel, 32);
+	trimlabel[32] = 0;
+	for (j = 31; j >= 0; j--)
+		if (trimlabel[j] == ' ')
+			trimlabel[j] = 0;
+		else
+			continue;
 
-void SysReset() {
-	// rearmed hack: EmuReset() runs some code when real BIOS is used,
-	// but we usually do reset from menu while GPU is not open yet,
-	// so we need to prevent updateLace() call..
-	void *real_lace = GPU_updateLace;
-	GPU_updateLace = dummy_lace;
-	g_emu_resetting = 1;
+	snprintf(buf, size, fmt, get_home_dir(), trimlabel, CdromId, i);
 
-	// reset can run code, timing must be set
-	pl_timing_prepare(Config.PsxType);
-
-	// hmh core forgets this
-	CDR_stop();
-   
-	EmuReset();
-
-	GPU_updateLace = real_lace;
-	g_emu_resetting = 0;
-}
-
-void SysClose() {
-	EmuShutdown();
-	ReleasePlugins();
-
-	StopDebugger();
-
-	if (emuLog != NULL && emuLog != stdout && emuLog != stderr) {
-		fclose(emuLog);
-		emuLog = NULL;
-	}
+	return 0;
 }
 
 int get_state_filename(char *buf, int size, int i) {
 	return get_gameid_filename(buf, size,
-		"." STATES_DIR "%.32s-%.9s.%3.3d", i);
+		"%s" STATES_DIR "%.32s-%.9s.%3.3d", i);
 }
 
 int emu_check_state(int slot)
@@ -887,6 +848,41 @@ int emu_load_state(int slot)
 		return ret;
 
 	return LoadState(fname);
+}
+
+#endif // NO_FRONTEND
+
+static void CALLBACK dummy_lace(void)
+{
+}
+
+void SysReset() {
+	// rearmed hack: EmuReset() runs some code when real BIOS is used,
+	// but we usually do reset from menu while GPU is not open yet,
+	// so we need to prevent updateLace() call..
+	void *real_lace = GPU_updateLace;
+	GPU_updateLace = dummy_lace;
+	g_emu_resetting = 1;
+
+	// reset can run code, timing must be set
+	pl_timing_prepare(Config.PsxType);
+
+	EmuReset();
+
+	GPU_updateLace = real_lace;
+	g_emu_resetting = 0;
+}
+
+void SysClose() {
+	EmuShutdown();
+	ReleasePlugins();
+
+	StopDebugger();
+
+	if (emuLog != NULL && emuLog != stdout && emuLog != stderr) {
+		fclose(emuLog);
+		emuLog = NULL;
+	}
 }
 
 #ifndef HAVE_LIBRETRO
@@ -946,8 +942,8 @@ static int _OpenPlugins(void) {
 	signal(SIGPIPE, SignalExit);
 #endif
 
-	ret = CDR_open();
-	if (ret < 0) { SysMessage(_("Error opening CD-ROM plugin!")); return -1; }
+	ret = cdra_open();
+	if (UsingIso() && ret < 0) { SysMessage(_("Error opening CD-ROM plugin!")); return -1; }
 	ret = SPU_open();
 	if (ret < 0) { SysMessage(_("Error opening SPU plugin!")); return -1; }
 	SPU_registerCallback(SPUirq);
@@ -955,68 +951,6 @@ static int _OpenPlugins(void) {
 	// pcsx-rearmed: we handle gpu elsewhere
 	//ret = GPU_open(&gpuDisp, "PCSX", NULL);
 	//if (ret < 0) { SysMessage(_("Error opening GPU plugin!")); return -1; }
-	ret = PAD1_open(&gpuDisp);
-	if (ret < 0) { SysMessage(_("Error opening Controller 1 plugin!")); return -1; }
-	ret = PAD2_open(&gpuDisp);
-	if (ret < 0) { SysMessage(_("Error opening Controller 2 plugin!")); return -1; }
-
-	if (Config.UseNet && !NetOpened) {
-		netInfo info;
-		char path[MAXPATHLEN * 2];
-		char dotdir[MAXPATHLEN];
-
-		MAKE_PATH(dotdir, "/.pcsx/plugins/", NULL);
-
-		strcpy(info.EmuName, "PCSX");
-		memcpy(info.CdromID, CdromId, 9); /* no \0 trailing character? */
-		memcpy(info.CdromLabel, CdromLabel, 9);
-		info.CdromLabel[9] = '\0';
-		info.psxMem = psxM;
-		info.GPU_showScreenPic = GPU_showScreenPic;
-		info.GPU_displayText = GPU_displayText;
-		info.GPU_showScreenPic = GPU_showScreenPic;
-		info.PAD_setSensitive = PAD1_setSensitive;
-		sprintf(path, "%s%s", Config.BiosDir, Config.Bios);
-		strcpy(info.BIOSpath, path);
-		strcpy(info.MCD1path, Config.Mcd1);
-		strcpy(info.MCD2path, Config.Mcd2);
-		sprintf(path, "%s%s", dotdir, Config.Gpu);
-		strcpy(info.GPUpath, path);
-		sprintf(path, "%s%s", dotdir, Config.Spu);
-		strcpy(info.SPUpath, path);
-		sprintf(path, "%s%s", dotdir, Config.Cdr);
-		strcpy(info.CDRpath, path);
-		NET_setInfo(&info);
-
-		ret = NET_open(&gpuDisp);
-		if (ret < 0) {
-			if (ret == -2) {
-				// -2 is returned when something in the info
-				// changed and needs to be synced
-				char *ptr;
-
-				PARSEPATH(Config.Bios, info.BIOSpath);
-				PARSEPATH(Config.Gpu,  info.GPUpath);
-				PARSEPATH(Config.Spu,  info.SPUpath);
-				PARSEPATH(Config.Cdr,  info.CDRpath);
-
-				strcpy(Config.Mcd1, info.MCD1path);
-				strcpy(Config.Mcd2, info.MCD2path);
-				return -2;
-			} else {
-				Config.UseNet = FALSE;
-			}
-		} else {
-			if (NET_queryPlayer() == 1) {
-				if (SendPcsxInfo() == -1) Config.UseNet = FALSE;
-			} else {
-				if (RecvPcsxInfo() == -1) Config.UseNet = FALSE;
-			}
-		}
-		NetOpened = TRUE;
-	} else if (Config.UseNet) {
-		NET_resume();
-	}
 
 	return 0;
 }
@@ -1040,32 +974,21 @@ void ClosePlugins() {
 	signal(SIGPIPE, SIG_DFL);
 #endif
 
-	ret = CDR_close();
-	if (ret < 0) { SysMessage(_("Error closing CD-ROM plugin!")); return; }
+	cdra_close();
 	ret = SPU_close();
-	if (ret < 0) { SysMessage(_("Error closing SPU plugin!")); return; }
-	ret = PAD1_close();
-	if (ret < 0) { SysMessage(_("Error closing Controller 1 Plugin!")); return; }
-	ret = PAD2_close();
-	if (ret < 0) { SysMessage(_("Error closing Controller 2 plugin!")); return; }
+	if (ret < 0) { SysMessage(_("Error closing SPU plugin!")); }
 	// pcsx-rearmed: we handle gpu elsewhere
 	//ret = GPU_close();
 	//if (ret < 0) { SysMessage(_("Error closing GPU plugin!")); return; }
-
-	if (Config.UseNet) {
-		NET_pause();
-	}
 }
 
 /* we hook statically linked plugins here */
 static const char *builtin_plugins[] = {
-	"builtin_gpu", "builtin_spu", "builtin_cdr", "builtin_pad",
-	"builtin_cdrcimg",
+	"builtin_gpu", "builtin_spu"
 };
 
 static const int builtin_plugin_ids[] = {
-	PLUGIN_GPU, PLUGIN_SPU, PLUGIN_CDR, PLUGIN_PAD,
-	PLUGIN_CDRCIMG,
+	PLUGIN_GPU, PLUGIN_SPU
 };
 
 void *SysLoadLibrary(const char *lib) {

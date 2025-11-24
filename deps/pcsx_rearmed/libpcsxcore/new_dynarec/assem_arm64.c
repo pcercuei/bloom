@@ -24,14 +24,24 @@
 #include "arm_features.h"
 
 /* Linker */
+static void set_jump_target_far1(u_int *insn_, void *target)
+{
+  u_int *insn = NDRC_WRITE_OFFSET(insn_);
+  u_int in = *insn & 0xfc000000;
+  intptr_t offset = (u_char *)target - (u_char *)insn_;
+  assert(in == 0x14000000);
+  assert(-134217728 <= offset && offset < 134217728);
+  in |= (offset >> 2) & 0x3ffffff;
+  *insn = in;
+}
+
 static void set_jump_target(void *addr, void *target)
 {
   u_int *ptr = NDRC_WRITE_OFFSET(addr);
   intptr_t offset = (u_char *)target - (u_char *)addr;
 
   if ((*ptr&0xFC000000) == 0x14000000) { // b
-    assert(offset>=-134217728LL&&offset<134217728LL);
-    *ptr=(*ptr&0xFC000000)|((offset>>2)&0x3ffffff);
+    set_jump_target_far1(addr, target);
   }
   else if ((*ptr&0xff000000) == 0x54000000 // b.cond
         || (*ptr&0x7e000000) == 0x34000000) { // cbz/cbnz
@@ -60,24 +70,6 @@ static void *find_extjump_insn(void *stub)
   int offset = (((signed int)(*ptr<<8)>>13)<<2)|((*ptr>>29)&0x3);
   return ptr + offset / 4;
 }
-
-#if 0
-// find where external branch is liked to using addr of it's stub:
-// get address that the stub loads (dyna_linker arg1),
-// treat it as a pointer to branch insn,
-// return addr where that branch jumps to
-static void *get_pointer(void *stub)
-{
-  int *i_ptr = find_extjump_insn(stub);
-  if ((*i_ptr&0xfc000000) == 0x14000000)  // b
-    return i_ptr + ((signed int)(*i_ptr<<6)>>6);
-  if ((*i_ptr&0xff000000) == 0x54000000     // b.cond
-      || (*i_ptr&0x7e000000) == 0x34000000) // cbz/cbnz
-    return i_ptr + ((signed int)(*i_ptr<<8)>>13);
-  assert(0);
-  return NULL;
-}
-#endif
 
 // Allocate a specific ARM register.
 static void alloc_arm_reg(struct regstat *cur,int i,signed char reg,int hr)
@@ -119,14 +111,14 @@ static void alloc_cc_optional(struct regstat *cur, int i)
 
 /* Assembler */
 
-static unused const char *regname[32] = {
+static attr_unused const char *regname[32] = {
   "w0",  "w1",  "w2",  "w3",  "w4",  "w5",  "w6",  "w7",
   "w8",  "w9", "w10", "w11", "w12", "w13", "w14", "w15",
  "ip0", "ip1", "w18", "w19", "w20", "w21", "w22", "w23",
  "w24", "w25", "w26", "w27", "w28", "wfp", "wlr", "wsp"
 };
 
-static unused const char *regname64[32] = {
+static attr_unused const char *regname64[32] = {
   "x0",  "x1",  "x2",  "x3",  "x4",  "x5",  "x6",  "x7",
   "x8",  "x9", "x10", "x11", "x12", "x13", "x14", "x15",
  "ip0", "ip1", "x18", "x19", "x20", "x21", "x22", "x23",
@@ -138,7 +130,7 @@ enum {
   COND_HI, COND_LS, COND_GE, COND_LT, COND_GT, COND_LE, COND_AW, COND_NV
 };
 
-static unused const char *condname[16] = {
+static attr_unused const char *condname[16] = {
   "eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc",
   "hi", "ls", "ge", "lt", "gt", "le", "aw", "nv"
 };
@@ -356,7 +348,7 @@ static void emit_subs(u_int rs1, u_int rs2, u_int rt)
   output_w32(0x6b000000 | rm_imm6_rn_rd(rs2, 0, rs1, rt));
 }
 
-static unused void emit_sub_asrimm(u_int rs1, u_int rs2, u_int shift, u_int rt)
+static attr_unused void emit_sub_asrimm(u_int rs1, u_int rs2, u_int shift, u_int rt)
 {
   assem_debug("sub %s,%s,%s,asr #%u\n",regname[rt],regname[rs1],regname[rs2],shift);
   output_w32(0x4b800000 | rm_imm6_rn_rd(rs2, shift, rs1, rt));
@@ -531,12 +523,12 @@ static void emit_writedword(u_int rt, void *addr)
 static void emit_storereg(u_int r, u_int hr)
 {
   assert(r < 64);
-  void *addr = &psxRegs.GPR.r[r];
+  void *addr;
   switch (r) {
   //case HIREG: addr = &hi; break;
   //case LOREG: addr = &lo; break;
   case CCREG: addr = &cycle_count; break;
-  default: assert(r < 34); break;
+  default: assert(r < 34u); addr = &psxRegs.GPR.r[r]; break;
   }
   emit_writeword(hr, addr);
 }
@@ -618,7 +610,7 @@ static void emit_xorsar_imm(u_int rs1, u_int rs2, u_int imm, u_int rt)
 
 static void emit_addimm_s(u_int s, u_int is64, u_int rs, uintptr_t imm, u_int rt)
 {
-  unused const char *st = s ? "s" : "";
+  attr_unused const char *st = s ? "s" : "";
   s = s ? 0x20000000 : 0;
   is64 = is64 ? 0x80000000 : 0;
   if (imm < 4096) {
@@ -971,7 +963,7 @@ static int can_jump_or_call(const void *a)
 static void emit_call(const void *a)
 {
   intptr_t diff = (u_char *)a - out;
-  assem_debug("bl %p (%p+%lx)%s\n", a, out, diff, func_name(a));
+  assem_debug("bl %p%s\n", log_addr(a), func_name(a));
   assert(!(diff & 3));
   if (-134217728 <= diff && diff <= 134217727)
     output_w32(0x94000000 | ((diff >> 2) & 0x03ffffff));
@@ -981,77 +973,77 @@ static void emit_call(const void *a)
 
 static void emit_jmp(const void *a)
 {
-  assem_debug("b %p (%p+%lx)%s\n", a, out, (u_char *)a - out, func_name(a));
+  assem_debug("b %p%s\n", log_addr(a), func_name(a));
   u_int offset = genjmp(a);
   output_w32(0x14000000 | offset);
 }
 
 static void emit_jne(const void *a)
 {
-  assem_debug("bne %p\n", a);
+  assem_debug("bne %p\n", log_addr(a));
   u_int offset = genjmpcc(a);
   output_w32(0x54000000 | (offset << 5) | COND_NE);
 }
 
 static void emit_jeq(const void *a)
 {
-  assem_debug("beq %p\n", a);
+  assem_debug("beq %p\n", log_addr(a));
   u_int offset = genjmpcc(a);
   output_w32(0x54000000 | (offset << 5) | COND_EQ);
 }
 
 static void emit_js(const void *a)
 {
-  assem_debug("bmi %p\n", a);
+  assem_debug("bmi %p\n", log_addr(a));
   u_int offset = genjmpcc(a);
   output_w32(0x54000000 | (offset << 5) | COND_MI);
 }
 
 static void emit_jns(const void *a)
 {
-  assem_debug("bpl %p\n", a);
+  assem_debug("bpl %p\n", log_addr(a));
   u_int offset = genjmpcc(a);
   output_w32(0x54000000 | (offset << 5) | COND_PL);
 }
 
 static void emit_jl(const void *a)
 {
-  assem_debug("blt %p\n", a);
+  assem_debug("blt %p\n", log_addr(a));
   u_int offset = genjmpcc(a);
   output_w32(0x54000000 | (offset << 5) | COND_LT);
 }
 
 static void emit_jge(const void *a)
 {
-  assem_debug("bge %p\n", a);
+  assem_debug("bge %p\n", log_addr(a));
   u_int offset = genjmpcc(a);
   output_w32(0x54000000 | (offset << 5) | COND_GE);
 }
 
 static void emit_jo(const void *a)
 {
-  assem_debug("bvs %p\n", a);
+  assem_debug("bvs %p\n", log_addr(a));
   u_int offset = genjmpcc(a);
   output_w32(0x54000000 | (offset << 5) | COND_VS);
 }
 
 static void emit_jno(const void *a)
 {
-  assem_debug("bvc %p\n", a);
+  assem_debug("bvc %p\n", log_addr(a));
   u_int offset = genjmpcc(a);
   output_w32(0x54000000 | (offset << 5) | COND_VC);
 }
 
 static void emit_jc(const void *a)
 {
-  assem_debug("bcs %p\n", a);
+  assem_debug("bcs %p\n", log_addr(a));
   u_int offset = genjmpcc(a);
   output_w32(0x54000000 | (offset << 5) | COND_CS);
 }
 
 static void emit_cb(u_int isnz, u_int is64, const void *a, u_int r)
 {
-  assem_debug("cb%sz %s,%p\n", isnz?"n":"", is64?regname64[r]:regname[r], a);
+  assem_debug("cb%sz %s,%p\n", isnz?"n":"", is64?regname64[r]:regname[r], log_addr(a));
   u_int offset = genjmpcc(a);
   is64 = is64 ? 0x80000000 : 0;
   isnz = isnz ? 0x01000000 : 0;
@@ -1293,8 +1285,8 @@ static void emit_bic_lsr(u_int rs1,u_int rs2,u_int shift,u_int rt)
 static void emit_ldst(int is_st, int is64, u_int rt, u_int rn, u_int ofs)
 {
   u_int op = 0xb9000000;
-  unused const char *ldst = is_st ? "st" : "ld";
-  unused char rp = is64 ? 'x' : 'w';
+  attr_unused const char *ldst = is_st ? "st" : "ld";
+  attr_unused char rp = is64 ? 'x' : 'w';
   assem_debug("%sr %c%d,[x%d,#%#x]\n", ldst, rp, rt, rn, ofs);
   is64 = is64 ? 1 : 0;
   assert((ofs & ((1 << (2+is64)) - 1)) == 0);
@@ -1307,8 +1299,8 @@ static void emit_ldst(int is_st, int is64, u_int rt, u_int rn, u_int ofs)
 static void emit_ldstp(int is_st, int is64, u_int rt1, u_int rt2, u_int rn, int ofs)
 {
   u_int op = 0x29000000;
-  unused const char *ldst = is_st ? "st" : "ld";
-  unused char rp = is64 ? 'x' : 'w';
+  attr_unused const char *ldst = is_st ? "st" : "ld";
+  attr_unused char rp = is64 ? 'x' : 'w';
   assem_debug("%sp %c%d,%c%d,[x%d,#%#x]\n", ldst, rp, rt1, rp, rt2, rn, ofs);
   is64 = is64 ? 1 : 0;
   assert((ofs & ((1 << (2+is64)) - 1)) == 0);
@@ -1365,7 +1357,7 @@ static void literal_pool_jumpover(int n)
 {
 }
 
-// parsed by get_pointer, find_extjump_insn
+// parsed by find_extjump_insn, check_extjump2
 static void emit_extjump(u_char *addr, u_int target)
 {
   assert(((addr[3]&0xfc)==0x14) || ((addr[3]&0xff)==0x54)); // b or b.cond
@@ -2038,6 +2030,7 @@ static void do_jump_vaddr(u_int rs)
 {
   if (rs != 0)
     emit_mov(rs, 0);
+  emit_readptr(&hash_table_ptr, 1);
   emit_far_call(ndrc_get_addr_ht);
   emit_jmpreg(0);
 }
@@ -2082,7 +2075,7 @@ static void do_miniht_insert(u_int return_address,u_int rt,int temp) {
   emit_writeword(rt,&mini_ht[(return_address&0xFF)>>3][0]);
 }
 
-static unused void clear_cache_arm64(char *start, char *end)
+static attr_unused void clear_cache_arm64(char *start, char *end)
 {
   // Don't rely on GCC's __clear_cache implementation, as it caches
   // icache/dcache cache line sizes, that can vary between cores on

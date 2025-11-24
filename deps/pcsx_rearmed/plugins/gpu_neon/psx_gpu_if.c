@@ -43,21 +43,12 @@ int do_cmd_list(uint32_t *list, int count,
 {
   int ret;
 
-#if defined(__arm__) && defined(NEON_BUILD) && !defined(SIMD_BUILD)
-  // the asm doesn't bother to save callee-save vector regs, so do it here
-  __asm__ __volatile__("":::"q4","q5","q6","q7");
-#endif
-
   if (gpu.state.enhancement_active)
     ret = gpu_parse_enhanced(&egpu, list, count * 4,
             cycles_sum, cycles_last, (u32 *)last_cmd);
   else
     ret = gpu_parse(&egpu, list, count * 4,
             cycles_sum, cycles_last, (u32 *)last_cmd);
-
-#if defined(__arm__) && defined(NEON_BUILD) && !defined(SIMD_BUILD)
-  __asm__ __volatile__("":::"q4","q5","q6","q7");
-#endif
 
   ex_regs[1] &= ~0x1ff;
   ex_regs[1] |= egpu.texture_settings & 0x1ff;
@@ -223,8 +214,10 @@ void renderer_set_config(const struct rearmed_cbs *cbs)
   if (cbs->pl_set_gpu_caps)
     cbs->pl_set_gpu_caps(GPU_CAP_SUPPORTS_2X);
   
-  egpu.use_dithering = cbs->gpu_neon.allow_dithering;
-  if(!egpu.use_dithering) {
+  egpu.allow_dithering = cbs->dithering;
+  egpu.force_dithering = cbs->dithering >> 1;
+  /*
+  if (!egpu.allow_dithering) {
     egpu.dither_table[0] = dither_table_row(0, 0, 0, 0);
     egpu.dither_table[1] = dither_table_row(0, 0, 0, 0);
     egpu.dither_table[2] = dither_table_row(0, 0, 0, 0);
@@ -235,6 +228,7 @@ void renderer_set_config(const struct rearmed_cbs *cbs)
     egpu.dither_table[2] = dither_table_row(-3, 1, -4, 0);
     egpu.dither_table[3] = dither_table_row(3, -1, 2, -2); 
   }
+  */
 
   egpu.hack_disable_main = cbs->gpu_neon.enhancement_no_main;
   egpu.hack_texture_adj = cbs->gpu_neon.enhancement_tex_adj;

@@ -49,13 +49,17 @@ enum R3000Anote {
 enum blockExecCaller {
 	EXEC_CALLER_BOOT,
 	EXEC_CALLER_HLE,
+	EXEC_CALLER_OTHER,
 };
+
+struct psxRegisters;
 
 typedef struct {
 	int  (*Init)();
 	void (*Reset)();
-	void (*Execute)();
-	void (*ExecuteBlock)(enum blockExecCaller caller); /* executes up to a jump */
+	void (*Execute)(struct psxRegisters *regs);
+	/* executes up to a jump */
+	void (*ExecuteBlock)(struct psxRegisters *regs, enum blockExecCaller caller);
 	void (*Clear)(u32 Addr, u32 Size);
 	void (*Notify)(enum R3000Anote note, void *data);
 	void (*ApplyConfig)();
@@ -176,7 +180,7 @@ typedef struct psxCP2Regs {
 	psxCP2Ctrl CP2C; 	/* Cop2 control registers */
 } psxCP2Regs;
 
-typedef struct {
+typedef struct psxRegisters {
 	// note: some cores like lightrec don't keep their data here,
 	// so use R3000ACPU_NOTIFY_BEFORE_SAVE to sync
 	psxGPRRegs GPR;		/* General Purpose Registers */
@@ -192,28 +196,37 @@ typedef struct {
 	u32 code;			/* The instruction */
 	u32 cycle;
 	u32 interrupt;
-	struct { u32 sCycle, cycle; } intCycle[32];
+	struct { u32 sCycle, cycle; } intCycle[20];
+	u32 event_cycles[20];
+	u32 psxNextCounter;
+	u32 psxNextsCounter;
+	u32 next_interupt;  /* cycle */
+	u32 unused;
 	u32 gteBusyCycle;
 	u32 muldivBusyCycle;
 	u32 subCycle;       /* interpreter cycle counting */
 	u32 subCycleStep;
 	u32 biuReg;
+	u8  stop;
+	u8  branchSeen;     /* interp. */
 	u8  branching;      /* interp. R3000A_BRANCH_TAKEN / not, 0 if not branch */
 	u8  dloadSel;       /* interp. delay load state */
 	u8  dloadReg[2];
+	u8  unused2[2];
 	u32 dloadVal[2];
 	u32 biosBranchCheck;
 	u32 cpuInRecursion;
 	u32 gpuIdleAfter;
-	u32 reserved[1];
+	u32 unused3[2];
 	// warning: changing anything in psxRegisters requires update of all
-	// asm in libpcsxcore/new_dynarec/
+	// asm in libpcsxcore/new_dynarec/ and may break savestates
 } psxRegisters;
 
 extern psxRegisters psxRegs;
 
 /* new_dynarec stuff */
-void new_dyna_freeze(void *f, int mode);
+void ndrc_freeze(void *f, int mode);
+void ndrc_clear_full(void);
 
 int  psxInit();
 void psxReset();
@@ -221,6 +234,7 @@ void psxShutdown();
 void psxException(u32 code, enum R3000Abdt bdt, psxCP0Regs *cp0);
 void psxBranchTest();
 void psxExecuteBios();
+int  psxExecuteBiosEnded(void);
 void psxJumpTest();
 
 void irq10Interrupt();

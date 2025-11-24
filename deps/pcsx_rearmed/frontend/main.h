@@ -19,18 +19,24 @@
 #ifndef __FRONTEND_MAIN_H__
 #define __FRONTEND_MAIN_H__
 
+#include <stdlib.h>
 #include "config.h"
 
-#define DEFAULT_MEM_CARD_1 "/.pcsx/memcards/card1.mcd"
-#define DEFAULT_MEM_CARD_2 "/.pcsx/memcards/card2.mcd"
-#define MEMCARD_DIR "/.pcsx/memcards/"
-#define PLUGINS_DIR "/.pcsx/plugins/"
-#define PLUGINS_CFG_DIR "/.pcsx/plugins/cfg/"
 #define PCSX_DOT_DIR "/.pcsx/"
-#define STATES_DIR "/.pcsx/sstates/"
-#define CHEATS_DIR "/.pcsx/cheats/"
-#define PATCHES_DIR "/.pcsx/patches/"
-#define BIOS_DIR "/bios/"
+#define DEFAULT_MEM_CARD_1 PCSX_DOT_DIR "memcards/card1.mcd"
+#define DEFAULT_MEM_CARD_2 PCSX_DOT_DIR "memcards/card2.mcd"
+#define MEMCARD_DIR        PCSX_DOT_DIR "memcards/"
+#define STATES_DIR         PCSX_DOT_DIR "sstates/"
+#define CHEATS_DIR         PCSX_DOT_DIR "cheats/"
+#define PATCHES_DIR        PCSX_DOT_DIR "patches/"
+#define CFG_DIR            PCSX_DOT_DIR "cfg/"
+#if !defined(PANDORA) && !defined(MIYOO)
+#define BIOS_DIR           PCSX_DOT_DIR "bios/"
+#define SCREENSHOTS_DIR    PCSX_DOT_DIR "screenshots/"
+#else
+#define BIOS_DIR           "/bios/"
+#define SCREENSHOTS_DIR    "/screenshots/"
+#endif
 
 extern char cfgfile_basename[MAXPATHLEN];
 
@@ -45,6 +51,9 @@ void emu_core_ask_exit(void);
 
 void emu_set_default_config(void);
 void emu_on_new_cd(int show_hud_msg);
+
+void emu_make_path(char *buf, size_t size, const char *dir, const char *fname);
+void emu_make_data_path(char *buff, const char *end, int size);
 
 int get_state_filename(char *buf, int size, int i);
 int emu_check_state(int slot);
@@ -83,17 +92,5 @@ enum sched_action {
 };
 
 #define SACTION_GUN_MASK (0x0f << SACTION_GUN_TRIGGER)
-
-static inline void emu_set_action(enum sched_action action_)
-{
-	extern enum sched_action emu_action, emu_action_old;
-	extern int stop;
-
-	if (action_ == SACTION_NONE)
-		emu_action_old = 0;
-	else if (action_ != emu_action_old)
-		stop++;
-	emu_action = action_;
-}
 
 #endif /* __FRONTEND_MAIN_H__ */

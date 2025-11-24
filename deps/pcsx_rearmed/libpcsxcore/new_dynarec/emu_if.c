@@ -13,41 +13,41 @@
 #include "../psxinterpreter.h"
 #include "../psxcounters.h"
 #include "../psxevents.h"
+#include "../psxbios.h"
 #include "../r3000a.h"
 #include "../gte_arm.h"
 #include "../gte_neon.h"
+#include "compiler_features.h"
+#include "arm_features.h"
 #define FLAGLESS
 #include "../gte.h"
+#if defined(NDRC_THREAD) && !defined(DRC_DISABLE) && !defined(LIGHTREC)
+#include "../../frontend/libretro-rthreads.h"
+#include "features/features_cpu.h"
+#include "retro_timers.h"
+#endif
+#ifdef _3DS
+#include <3ds_utils.h>
+#endif
 
+#ifndef ARRAY_SIZE
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
+#endif
 
 //#define evprintf printf
 #define evprintf(...)
 
-void pcsx_mtc0(u32 reg, u32 val)
-{
-	evprintf("MTC0 %d #%x @%08x %u\n", reg, val, psxRegs.pc, psxRegs.cycle);
-	MTC0(&psxRegs, reg, val);
-	gen_interupt(&psxRegs.CP0);
+static void ari64_thread_sync(void);
 
-	//if (psxRegs.CP0.n.Cause & psxRegs.CP0.n.SR & 0x0300) // possible sw irq
-	if ((psxRegs.pc & 0x803ffeff) == 0x80000080)
-		pending_exception = 1;
-}
-
-void pcsx_mtc0_ds(u32 reg, u32 val)
-{
-	evprintf("MTC0 %d #%x @%08x %u\n", reg, val, psxRegs.pc, psxRegs.cycle);
-	MTC0(&psxRegs, reg, val);
-}
-
-void new_dyna_freeze(void *f, int mode)
+void ndrc_freeze(void *f, int mode)
 {
 	const char header_save[8] = "ariblks";
 	uint32_t addrs[1024 * 4];
 	int32_t size = 0;
 	int bytes;
 	char header[8];
+
+	ari64_thread_sync();
 
 	if (mode != 0) { // save
 		size = new_dynarec_save_blocks(addrs, sizeof(addrs));
@@ -59,8 +59,6 @@ void new_dyna_freeze(void *f, int mode)
 		SaveFuncs.write(f, addrs, size);
 	}
 	else {
-		new_dyna_pcsx_mem_load_state();
-
 		bytes = SaveFuncs.read(f, header, sizeof(header));
 		if (bytes != sizeof(header) || strcmp(header, header_save)) {
 			if (bytes > 0)
@@ -86,7 +84,30 @@ void new_dyna_freeze(void *f, int mode)
 	//printf("drc: %d block info entries %s\n", size/8, mode ? "saved" : "loaded");
 }
 
+void ndrc_clear_full(void)
+{
+	ari64_thread_sync();
+	new_dynarec_clear_full();
+}
+
 #if !defined(DRC_DISABLE) && !defined(LIGHTREC)
+#include "linkage_offsets.h"
+
+static void ari64_thread_init(void);
+static int  ari64_thread_check_range(unsigned int start, unsigned int end);
+
+void pcsx_mtc0(psxRegisters *regs, u32 reg, u32 val)
+{
+	evprintf("MTC0 %d #%x @%08x %u\n", reg, val, regs->pc, regs->cycle);
+	MTC0(regs, reg, val);
+	gen_interupt(&regs->CP0);
+}
+
+void pcsx_mtc0_ds(psxRegisters *regs, u32 reg, u32 val)
+{
+	evprintf("MTC0 %d #%x @%08x %u\n", reg, val, regs->pc, regs->cycle);
+	MTC0(regs, reg, val);
+}
 
 /* GTE stuff */
 void *gte_handlers[64];
@@ -189,6 +210,382 @@ const uint64_t gte_reg_writes[64] = {
 	[GTE_NCCT]  = GDBITS9(9,10,11,20,21,22,25,26,27),
 };
 
+static void ari64_reset()
+{
+	ari64_thread_sync();
+	new_dyna_pcsx_mem_reset();
+	new_dynarec_invalidate_all_pages();
+	new_dyna_pcsx_mem_load_state();
+}
+
+// execute until predefined leave points
+// (HLE softcall exit and BIOS fastboot end)
+static void ari64_execute_until(psxRegisters *regs)
+{
+	void *drc_local = (char *)regs - LO_psxRegs;
+
+	assert(drc_local == dynarec_local);
+	evprintf("+exec %08x, %u->%u (%d)\n", regs->pc, regs->cycle,
+		regs->next_interupt, regs->next_interupt - regs->cycle);
+
+	new_dyna_start(drc_local);
+
+	evprintf("-exec %08x, %u->%u (%d) stop %d \n", regs->pc, regs->cycle,
+		regs->next_interupt, regs->next_interupt - regs->cycle, regs->stop);
+}
+
+static void ari64_execute(struct psxRegisters *regs)
+{
+	while (!regs->stop) {
+		schedule_timeslice(regs);
+		ari64_execute_until(regs);
+		evprintf("drc left @%08x\n", regs->pc);
+	}
+}
+
+static void ari64_execute_block(struct psxRegisters *regs, enum blockExecCaller caller)
+{
+	if (caller == EXEC_CALLER_BOOT)
+		regs->stop++;
+
+	regs->next_interupt = regs->cycle + 1;
+	ari64_execute_until(regs);
+
+	if (caller == EXEC_CALLER_BOOT)
+		regs->stop--;
+}
+
+static void ari64_clear(u32 addr, u32 size)
+{
+	u32 end = addr + size * 4; /* PCSX uses DMA units (words) */
+
+	evprintf("ari64_clear %08x %04x\n", addr, size * 4);
+
+	if (!new_dynarec_quick_check_range(addr, end) &&
+	    !ari64_thread_check_range(addr, end))
+		return;
+
+	ari64_thread_sync();
+	new_dynarec_invalidate_range(addr, end);
+}
+
+static void ari64_on_ext_change(int ram_replaced, int other_cpu_emu_exec)
+{
+	if (ram_replaced)
+		ari64_reset();
+	else if (other_cpu_emu_exec)
+		new_dyna_pcsx_mem_load_state();
+}
+
+static void ari64_notify(enum R3000Anote note, void *data) {
+	switch (note)
+	{
+	case R3000ACPU_NOTIFY_CACHE_UNISOLATED:
+	case R3000ACPU_NOTIFY_CACHE_ISOLATED:
+		new_dyna_pcsx_mem_isolate(note == R3000ACPU_NOTIFY_CACHE_ISOLATED);
+		break;
+	case R3000ACPU_NOTIFY_BEFORE_SAVE:
+		break;
+	case R3000ACPU_NOTIFY_AFTER_LOAD:
+		ari64_on_ext_change(data == NULL, 0);
+		psxInt.Notify(note, data);
+		break;
+	}
+}
+
+static void ari64_apply_config()
+{
+	int thread_changed;
+
+	ari64_thread_sync();
+	intApplyConfig();
+
+	if (Config.DisableStalls)
+		ndrc_g.hacks |= NDHACK_NO_STALLS;
+	else
+		ndrc_g.hacks &= ~NDHACK_NO_STALLS;
+
+	thread_changed = ((ndrc_g.hacks | ndrc_g.hacks_pergame) ^ ndrc_g.hacks_old)
+		& (NDHACK_THREAD_FORCE | NDHACK_THREAD_FORCE_ON);
+	if (Config.cycle_multiplier != ndrc_g.cycle_multiplier_old
+	    || (ndrc_g.hacks | ndrc_g.hacks_pergame) != ndrc_g.hacks_old)
+	{
+		new_dynarec_clear_full();
+	}
+	if (thread_changed)
+		ari64_thread_init();
+}
+
+#ifdef NDRC_THREAD
+static void clear_local_cache(void)
+{
+#if defined(__arm__) || defined(__aarch64__)
+	if (ndrc_g.thread.dirty_start) {
+		// see "Ensuring the visibility of updates to instructions"
+		// in v7/v8 reference manuals (DDI0406, DDI0487 etc.)
+#if defined(__aarch64__) || defined(HAVE_ARMV8)
+		// the actual clean/invalidate is broadcast to all cores,
+		// the manual only prescribes an isb
+		__asm__ volatile("isb");
+//#elif defined(_3DS)
+//		ctr_invalidate_icache();
+#else
+		// while on v6 this is always required, on v7 it depends on
+		// "Multiprocessing Extensions" being present, but that is difficult
+		// to detect so do it always for now
+		new_dyna_clear_cache(ndrc_g.thread.dirty_start, ndrc_g.thread.dirty_end);
+#endif
+		ndrc_g.thread.dirty_start = ndrc_g.thread.dirty_end = 0;
+	}
+#endif
+}
+
+static void mixed_execute_block(struct psxRegisters *regs, enum blockExecCaller caller)
+{
+	psxInt.ExecuteBlock(regs, caller);
+}
+
+static void mixed_clear(u32 addr, u32 size)
+{
+	ari64_clear(addr, size);
+	psxInt.Clear(addr, size);
+}
+
+static void mixed_notify(enum R3000Anote note, void *data)
+{
+	ari64_notify(note, data);
+	psxInt.Notify(note, data);
+}
+
+static R3000Acpu psxMixedCpu = {
+	NULL /* Init */, NULL /* Reset */, NULL /* Execute */,
+	mixed_execute_block,
+	mixed_clear,
+	mixed_notify,
+	NULL /* ApplyConfig */,	NULL /* Shutdown */
+};
+
+static noinline void ari64_execute_threaded_slow(struct psxRegisters *regs,
+	enum blockExecCaller block_caller)
+{
+	if (ndrc_g.thread.busy_addr == ~0u) {
+		memcpy(ndrc_smrv_regs, regs->GPR.r, sizeof(ndrc_smrv_regs));
+		slock_lock(ndrc_g.thread.lock);
+		ndrc_g.thread.busy_addr = regs->pc;
+		slock_unlock(ndrc_g.thread.lock);
+		scond_signal(ndrc_g.thread.cond);
+	}
+
+	//ari64_notify(R3000ACPU_NOTIFY_BEFORE_SAVE, NULL);
+	psxInt.Notify(R3000ACPU_NOTIFY_AFTER_LOAD, NULL);
+	assert(psxCpu == &psxRec);
+	psxCpu = &psxMixedCpu;
+	for (;;)
+	{
+		mixed_execute_block(regs, block_caller);
+
+		if (ndrc_g.thread.busy_addr == ~0u)
+			break;
+		if (block_caller == EXEC_CALLER_HLE) {
+			if (!psxBiosSoftcallEnded())
+				continue;
+			break;
+		}
+		else if (block_caller == EXEC_CALLER_BOOT) {
+			if (!psxExecuteBiosEnded())
+				continue;
+			break;
+		}
+		if (regs->stop)
+			break;
+	}
+	psxCpu = &psxRec;
+
+	psxInt.Notify(R3000ACPU_NOTIFY_BEFORE_SAVE, NULL);
+	//ari64_notify(R3000ACPU_NOTIFY_AFTER_LOAD, NULL);
+	ari64_on_ext_change(0, 1);
+}
+
+static void ari64_execute_threaded_once(struct psxRegisters *regs,
+	enum blockExecCaller block_caller)
+{
+	void *drc_local = (char *)regs - LO_psxRegs;
+	struct ht_entry *hash_table =
+		*(void **)((char *)drc_local + LO_hash_table_ptr);
+	void *target;
+
+	if (likely(ndrc_g.thread.busy_addr == ~0u)) {
+		target = ndrc_get_addr_ht_param(hash_table, regs->pc,
+				ndrc_cm_no_compile);
+		if (target) {
+			clear_local_cache();
+			new_dyna_start_at(drc_local, target);
+			return;
+		}
+	}
+	ari64_execute_threaded_slow(regs, block_caller);
+}
+
+static void ari64_execute_threaded(struct psxRegisters *regs)
+{
+	schedule_timeslice(regs);
+	while (!regs->stop)
+	{
+		ari64_execute_threaded_once(regs, EXEC_CALLER_OTHER);
+
+		if ((s32)(regs->cycle - regs->next_interupt) >= 0)
+			schedule_timeslice(regs);
+	}
+}
+
+static void ari64_execute_threaded_block(struct psxRegisters *regs,
+	enum blockExecCaller caller)
+{
+	if (caller == EXEC_CALLER_BOOT)
+		regs->stop++;
+
+	regs->next_interupt = regs->cycle + 1;
+
+	ari64_execute_threaded_once(regs, caller);
+	if (regs->cpuInRecursion) {
+		// must sync since we are returning to compiled code
+		ari64_thread_sync();
+	}
+
+	if (caller == EXEC_CALLER_BOOT)
+		regs->stop--;
+}
+
+static void ari64_thread_sync(void)
+{
+	if (!ndrc_g.thread.lock || ndrc_g.thread.busy_addr == ~0u)
+		return;
+	for (;;) {
+		slock_lock(ndrc_g.thread.lock);
+		slock_unlock(ndrc_g.thread.lock);
+		if (ndrc_g.thread.busy_addr == ~0)
+			break;
+		retro_sleep(0);
+	}
+}
+
+static int ari64_thread_check_range(unsigned int start, unsigned int end)
+{
+	u32 addr = ndrc_g.thread.busy_addr;
+	if (addr == ~0u)
+		return 0;
+
+	addr &= 0x1fffffff;
+	start &= 0x1fffffff;
+	end &= 0x1fffffff;
+	if (addr >= end)
+		return 0;
+	if (addr + MAXBLOCK * 4 <= start)
+		return 0;
+
+	//SysPrintf("%x hits %x-%x\n", addr, start, end);
+	return 1;
+}
+
+static void ari64_compile_thread(void *unused)
+{
+	struct ht_entry *hash_table =
+		*(void **)((char *)dynarec_local + LO_hash_table_ptr);
+	void *target;
+	u32 addr;
+
+	slock_lock(ndrc_g.thread.lock);
+	while (!ndrc_g.thread.exit)
+	{
+		addr = *(volatile unsigned int *)&ndrc_g.thread.busy_addr;
+		if (addr == ~0u)
+			scond_wait(ndrc_g.thread.cond, ndrc_g.thread.lock);
+		addr = *(volatile unsigned int *)&ndrc_g.thread.busy_addr;
+		if (addr == ~0u || ndrc_g.thread.exit)
+			continue;
+
+		target = ndrc_get_addr_ht_param(hash_table, addr,
+				ndrc_cm_compile_in_thread);
+		//printf("c  %08x -> %p\n", addr, target);
+		ndrc_g.thread.busy_addr = ~0u;
+	}
+	slock_unlock(ndrc_g.thread.lock);
+	(void)target;
+}
+
+static void ari64_thread_shutdown(void)
+{
+	psxRec.Execute = ari64_execute;
+	psxRec.ExecuteBlock = ari64_execute_block;
+
+	if (ndrc_g.thread.lock)
+		slock_lock(ndrc_g.thread.lock);
+	ndrc_g.thread.exit = 1;
+	if (ndrc_g.thread.lock)
+		slock_unlock(ndrc_g.thread.lock);
+	if (ndrc_g.thread.cond)
+		scond_signal(ndrc_g.thread.cond);
+	if (ndrc_g.thread.handle) {
+		sthread_join(ndrc_g.thread.handle);
+		ndrc_g.thread.handle = NULL;
+	}
+	if (ndrc_g.thread.cond) {
+		scond_free(ndrc_g.thread.cond);
+		ndrc_g.thread.cond = NULL;
+	}
+	if (ndrc_g.thread.lock) {
+		slock_free(ndrc_g.thread.lock);
+		ndrc_g.thread.lock = NULL;
+	}
+	ndrc_g.thread.busy_addr = ~0u;
+}
+
+static void ari64_thread_init(void)
+{
+	int enable;
+
+	if (ndrc_g.hacks_pergame & NDHACK_THREAD_FORCE)
+		enable = 0;
+	else if (ndrc_g.hacks & NDHACK_THREAD_FORCE)
+		enable = ndrc_g.hacks & NDHACK_THREAD_FORCE_ON;
+	else {
+		u32 cpu_count = cpu_features_get_core_amount();
+		enable = cpu_count > 1;
+#ifdef _3DS
+		// bad for old3ds, reprotedly no improvement for new3ds
+		enable = 0;
+#endif
+	}
+
+	if (!ndrc_g.thread.handle == !enable)
+		return;
+
+	ari64_thread_shutdown();
+	ndrc_g.thread.exit = 0;
+	ndrc_g.thread.busy_addr = ~0u;
+
+	if (enable) {
+		ndrc_g.thread.lock = slock_new();
+		ndrc_g.thread.cond = scond_new();
+	}
+	if (ndrc_g.thread.lock && ndrc_g.thread.cond)
+		ndrc_g.thread.handle = pcsxr_sthread_create(ari64_compile_thread, PCSXRT_DRC);
+	if (ndrc_g.thread.handle) {
+		psxRec.Execute = ari64_execute_threaded;
+		psxRec.ExecuteBlock = ari64_execute_threaded_block;
+	}
+	else {
+		// clean up potential incomplete init
+		ari64_thread_shutdown();
+	}
+	SysPrintf("compiler thread %sabled\n", ndrc_g.thread.handle ? "en" : "dis");
+}
+#else // if !NDRC_THREAD
+static void ari64_thread_init(void) {}
+static void ari64_thread_shutdown(void) {}
+static int ari64_thread_check_range(unsigned int start, unsigned int end) { return 0; }
+#endif
+
 static int ari64_init()
 {
 	static u32 scratch_buf[8*8*2] __attribute__((aligned(64)));
@@ -219,97 +616,19 @@ static int ari64_init()
 #endif
 	psxH_ptr = psxH;
 	zeromem_ptr = zero_mem;
-	scratch_buf_ptr = scratch_buf;
+	scratch_buf_ptr = scratch_buf; // for gte_neon.S
+
+	ndrc_g.cycle_multiplier_old = Config.cycle_multiplier;
+	ndrc_g.hacks_old = ndrc_g.hacks | ndrc_g.hacks_pergame;
+	ari64_apply_config();
+	ari64_thread_init();
 
 	return 0;
 }
 
-static void ari64_reset()
-{
-	new_dyna_pcsx_mem_reset();
-	new_dynarec_invalidate_all_pages();
-	new_dyna_pcsx_mem_load_state();
-	pending_exception = 1;
-}
-
-// execute until predefined leave points
-// (HLE softcall exit and BIOS fastboot end)
-static void ari64_execute_until()
-{
-	evprintf("ari64_execute %08x, %u->%u (%d)\n", psxRegs.pc,
-		psxRegs.cycle, next_interupt, next_interupt - psxRegs.cycle);
-
-	new_dyna_start(dynarec_local);
-
-	evprintf("ari64_execute end %08x, %u->%u (%d)\n", psxRegs.pc,
-		psxRegs.cycle, next_interupt, next_interupt - psxRegs.cycle);
-}
-
-static void ari64_execute()
-{
-	while (!stop) {
-		schedule_timeslice();
-		ari64_execute_until();
-		evprintf("drc left @%08x\n", psxRegs.pc);
-	}
-}
-
-static void ari64_execute_block(enum blockExecCaller caller)
-{
-	if (caller == EXEC_CALLER_BOOT)
-		stop++;
-
-	next_interupt = psxRegs.cycle + 1;
-	ari64_execute_until();
-
-	if (caller == EXEC_CALLER_BOOT)
-		stop--;
-}
-
-static void ari64_clear(u32 addr, u32 size)
-{
-	size *= 4; /* PCSX uses DMA units (words) */
-
-	evprintf("ari64_clear %08x %04x\n", addr, size);
-
-	new_dynarec_invalidate_range(addr, addr + size);
-}
-
-static void ari64_notify(enum R3000Anote note, void *data) {
-	switch (note)
-	{
-	case R3000ACPU_NOTIFY_CACHE_UNISOLATED:
-	case R3000ACPU_NOTIFY_CACHE_ISOLATED:
-		new_dyna_pcsx_mem_isolate(note == R3000ACPU_NOTIFY_CACHE_ISOLATED);
-		break;
-	case R3000ACPU_NOTIFY_BEFORE_SAVE:
-		break;
-	case R3000ACPU_NOTIFY_AFTER_LOAD:
-		if (data == NULL)
-			ari64_reset();
-		psxInt.Notify(note, data);
-		break;
-	}
-}
-
-static void ari64_apply_config()
-{
-	intApplyConfig();
-
-	if (Config.DisableStalls)
-		new_dynarec_hacks |= NDHACK_NO_STALLS;
-	else
-		new_dynarec_hacks &= ~NDHACK_NO_STALLS;
-
-	if (Config.cycle_multiplier != cycle_multiplier_old
-	    || new_dynarec_hacks != new_dynarec_hacks_old)
-	{
-		new_dynarec_clear_full();
-	}
-}
-
 static void ari64_shutdown()
 {
+	ari64_thread_shutdown();
 	new_dynarec_cleanup();
 	new_dyna_pcsx_mem_shutdown();
 }
@@ -327,19 +646,7 @@ R3000Acpu psxRec = {
 
 #else // if DRC_DISABLE
 
-unsigned int address;
-int pending_exception, stop;
-u32 next_interupt;
-int new_dynarec_did_compile;
-int cycle_multiplier_old;
-int new_dynarec_hacks_pergame;
-int new_dynarec_hacks_old;
-int new_dynarec_hacks;
-void *psxH_ptr;
-void *zeromem_ptr;
-u32 zero_mem[0x1000/4];
-void *mem_rtab;
-void *scratch_buf_ptr;
+struct ndrc_globals ndrc_g; // dummy
 void new_dynarec_init() {}
 void new_dyna_start(void *context) {}
 void new_dynarec_cleanup() {}
@@ -353,6 +660,11 @@ void new_dyna_pcsx_mem_isolate(int enable) {}
 void new_dyna_pcsx_mem_shutdown(void) {}
 int  new_dynarec_save_blocks(void *save, int size) { return 0; }
 void new_dynarec_load_blocks(const void *save, int size) {}
+
+#endif // DRC_DISABLE
+
+#ifndef NDRC_THREAD
+static void ari64_thread_sync(void) {}
 #endif
 
 #ifdef DRC_DBG
@@ -413,12 +725,12 @@ void do_insn_trace(void)
 	}
 	// log event changes
 	for (i = 0; i < PSXINT_COUNT; i++) {
-		if (event_cycles[i] != event_cycles_o[i]) {
+		if (psxRegs.event_cycles[i] != event_cycles_o[i]) {
 			byte = 0xf8;
 			fwrite(&byte, 1, 1, f);
 			fwrite(&i, 1, 1, f);
-			fwrite(&event_cycles[i], 1, 4, f);
-			event_cycles_o[i] = event_cycles[i];
+			fwrite(&psxRegs.event_cycles[i], 1, 4, f);
+			event_cycles_o[i] = psxRegs.event_cycles[i];
 		}
 	}
 	#define SAVE_IF_CHANGED(code_, name_) { \
@@ -555,9 +867,9 @@ void do_insn_cmp(void)
 
 	//if (psxRegs.cycle == 166172) breakme();
 
-	if (which_event >= 0 && event_cycles[which_event] != ev_cycles) {
+	if (which_event >= 0 && psxRegs.event_cycles[which_event] != ev_cycles) {
 		printf("bad ev_cycles #%d: %u %u / %u\n", which_event,
-			event_cycles[which_event], ev_cycles, psxRegs.cycle);
+			psxRegs.event_cycles[which_event], ev_cycles, psxRegs.cycle);
 		fatal = 1;
 	}
 
@@ -614,7 +926,8 @@ void do_insn_cmp(void)
 	for (i = 0; i < 8; i++)
 		printf("r%d=%08x r%2d=%08x r%2d=%08x r%2d=%08x\n", i, allregs_p[i],
 			i+8, allregs_p[i+8], i+16, allregs_p[i+16], i+24, allregs_p[i+24]);
-	printf("PC: %08x/%08x, cycle %u, next %u\n", psxRegs.pc, ppc, psxRegs.cycle, next_interupt);
+	printf("PC: %08x/%08x, cycle %u, next %u\n", psxRegs.pc, ppc,
+		psxRegs.cycle, psxRegs.next_interupt);
 	//dump_mem("/tmp/psxram.dump", psxM, 0x200000);
 	//dump_mem("/mnt/ntz/dev/pnd/tmp/psxregs.dump", psxH, 0x10000);
 	exit(1);
@@ -624,4 +937,4 @@ ok:
 	badregs_mask_prev = badregs_mask;
 }
 
-#endif
+#endif // DRC_DBG

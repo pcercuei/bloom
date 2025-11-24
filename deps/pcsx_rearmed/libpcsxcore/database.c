@@ -1,6 +1,7 @@
 #include "misc.h"
 #include "sio.h"
 #include "ppf.h"
+#include "cdrom-async.h"
 #include "new_dynarec/new_dynarec.h"
 #include "lightrec/plugin.h"
 
@@ -31,6 +32,8 @@ static const char * const gpu_slow_llist_db[] =
 	"SLES01712", "SLPS01525", "SLPS91138", "SLPM87102", "SLUS00823",
 	/* Crash Bash */
 	"SCES02834", "SCUS94570", "SCUS94616", "SCUS94654",
+	/* F1 2000 - aborting/resuming dma in menus */
+	"SLUS01120", "SLES02722", "SLES02723", "SLES02724", "SLPS02758", "SLPM80564",
 	/* Final Fantasy IV */
 	"SCES03840", "SLPM86028", "SLUS01360",
 	/* Point Blank - calibration cursor */
@@ -49,14 +52,10 @@ static const char * const gpu_centering_hack_db[] =
 {
 	/* Gradius Gaiden */
 	"SLPM86042", "SLPM86103", "SLPM87323",
+	/* Salamander Deluxe Pack Plus */
+	"SLPM86037",
 	/* Sexy Parodius */
 	"SLPM86009",
-};
-
-static const char * const dualshock_timing1024_hack_db[] =
-{
-	/* Judge Dredd - could also be poor cdrom+mdec+dma timing */
-	"SLUS00630", "SLES00755",
 };
 
 static const char * const dualshock_init_analog_hack_db[] =
@@ -67,6 +66,8 @@ static const char * const dualshock_init_analog_hack_db[] =
 
 static const char * const fractional_Framerate_hack_db[] =
 {
+	/* Contra - Legacy of War - weird char select hang */
+	"SLUS00288", "SLES00608",
 	/* Dance Dance Revolution */
 	"SLPM86503", // 3rd Mix
 	"SLPM86752", // 4th Mix
@@ -79,6 +80,18 @@ static const char * const fractional_Framerate_hack_db[] =
 	"SLES04163",
 	/* Spyro 2 */
 	"SCUS94425", "SCES02104",
+};
+
+static const char * const f1_hack_db[] =
+{
+	/* Formula One Arcade */
+	"SCES03886",
+	/* Formula One '99 */
+	"SLUS00870", "SCPS10101", "SCES01979", "SLES01979",
+	/* Formula One 2000 */
+	"SLUS01134", "SCES02777", "SCES02778", "SCES02779",
+	/* Formula One 2001 */
+	"SCES03404", "SCES03423", "SCES03424", "SCES03524",
 };
 
 #define HACK_ENTRY(var, list) \
@@ -96,9 +109,9 @@ hack_db[] =
 	HACK_ENTRY(cdr_read_timing, cdr_read_hack_db),
 	HACK_ENTRY(gpu_slow_list_walking, gpu_slow_llist_db),
 	HACK_ENTRY(gpu_centering, gpu_centering_hack_db),
-	HACK_ENTRY(gpu_timing1024, dualshock_timing1024_hack_db),
 	HACK_ENTRY(dualshock_init_analog, dualshock_init_analog_hack_db),
 	HACK_ENTRY(fractional_Framerate, fractional_Framerate_hack_db),
+	HACK_ENTRY(f1, f1_hack_db),
 };
 
 static const struct
@@ -118,9 +131,12 @@ cycle_multiplier_overrides[] =
 	{ 174, { "SLES00477" } },
 	/* Brave Fencer Musashi - cd sectors arrive too fast */
 	{ 170, { "SLUS00726", "SLPS01490" } },
-#if defined(DRC_DISABLE) || defined(LIGHTREC) /* new_dynarec has a hack for this game */
+#if defined(DRC_DISABLE) || defined(LIGHTREC) /* ari64 drc has a hack for this game */
 	/* Parasite Eve II - internal timer checks */
 	{ 125, { "SLUS01042", "SLUS01055", "SLES02558", "SLES12558" } },
+	{ 125, { "SLES02559", "SLES12559", "SLES02560", "SLES12560" } },
+	{ 125, { "SLES02561", "SLES12561", "SLES02562", "SLES12562" } },
+	{ 125, { "SCPS45467", "SCPS45468", "SLPS02480", "SLPS02481" } },
 #endif
 	/* Discworld Noir - audio skips if CPU runs too fast */
 	{ 222, { "SLES01549", "SLES02063", "SLES02064" } },
@@ -130,42 +146,44 @@ cycle_multiplier_overrides[] =
 	{ 310, { "SLUS01114", "SLES03286" } },
 	/* Syphon Filter - reportedly hangs under unknown conditions */
 	{ 169, { "SCUS94240" } },
+#ifndef DRC_DISABLE
 	/* Psychic Detective - some weird race condition in the game's cdrom code */
-	{ 222, { "SLUS00165", "SLUS00166", "SLUS00167" } },
-	{ 222, { "SLES00070", "SLES10070", "SLES20070" } },
+	{ 181, { "SLUS00165", "SLUS00166", "SLUS00167" } },
+	{ 181, { "SLES00070", "SLES10070", "SLES20070" } },
+#endif
 	/* Vib-Ribbon - cd timing issues (PAL+ari64drc only?) */
 	{ 200, { "SCES02873" } },
 	/* Zero Divide - sometimes too fast */
 	{ 200, { "SLUS00183", "SLES00159", "SLPS00083", "SLPM80008" } },
+	/* Eagle One: Harrier Attack - hangs (but not in standalone build?) */
+	{ 153, { "SLUS00943" } },
+	/* Sol Divide: FMV timing */
+	{ 200, { "SLUS01519", "SCPS45260", "SLPS01463" } },
+	/* Legend of Legaia - some attack moves lag and cause a/v desync */
+	{ 160, { "SCUS94254", "SCUS94366", "SCES01752" } },
+	{ 160, { "SCES01944", "SCES01945", "SCES01946", "SCES01947" } },
 };
 
 static const struct
 {
-	const char * const id;
-	u32 hacks;
+	int cycles;
+	const char * const id[4];
 }
-lightrec_hacks_db[] =
+gpu_timing_hack_db[] =
 {
-	/* Formula One Arcade */
-	{ "SCES03886", LIGHTREC_HACK_INV_DMA_ONLY },
+	/* Judge Dredd - poor cdrom+mdec+dma+gpu timing */
+	{ 1024, { "SLUS00630", "SLES00755" } },
+	/* F1 2000 - flooding the GPU in menus */
+	{ 300*1024, { "SLUS01120", "SLES02722", "SLES02723", "SLES02724" } },
+	{ 300*1024, { "SLPS02758", "SLPM80564" } },
+	/* Soul Blade - same as above */
+	{ 512*1024, { "SLUS00240", "SCES00577" } },
+};
 
-	/* Formula One '99 */
-	{ "SLUS00870", LIGHTREC_HACK_INV_DMA_ONLY },
-	{ "SCPS10101", LIGHTREC_HACK_INV_DMA_ONLY },
-	{ "SCES01979", LIGHTREC_HACK_INV_DMA_ONLY },
-	{ "SLES01979", LIGHTREC_HACK_INV_DMA_ONLY },
-
-	/* Formula One 2000 */
-	{ "SLUS01134", LIGHTREC_HACK_INV_DMA_ONLY },
-	{ "SCES02777", LIGHTREC_HACK_INV_DMA_ONLY },
-	{ "SCES02778", LIGHTREC_HACK_INV_DMA_ONLY },
-	{ "SCES02779", LIGHTREC_HACK_INV_DMA_ONLY },
-
-	/* Formula One 2001 */
-	{ "SCES03404", LIGHTREC_HACK_INV_DMA_ONLY },
-	{ "SCES03423", LIGHTREC_HACK_INV_DMA_ONLY },
-	{ "SCES03424", LIGHTREC_HACK_INV_DMA_ONLY },
-	{ "SCES03524", LIGHTREC_HACK_INV_DMA_ONLY },
+static const char * const lightrec_hack_db[] =
+{
+	/* Tomb Raider (Rev 2) - boot menu clears over itself */
+	"SLUS00152",
 };
 
 /* Function for automatic patching according to GameID. */
@@ -207,7 +225,9 @@ void Apply_Hacks_Cdrom(void)
 	}
 
 	/* Dynarec game-specific hacks */
-	new_dynarec_hacks_pergame = 0;
+	ndrc_g.hacks_pergame = 0;
+	if (Config.hacks.f1)
+		ndrc_g.hacks_pergame |= NDHACK_THREAD_FORCE; // force without *_ON -> off
 	Config.cycle_multiplier_override = 0;
 
 	for (i = 0; i < ARRAY_SIZE(cycle_multiplier_overrides); i++)
@@ -219,22 +239,38 @@ void Apply_Hacks_Cdrom(void)
 		if (j < ARRAY_SIZE(cycle_multiplier_overrides[i].id))
 		{
 			Config.cycle_multiplier_override = cycle_multiplier_overrides[i].mult;
-			new_dynarec_hacks_pergame |= NDHACK_OVERRIDE_CYCLE_M;
+			ndrc_g.hacks_pergame |= NDHACK_OVERRIDE_CYCLE_M;
 			SysPrintf("using cycle_multiplier_override: %d\n",
 				Config.cycle_multiplier_override);
 			break;
 		}
 	}
 
-	lightrec_hacks = 0;
-
-	for (i = 0; drc_is_lightrec() && i < ARRAY_SIZE(lightrec_hacks_db); i++) {
-		if (strcmp(CdromId, lightrec_hacks_db[i].id) == 0)
+	Config.gpu_timing_override = 0;
+	for (i = 0; i < ARRAY_SIZE(gpu_timing_hack_db); i++)
+	{
+		const char * const * const ids = gpu_timing_hack_db[i].id;
+		for (j = 0; j < ARRAY_SIZE(gpu_timing_hack_db[i].id); j++)
+			if (ids[j] && strcmp(ids[j], CdromId) == 0)
+				break;
+		if (j < ARRAY_SIZE(gpu_timing_hack_db[i].id))
 		{
-			lightrec_hacks = lightrec_hacks_db[i].hacks;
-			SysPrintf("using lightrec_hacks: 0x%x\n", lightrec_hacks);
+			Config.gpu_timing_override = gpu_timing_hack_db[i].cycles;
+			SysPrintf("using gpu_timing_override: %d\n",
+				Config.gpu_timing_override);
 			break;
 		}
+	}
+
+	if (drc_is_lightrec()) {
+		lightrec_hacks = 0;
+		if (Config.hacks.f1)
+			lightrec_hacks |= LIGHTREC_HACK_INV_DMA_ONLY;
+		for (i = 0; i < ARRAY_SIZE(lightrec_hack_db); i++)
+			if (strcmp(lightrec_hack_db[i], CdromId) == 0)
+				lightrec_hacks |= LIGHTREC_HACK_INV_DMA_ONLY;
+		if (lightrec_hacks)
+			SysPrintf("using lightrec_hacks: 0x%x\n", lightrec_hacks);
 	}
 }
 
@@ -274,7 +310,9 @@ static const u16 libcrypt_sectors[16] = {
 int check_unsatisfied_libcrypt(void)
 {
 	const char *p = CdromId + 4;
+	u8 buf_sub[SUB_FRAMESIZE];
 	u16 id, key = 0;
+	u8 msf[3];
 	size_t i;
 
 	if (strncmp(CdromId, "SCE", 3) && strncmp(CdromId, "SLE", 3))
@@ -289,7 +327,8 @@ int check_unsatisfied_libcrypt(void)
 		return 0;
 
 	// detected a protected game
-	if (!CDR_getBufferSub(libcrypt_sectors[0]) && !sbi_sectors) {
+	lba2msf(libcrypt_sectors[0] + 150, &msf[0], &msf[1], &msf[2]);
+	if (!sbi_sectors && cdra_readSub(msf, buf_sub) != 0) {
 		SysPrintf("==================================================\n");
 		SysPrintf("LibCrypt game detected with missing SBI/subchannel\n");
 		SysPrintf("==================================================\n");

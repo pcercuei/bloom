@@ -78,14 +78,12 @@ static void polyInitVertexBuffer(PolyVertex *vbuf, const PtrUnion packet, PolyTy
 	int num_verts = (is_quad) ? 4 : 3;
 	le32_t *ptr;
 
-	// X,Y coords, adjusted by draw offsets
-	s32 x_off = gpu_unai.DrawingOffset[0];
-	s32 y_off = gpu_unai.DrawingOffset[1];
+	// X,Y coords
 	ptr = &packet.U4[1];
 	for (int i=0;  i < num_verts; ++i, ptr += vert_stride) {
 		u32 coords = le32_to_u32(*ptr);
-		vbuf[i].x = GPU_EXPANDSIGN((s16)coords) + x_off;
-		vbuf[i].y = GPU_EXPANDSIGN((s16)(coords >> 16)) + y_off;
+		vbuf[i].x = GPU_EXPANDSIGN(coords);
+		vbuf[i].y = GPU_EXPANDSIGN(coords >> 16);
 	}
 
 	// U,V texture coords (if applicable)
@@ -174,7 +172,7 @@ static inline int vertIdxOfHighestYCoord3(const T *Tptr)
 //   or 1 for second triangle of a quad (idx 1,2,3 of vbuf[]).
 //  Returns true if triangle should be rendered, false if not.
 ///////////////////////////////////////////////////////////////////////////////
-static bool polyUseTriangle(const PolyVertex *vbuf, int tri_num, const PolyVertex **vert_ptrs)
+static bool polyUseTriangle(const PolyVertex *vbuf, int tri_num, const PolyVertex **vert_ptrs, s32 &x_off, s32 &y_off)
 {
 	// Using verts 0,1,2 or is this the 2nd pass of a quad (verts 1,2,3)?
 	const PolyVertex *tri_ptr = &vbuf[(tri_num == 0) ? 0 : 1];
@@ -195,14 +193,20 @@ static bool polyUseTriangle(const PolyVertex *vbuf, int tri_num, const PolyVerte
 	    (highest_y - lowest_y) >= CHKMAX_Y)
 		return false;
 
+	// Determine offsets
+	x_off = gpu_unai.DrawingOffset[0];
+	y_off = gpu_unai.DrawingOffset[1];
+	x_off = GPU_EXPANDSIGN(lowest_x + x_off) - lowest_x;
+	y_off = GPU_EXPANDSIGN(lowest_y + y_off) - lowest_y;
+
 	// Determine if triangle is completely outside clipping range
-	int xmin, xmax, ymin, ymax;
+	s32 xmin, xmax, ymin, ymax;
 	xmin = gpu_unai.DrawingArea[0];  xmax = gpu_unai.DrawingArea[2];
 	ymin = gpu_unai.DrawingArea[1];  ymax = gpu_unai.DrawingArea[3];
-	int clipped_lowest_x  = Max2(xmin,lowest_x);
-	int clipped_lowest_y  = Max2(ymin,lowest_y);
-	int clipped_highest_x = Min2(xmax,highest_x);
-	int clipped_highest_y = Min2(ymax,highest_y);
+	int clipped_lowest_x  = Max2(xmin, lowest_x + x_off);
+	int clipped_lowest_y  = Max2(ymin, lowest_y + y_off);
+	int clipped_highest_x = Min2(xmax, highest_x + x_off);
+	int clipped_highest_y = Min2(ymax, highest_y + y_off);
 	if (clipped_lowest_x >= clipped_highest_x ||
 	    clipped_lowest_y >= clipped_highest_y)
 		return false;
@@ -223,29 +227,31 @@ static bool polyUseTriangle(const PolyVertex *vbuf, int tri_num, const PolyVerte
 /*----------------------------------------------------------------------
 gpuDrawPolyF - Flat-shaded, untextured poly
 ----------------------------------------------------------------------*/
-void gpuDrawPolyF(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad)
+void gpuDrawPolyF(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad,
+	PolyType ptype = POLYTYPE_F)
 {
 	// Set up bgr555 color to be used across calls in inner driver
-	gpu_unai.PixelData = GPU_RGB16(le32_to_u32(packet.U4[0]));
+	gpu_unai.inn.PixelData = GPU_RGB16(le32_to_u32(packet.U4[0]));
 
 	PolyVertex vbuf[4];
-	polyInitVertexBuffer(vbuf, packet, POLYTYPE_F, is_quad);
+	polyInitVertexBuffer(vbuf, packet, ptype, is_quad);
 
 	int total_passes = is_quad ? 2 : 1;
 	int cur_pass = 0;
 	do
 	{
 		const PolyVertex* vptrs[3];
-		if (polyUseTriangle(vbuf, cur_pass, vptrs) == false)
+		s32 x_off, y_off;
+		if (!polyUseTriangle(vbuf, cur_pass, vptrs, x_off, y_off))
 			continue;
 
 		s32 xa, xb, ya, yb;
 		s32 x3, dx3, x4, dx4, dx;
 		s32 x0, x1, x2, y0, y1, y2;
 
-		x0 = vptrs[0]->x;  y0 = vptrs[0]->y;
-		x1 = vptrs[1]->x;  y1 = vptrs[1]->y;
-		x2 = vptrs[2]->x;  y2 = vptrs[2]->y;
+		x0 = vptrs[0]->x + x_off;  y0 = vptrs[0]->y + y_off;
+		x1 = vptrs[1]->x + x_off;  y1 = vptrs[1]->y + y_off;
+		x2 = vptrs[2]->x + x_off;  y2 = vptrs[2]->y + y_off;
 
 		ya = y2 - y0;
 		yb = y2 - y1;
@@ -351,9 +357,9 @@ void gpuDrawPolyF(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad
 				continue;
 
 			le16_t* PixelBase = &gpu_unai.vram[FRAME_OFFSET(0, ya)];
-			int li=gpu_unai.ilace_mask;
-			int pi=(ProgressiveInterlaceEnabled()?(gpu_unai.ilace_mask+1):0);
-			int pif=(ProgressiveInterlaceEnabled()?(gpu_unai.prog_ilace_flag?(gpu_unai.ilace_mask+1):0):1);
+			int li=gpu_unai.inn.ilace_mask;
+			int pi=(ProgressiveInterlaceEnabled()?(gpu_unai.inn.ilace_mask+1):0);
+			int pif=(ProgressiveInterlaceEnabled()?(gpu_unai.prog_ilace_flag?(gpu_unai.inn.ilace_mask+1):0):1);
 
 			for (; loop1; --loop1, ya++, PixelBase += FRAME_WIDTH,
 					x3 += dx3, x4 += dx4 )
@@ -374,26 +380,28 @@ void gpuDrawPolyF(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad
 /*----------------------------------------------------------------------
 gpuDrawPolyFT - Flat-shaded, textured poly
 ----------------------------------------------------------------------*/
-void gpuDrawPolyFT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad)
+void gpuDrawPolyFT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad,
+	PolyType ptype = POLYTYPE_FT)
 {
 	// r8/g8/b8 used if texture-blending & dithering is applied (24-bit light)
-	gpu_unai.r8 = packet.U1[0];
-	gpu_unai.g8 = packet.U1[1];
-	gpu_unai.b8 = packet.U1[2];
+	gpu_unai.inn.r8 = packet.U1[0];
+	gpu_unai.inn.g8 = packet.U1[1];
+	gpu_unai.inn.b8 = packet.U1[2];
 	// r5/g5/b5 used if just texture-blending is applied (15-bit light)
-	gpu_unai.r5 = packet.U1[0] >> 3;
-	gpu_unai.g5 = packet.U1[1] >> 3;
-	gpu_unai.b5 = packet.U1[2] >> 3;
+	gpu_unai.inn.r5 = packet.U1[0] >> 3;
+	gpu_unai.inn.g5 = packet.U1[1] >> 3;
+	gpu_unai.inn.b5 = packet.U1[2] >> 3;
 
 	PolyVertex vbuf[4];
-	polyInitVertexBuffer(vbuf, packet, POLYTYPE_FT, is_quad);
+	polyInitVertexBuffer(vbuf, packet, ptype, is_quad);
 
 	int total_passes = is_quad ? 2 : 1;
 	int cur_pass = 0;
 	do
 	{
 		const PolyVertex* vptrs[3];
-		if (polyUseTriangle(vbuf, cur_pass, vptrs) == false)
+		s32 x_off, y_off;
+		if (!polyUseTriangle(vbuf, cur_pass, vptrs, x_off, y_off))
 			continue;
 
 		s32 xa, xb, ya, yb;
@@ -403,12 +411,12 @@ void gpuDrawPolyFT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_qua
 		s32 u0, u1, u2, v0, v1, v2;
 		s32 du4, dv4;
 
-		x0 = vptrs[0]->x;      y0 = vptrs[0]->y;
-		u0 = vptrs[0]->tex.u;  v0 = vptrs[0]->tex.v;
-		x1 = vptrs[1]->x;      y1 = vptrs[1]->y;
-		u1 = vptrs[1]->tex.u;  v1 = vptrs[1]->tex.v;
-		x2 = vptrs[2]->x;      y2 = vptrs[2]->y;
-		u2 = vptrs[2]->tex.u;  v2 = vptrs[2]->tex.v;
+		x0 = vptrs[0]->x + x_off; y0 = vptrs[0]->y + y_off;
+		u0 = vptrs[0]->tex.u;     v0 = vptrs[0]->tex.v;
+		x1 = vptrs[1]->x + x_off; y1 = vptrs[1]->y + y_off;
+		u1 = vptrs[1]->tex.u;     v1 = vptrs[1]->tex.v;
+		x2 = vptrs[2]->x + x_off; y2 = vptrs[2]->y + y_off;
+		u2 = vptrs[2]->tex.u;     v2 = vptrs[2]->tex.v;
 
 		ya = y2 - y0;
 		yb = y2 - y1;
@@ -460,8 +468,8 @@ void gpuDrawPolyFT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_qua
 #endif
 #endif
 		// Set u,v increments for inner driver
-		gpu_unai.u_inc = du4;
-		gpu_unai.v_inc = dv4;
+		gpu_unai.inn.u_inc = du4;
+		gpu_unai.inn.v_inc = dv4;
 
 		//senquack - TODO: why is it always going through 2 iterations when sometimes one would suffice here?
 		//			 (SAME ISSUE ELSEWHERE)
@@ -661,9 +669,9 @@ void gpuDrawPolyFT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_qua
 				continue;
 
 			le16_t* PixelBase = &gpu_unai.vram[FRAME_OFFSET(0, ya)];
-			int li=gpu_unai.ilace_mask;
-			int pi=(ProgressiveInterlaceEnabled()?(gpu_unai.ilace_mask+1):0);
-			int pif=(ProgressiveInterlaceEnabled()?(gpu_unai.prog_ilace_flag?(gpu_unai.ilace_mask+1):0):1);
+			int li=gpu_unai.inn.ilace_mask;
+			int pi=(ProgressiveInterlaceEnabled()?(gpu_unai.inn.ilace_mask+1):0);
+			int pif=(ProgressiveInterlaceEnabled()?(gpu_unai.prog_ilace_flag?(gpu_unai.inn.ilace_mask+1):0):1);
 
 			for (; loop1; --loop1, ++ya, PixelBase += FRAME_WIDTH,
 					x3 += dx3, x4 += dx4,
@@ -693,8 +701,8 @@ void gpuDrawPolyFT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_qua
 				}
 
 				// Set u,v coords for inner driver
-				gpu_unai.u = u4;
-				gpu_unai.v = v4;
+				gpu_unai.inn.u = u4;
+				gpu_unai.inn.v = v4;
 
 				if (xb > xmax) xb = xmax;
 				if ((xb - xa) > 0)
@@ -717,7 +725,8 @@ void gpuDrawPolyG(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad
 	do
 	{
 		const PolyVertex* vptrs[3];
-		if (polyUseTriangle(vbuf, cur_pass, vptrs) == false)
+		s32 x_off, y_off;
+		if (!polyUseTriangle(vbuf, cur_pass, vptrs, x_off, y_off))
 			continue;
 
 		s32 xa, xb, ya, yb;
@@ -727,12 +736,12 @@ void gpuDrawPolyG(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad
 		s32 r0, r1, r2, g0, g1, g2, b0, b1, b2;
 		s32 dr4, dg4, db4;
 
-		x0 = vptrs[0]->x;      y0 = vptrs[0]->y;
-		r0 = vptrs[0]->col.r;  g0 = vptrs[0]->col.g;  b0 = vptrs[0]->col.b;
-		x1 = vptrs[1]->x;      y1 = vptrs[1]->y;
-		r1 = vptrs[1]->col.r;  g1 = vptrs[1]->col.g;  b1 = vptrs[1]->col.b;
-		x2 = vptrs[2]->x;      y2 = vptrs[2]->y;
-		r2 = vptrs[2]->col.r;  g2 = vptrs[2]->col.g;  b2 = vptrs[2]->col.b;
+		x0 = vptrs[0]->x + x_off; y0 = vptrs[0]->y + y_off;
+		r0 = vptrs[0]->col.r;     g0 = vptrs[0]->col.g;  b0 = vptrs[0]->col.b;
+		x1 = vptrs[1]->x + x_off; y1 = vptrs[1]->y + y_off;
+		r1 = vptrs[1]->col.r;     g1 = vptrs[1]->col.g;  b1 = vptrs[1]->col.b;
+		x2 = vptrs[2]->x + x_off; y2 = vptrs[2]->y + y_off;
+		r2 = vptrs[2]->col.r;     g2 = vptrs[2]->col.g;  b2 = vptrs[2]->col.b;
 
 		ya = y2 - y0;
 		yb = y2 - y1;
@@ -790,7 +799,7 @@ void gpuDrawPolyG(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad
 #endif
 #endif
 		// Setup packed Gouraud increment for inner driver
-		gpu_unai.gInc = gpuPackGouraudColInc(dr4, dg4, db4);
+		gpu_unai.inn.gInc = gpuPackGouraudColInc(dr4, dg4, db4);
 
 		for (s32 loop0 = 2; loop0; loop0--) {
 			if (loop0 == 2) {
@@ -1006,9 +1015,9 @@ void gpuDrawPolyG(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad
 				continue;
 
 			le16_t* PixelBase = &gpu_unai.vram[FRAME_OFFSET(0, ya)];
-			int li=gpu_unai.ilace_mask;
-			int pi=(ProgressiveInterlaceEnabled()?(gpu_unai.ilace_mask+1):0);
-			int pif=(ProgressiveInterlaceEnabled()?(gpu_unai.prog_ilace_flag?(gpu_unai.ilace_mask+1):0):1);
+			int li=gpu_unai.inn.ilace_mask;
+			int pi=(ProgressiveInterlaceEnabled()?(gpu_unai.inn.ilace_mask+1):0);
+			int pif=(ProgressiveInterlaceEnabled()?(gpu_unai.prog_ilace_flag?(gpu_unai.inn.ilace_mask+1):0):1);
 
 			for (; loop1; --loop1, ++ya, PixelBase += FRAME_WIDTH,
 					x3 += dx3, x4 += dx4,
@@ -1042,7 +1051,7 @@ void gpuDrawPolyG(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_quad
 				}
 
 				// Setup packed Gouraud color for inner driver
-				gpu_unai.gCol = gpuPackGouraudCol(r4, g4, b4);
+				gpu_unai.inn.gCol = gpuPackGouraudCol(r4, g4, b4);
 
 				if (xb > xmax) xb = xmax;
 				if ((xb - xa) > 0)
@@ -1065,7 +1074,8 @@ void gpuDrawPolyGT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_qua
 	do
 	{
 		const PolyVertex* vptrs[3];
-		if (polyUseTriangle(vbuf, cur_pass, vptrs) == false)
+		s32 x_off, y_off;
+		if (!polyUseTriangle(vbuf, cur_pass, vptrs, x_off, y_off))
 			continue;
 
 		s32 xa, xb, ya, yb;
@@ -1078,15 +1088,15 @@ void gpuDrawPolyGT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_qua
 		s32 du4, dv4;
 		s32 dr4, dg4, db4;
 
-		x0 = vptrs[0]->x;      y0 = vptrs[0]->y;
-		u0 = vptrs[0]->tex.u;  v0 = vptrs[0]->tex.v;
-		r0 = vptrs[0]->col.r;  g0 = vptrs[0]->col.g;  b0 = vptrs[0]->col.b;
-		x1 = vptrs[1]->x;      y1 = vptrs[1]->y;
-		u1 = vptrs[1]->tex.u;  v1 = vptrs[1]->tex.v;
-		r1 = vptrs[1]->col.r;  g1 = vptrs[1]->col.g;  b1 = vptrs[1]->col.b;
-		x2 = vptrs[2]->x;      y2 = vptrs[2]->y;
-		u2 = vptrs[2]->tex.u;  v2 = vptrs[2]->tex.v;
-		r2 = vptrs[2]->col.r;  g2 = vptrs[2]->col.g;  b2 = vptrs[2]->col.b;
+		x0 = vptrs[0]->x + x_off; y0 = vptrs[0]->y + y_off;
+		u0 = vptrs[0]->tex.u;     v0 = vptrs[0]->tex.v;
+		r0 = vptrs[0]->col.r;     g0 = vptrs[0]->col.g;  b0 = vptrs[0]->col.b;
+		x1 = vptrs[1]->x + x_off; y1 = vptrs[1]->y + y_off;
+		u1 = vptrs[1]->tex.u;     v1 = vptrs[1]->tex.v;
+		r1 = vptrs[1]->col.r;     g1 = vptrs[1]->col.g;  b1 = vptrs[1]->col.b;
+		x2 = vptrs[2]->x + x_off; y2 = vptrs[2]->y + y_off;
+		u2 = vptrs[2]->tex.u;     v2 = vptrs[2]->tex.v;
+		r2 = vptrs[2]->col.r;     g2 = vptrs[2]->col.g;  b2 = vptrs[2]->col.b;
 
 		ya = y2 - y0;
 		yb = y2 - y1;
@@ -1156,9 +1166,9 @@ void gpuDrawPolyGT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_qua
 #endif
 #endif
 		// Set u,v increments and packed Gouraud increment for inner driver
-		gpu_unai.u_inc = du4;
-		gpu_unai.v_inc = dv4;
-		gpu_unai.gInc = gpuPackGouraudColInc(dr4, dg4, db4);
+		gpu_unai.inn.u_inc = du4;
+		gpu_unai.inn.v_inc = dv4;
+		gpu_unai.inn.gInc = gpuPackGouraudColInc(dr4, dg4, db4);
 
 		for (s32 loop0 = 2; loop0; loop0--) {
 			if (loop0 == 2) {
@@ -1401,9 +1411,9 @@ void gpuDrawPolyGT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_qua
 				continue;
 
 			le16_t* PixelBase = &gpu_unai.vram[FRAME_OFFSET(0, ya)];
-			int li=gpu_unai.ilace_mask;
-			int pi=(ProgressiveInterlaceEnabled()?(gpu_unai.ilace_mask+1):0);
-			int pif=(ProgressiveInterlaceEnabled()?(gpu_unai.prog_ilace_flag?(gpu_unai.ilace_mask+1):0):1);
+			int li=gpu_unai.inn.ilace_mask;
+			int pi=(ProgressiveInterlaceEnabled()?(gpu_unai.inn.ilace_mask+1):0);
+			int pif=(ProgressiveInterlaceEnabled()?(gpu_unai.prog_ilace_flag?(gpu_unai.inn.ilace_mask+1):0):1);
 
 			for (; loop1; --loop1, ++ya, PixelBase += FRAME_WIDTH,
 					x3 += dx3, x4 += dx4,
@@ -1446,9 +1456,9 @@ void gpuDrawPolyGT(const PtrUnion packet, const PP gpuPolySpanDriver, u32 is_qua
 				}
 
 				// Set packed Gouraud color and u,v coords for inner driver
-				gpu_unai.u = u4;
-				gpu_unai.v = v4;
-				gpu_unai.gCol = gpuPackGouraudCol(r4, g4, b4);
+				gpu_unai.inn.u = u4;
+				gpu_unai.inn.v = v4;
+				gpu_unai.inn.gCol = gpuPackGouraudCol(r4, g4, b4);
 
 				if (xb > xmax) xb = xmax;
 				if ((xb - xa) > 0)

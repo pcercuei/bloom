@@ -1,10 +1,14 @@
 LOCAL_PATH := $(call my-dir)
+include $(CLEAR_VARS)
 
-$(shell cd "$(LOCAL_PATH)" && ((git describe --always || echo) | sed -e 's/.*/#define REV "\0"/' > ../frontend/revision.h_))
-$(shell cd "$(LOCAL_PATH)" && (diff -q ../frontend/revision.h_ ../frontend/revision.h > /dev/null 2>&1 || cp ../frontend/revision.h_ ../frontend/revision.h))
-$(shell cd "$(LOCAL_PATH)" && (rm ../frontend/revision.h_))
+$(shell cd "$(LOCAL_PATH)" && ((git describe --always || echo) | sed -e 's/.*/#define REV "\0"/' > ../include/revision.h_))
+$(shell cd "$(LOCAL_PATH)" && (diff -q ../include/revision.h_ ../include/revision.h > /dev/null 2>&1 || cp ../include/revision.h_ ../include/revision.h))
+$(shell cd "$(LOCAL_PATH)" && (rm ../include/revision.h_))
 
 USE_LIBRETRO_VFS ?= 0
+USE_ASYNC_CDROM ?= 1
+USE_RTHREADS ?= 0
+NDRC_THREAD ?= 1
 
 ROOT_DIR     := $(LOCAL_PATH)/..
 CORE_DIR     := $(ROOT_DIR)/libpcsxcore
@@ -19,10 +23,13 @@ DYNAREC_DIR  := $(ROOT_DIR)/libpcsxcore/new_dynarec
 DEPS_DIR     := $(ROOT_DIR)/deps
 LIBRETRO_COMMON := $(DEPS_DIR)/libretro-common
 EXTRA_INCLUDES :=
+COREFLAGS    :=
+SOURCES_ASM  :=
 
 # core
 SOURCES_C := $(CORE_DIR)/cdriso.c \
              $(CORE_DIR)/cdrom.c \
+             $(CORE_DIR)/cdrom-async.c \
              $(CORE_DIR)/cheat.c \
              $(CORE_DIR)/database.c \
              $(CORE_DIR)/decode_xa.c \
@@ -56,6 +63,7 @@ SOURCES_C += $(SPU_DIR)/dma.c \
 
 # gpu
 SOURCES_C += $(GPU_DIR)/gpu.c \
+             $(GPU_DIR)/prim.c \
              $(GPU_DIR)/vout_pl.c
 
 # cdrcimg
@@ -93,7 +101,6 @@ SOURCES_C += \
 	     $(LCHDR_ZSTD)/decompress/zstd_ddict.c \
 	     $(LCHDR_ZSTD)/decompress/zstd_decompress_block.c \
 	     $(LCHDR_ZSTD)/decompress/zstd_decompress.c
-SOURCES_ASM :=
 EXTRA_INCLUDES += $(LCHDR)/include $(LCHDR_LZMA)/include $(LCHDR_ZSTD)
 COREFLAGS += -DHAVE_CHD -DZ7_ST -DZSTD_DISABLE_ASM
 ifeq (,$(call gte,$(APP_PLATFORM_LEVEL),18))
@@ -103,7 +110,7 @@ COREFLAGS += -Dgetauxval=0*
 endif
 endif
 
-COREFLAGS += -ffast-math -funroll-loops -DHAVE_LIBRETRO -DNO_FRONTEND -DFRONTEND_SUPPORTS_RGB565 -DANDROID -DREARMED
+COREFLAGS += -ffast-math -DHAVE_LIBRETRO -DNO_FRONTEND -DANDROID -DREARMED
 COREFLAGS += -DP_HAVE_MMAP=1 -DP_HAVE_PTHREAD=1 -DP_HAVE_POSIX_MEMALIGN=1
 
 ifeq ($(USE_LIBRETRO_VFS),1)
@@ -122,6 +129,7 @@ COREFLAGS += -DUSE_LIBRETRO_VFS
 endif
 EXTRA_INCLUDES += $(LIBRETRO_COMMON)/include
 
+USE_RTHREADS=0
 HAVE_ARI64=0
 HAVE_LIGHTREC=0
 LIGHTREC_CUSTOM_MAP=0
@@ -146,6 +154,8 @@ else
 endif
   COREFLAGS   += -DLIGHTREC_CUSTOM_MAP=$(LIGHTREC_CUSTOM_MAP)
   COREFLAGS   += -DLIGHTREC_ENABLE_THREADED_COMPILER=$(LIGHTREC_THREADED_COMPILER)
+  COREFLAGS   += -DLIGHTREC_ENABLE_DISASSEMBLER=$(or $(LIGHTREC_DEBUG),0)
+  COREFLAGS   += -DLIGHTREC_NO_DEBUG=$(if $(LIGHTREC_DEBUG),0,1)
 
 ifeq ($(HAVE_ARI64),1)
   SOURCES_C   += $(DYNAREC_DIR)/new_dynarec.c \
@@ -156,6 +166,10 @@ ifeq ($(HAVE_ARI64),1)
     SOURCES_ASM += $(CORE_DIR)/gte_arm.S \
                    $(SPU_DIR)/arm_utils.S \
                    $(DYNAREC_DIR)/linkage_arm.S
+  endif
+  ifeq ($(NDRC_THREAD),1)
+  COREFLAGS   += -DNDRC_THREAD
+  USE_RTHREADS := 1
   endif
 endif
   SOURCES_C   += $(DYNAREC_DIR)/emu_if.c
@@ -196,10 +210,7 @@ endif
 ifeq ($(HAVE_GPU_NEON),1)
   COREFLAGS   += -DNEON_BUILD -DTEXTURE_CACHE_4BPP -DTEXTURE_CACHE_8BPP -DGPU_NEON
   ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)
-    COREFLAGS   += -DHAVE_bgr555_to_rgb565 -DHAVE_bgr888_to_x
-    SOURCES_ASM += $(CORE_DIR)/gte_neon.S \
-                   $(NEON_DIR)/psx_gpu/psx_gpu_arm_neon.S \
-                   $(FRONTEND_DIR)/cspace_neon.S
+    SOURCES_ASM += $(NEON_DIR)/psx_gpu/psx_gpu_arm_neon.S
   else
     COREFLAGS   += -DSIMD_BUILD
     SOURCES_C   += $(NEON_DIR)/psx_gpu/psx_gpu_simd.c
@@ -216,19 +227,37 @@ else
   SOURCES_C += $(PEOPS_DIR)/gpulib_if.c
 endif
 
+ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)
+  COREFLAGS   += -DHAVE_bgr555_to_rgb565 -DHAVE_bgr888_to_x
+  SOURCES_ASM += $(CORE_DIR)/gte_neon.S \
+                 $(FRONTEND_DIR)/cspace_neon.S
+endif
+
+ifeq ($(USE_ASYNC_CDROM),1)
+COREFLAGS += -DUSE_ASYNC_CDROM
+USE_RTHREADS := 1
+endif
+ifeq ($(USE_RTHREADS),1)
+SOURCES_C += \
+             $(FRONTEND_DIR)/libretro-rthreads.c \
+             $(LIBRETRO_COMMON)/features/features_cpu.c
+COREFLAGS += -DHAVE_RTHREADS
+endif
+
 GIT_VERSION := " $(shell git rev-parse --short HEAD || echo unknown)"
 ifneq ($(GIT_VERSION)," unknown")
   COREFLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
 endif
 
-include $(CLEAR_VARS)
 LOCAL_MODULE        := retro
 LOCAL_SRC_FILES     := $(SOURCES_C) $(SOURCES_ASM)
 LOCAL_CFLAGS        := $(COREFLAGS)
 LOCAL_C_INCLUDES    := $(ROOT_DIR)/include
 LOCAL_C_INCLUDES    += $(DEPS_DIR)/crypto
 LOCAL_C_INCLUDES    += $(EXTRA_INCLUDES)
-LOCAL_LDFLAGS       := -Wl,-version-script=$(FRONTEND_DIR)/link.T
+LOCAL_LDFLAGS       := -Wl,-version-script=$(FRONTEND_DIR)/libretro-version-script
+LOCAL_LDFLAGS       += -Wl,--script=$(FRONTEND_DIR)/libretro-extern.T
+LOCAL_LDFLAGS       += -Wl,--gc-sections
 LOCAL_LDLIBS        := -lz -llog
 LOCAL_ARM_MODE      := arm
 

@@ -26,14 +26,18 @@
 
 #ifdef __MACH__
 #define dynarec_local		ESYM(dynarec_local)
-#define ndrc_add_jump_out	ESYM(ndrc_add_jump_out)
+#define ndrc_patch_link		ESYM(ndrc_patch_link)
 #define ndrc_get_addr_ht	ESYM(ndrc_get_addr_ht)
 #define ndrc_get_addr_ht_param	ESYM(ndrc_get_addr_ht_param)
 #define ndrc_write_invalidate_one ESYM(ndrc_write_invalidate_one)
 #define gen_interupt		ESYM(gen_interupt)
-#define gteCheckStallRaw	ESYM(gteCheckStallRaw)
 #define psxException		ESYM(psxException)
 #define execI			ESYM(execI)
+#endif
+
+/* make mini_ht reachable with a single armv4 insn */
+#if (LO_mini_ht & ~0xff0)
+#error misligned mini_ht
 #endif
 
 	.bss
@@ -53,24 +57,19 @@ dynarec_local:
 #define DRC_VAR(name, size_) \
 	DRC_VAR_(name, ESYM(name), size_)
 
-DRC_VAR(next_interupt, 4)
+@DRC_VAR(next_interupt, 4)
 DRC_VAR(cycle_count, 4)
 DRC_VAR(last_count, 4)
-DRC_VAR(pending_exception, 4)
-DRC_VAR(stop, 4)
-DRC_VAR(branch_target, 4)
+@DRC_VAR(stop, 4)
 DRC_VAR(address, 4)
 DRC_VAR(hack_addr, 4)
 DRC_VAR(psxRegs, LO_psxRegs_end - LO_psxRegs)
 
 /* psxRegs */
-@DRC_VAR(reg, 128)
-DRC_VAR(lo, 4)
-DRC_VAR(hi, 4)
-DRC_VAR(reg_cop0, 128)
+@DRC_VAR(lo, 4)
+@DRC_VAR(hi, 4)
 DRC_VAR(reg_cop2d, 128)
 DRC_VAR(reg_cop2c, 128)
-DRC_VAR(pcaddr, 4)
 @DRC_VAR(code, 4)
 @DRC_VAR(cycle, 4)
 @DRC_VAR(interrupt, 4)
@@ -86,6 +85,7 @@ DRC_VAR(zeromem_ptr, 4)
 DRC_VAR(invc_ptr, 4)
 DRC_VAR(scratch_buf_ptr, 4)
 DRC_VAR(ram_offset, 4)
+DRC_VAR(hash_table_ptr, 4)
 DRC_VAR(mini_ht, 256)
 
 
@@ -148,39 +148,35 @@ DRC_VAR(mini_ht, 256)
 FUNCTION(dyna_linker):
 	/* r0 = virtual target address */
 	/* r1 = pointer to an instruction to patch */
-#ifndef NO_WRITE_EXEC
+#if 1
 	ldr	r7, [r1]
 	mov	r4, r0
 	add	r6, r7, #2
 	mov	r5, r1
 	lsl	r6, r6, #8
 	/* must not compile - that might expire the caller block */
-	mov	r1, #0
+	ldr	r0, [fp, #LO_hash_table_ptr]
+	mov	r1, r4
+	mov	r2, #0 /* ndrc_compile_mode=ndrc_cm_no_compile */
 	bl	ndrc_get_addr_ht_param
 
 	movs	r8, r0
 	beq	0f
 	add	r6, r5, r6, asr #6  /* old target */
 	teq	r0, r6
-	moveq	pc, r0 /* Stale i-cache */
+	bxeq	r0     /* Stale i-cache */
 	mov	r0, r4
-	mov	r1, r6
-	bl	ndrc_add_jump_out
-
-	sub	r2, r8, r5
-	and	r1, r7, #0xff000000
-	lsl	r2, r2, #6
-	sub	r1, r1, #2
-	add	r1, r1, r2, lsr #8
-	str	r1, [r5]
-	mov	pc, r8
+	mov	r1, r5
+	mov	r2, r6
+	mov	r3, r8
+	bl	ndrc_patch_link
+	bx	r8
 0:
 	mov	r0, r4
-#else
-	/* XXX: should be able to do better than this... */
 #endif
+	ldr	r1, [fp, #LO_hash_table_ptr]
 	bl	ndrc_get_addr_ht
-	mov	pc, r0
+	bx	r0
 	.size	dyna_linker, .-dyna_linker
 
 	.align	2
@@ -228,35 +224,35 @@ FUNCTION(jump_vaddr_r7):
 	add	r0, r7, #0
 	.size	jump_vaddr_r7, .-jump_vaddr_r7
 FUNCTION(jump_vaddr_r0):
+	ldr     r1, [fp, #LO_hash_table_ptr]
 	bl	ndrc_get_addr_ht
-	mov	pc, r0
+	bx	r0
 	.size	jump_vaddr_r0, .-jump_vaddr_r0
 
 	.align	2
 FUNCTION(cc_interrupt):
 	ldr	r0, [fp, #LO_last_count]
-	mov	r1, #0
-	add	r10, r0, r10
-	str	r1, [fp, #LO_pending_exception]
-	str	r10, [fp, #LO_cycle]		/* PCSX cycles */
+	ldr	r9, [fp, #LO_pcaddr]
+	add	r1, r0, r10
+	str	r1, [fp, #LO_cycle]		/* PCSX cycles */
 	mov	r10, lr
 
 	add	r0, fp, #LO_reg_cop0            /* CP0 */
 	bl	gen_interupt
 	mov	lr, r10
 	ldr	r10, [fp, #LO_cycle]
-	ldr	r0, [fp, #LO_next_interupt]
-	ldr	r1, [fp, #LO_pending_exception]
-	ldr	r2, [fp, #LO_stop]
-	str	r0, [fp, #LO_last_count]
-	sub	r10, r10, r0
+	ldr	r0, [fp, #LO_pcaddr]
+	ldr	r1, [fp, #LO_next_interupt]
+	ldrb	r2, [fp, #LO_stop]
+	str	r1, [fp, #LO_last_count]
+	sub	r10, r10, r1
 	tst	r2, r2
 	ldmfdne	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, ip, pc}
-	tst	r1, r1
-	moveq	pc, lr
-	ldr	r0, [fp, #LO_pcaddr]
+	cmp	r0, r9
+	bxeq	lr
+	ldr     r1, [fp, #LO_hash_table_ptr]
 	bl	ndrc_get_addr_ht
-	mov	pc, r0
+	bx	r0
 	.size	cc_interrupt, .-cc_interrupt
 
 	.align	2
@@ -303,7 +299,7 @@ call_psxException:
 	/* note: psxException might do recursive recompiler call from it's HLE code,
 	 * so be ready for this */
 FUNCTION(jump_to_new_pc):
-	ldr	r2, [fp, #LO_stop]
+	ldrb	r2, [fp, #LO_stop]
 	ldr	r1, [fp, #LO_next_interupt]
 	ldr	r10, [fp, #LO_cycle]
 	ldr	r0, [fp, #LO_pcaddr]
@@ -311,8 +307,9 @@ FUNCTION(jump_to_new_pc):
 	str	r1, [fp, #LO_last_count]
 	sub	r10, r10, r1
 	bne	new_dyna_leave
+	ldr     r1, [fp, #LO_hash_table_ptr]
 	bl	ndrc_get_addr_ht
-	mov	pc, r0
+	bx	r0
 	.size	jump_to_new_pc, .-jump_to_new_pc
 
 	.align	2
@@ -404,17 +401,25 @@ invalidate_addr_call:
 	.size	invalidate_addr_call, .-invalidate_addr_call
 
 	.align	2
-FUNCTION(new_dyna_start):
+FUNCTION(new_dyna_start_at):
 	/* ip is stored to conform EABI alignment */
 	stmfd	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, ip, lr}
 	mov	fp, r0 /* dynarec_local */
+	mov     r0, r1
+	b       new_dyna_start_at_e
+
+FUNCTION(new_dyna_start):
+	stmfd	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, ip, lr}
+	mov	fp, r0 /* dynarec_local */
 	ldr	r0, [fp, #LO_pcaddr]
+	ldr     r1, [fp, #LO_hash_table_ptr]
 	bl	ndrc_get_addr_ht
+new_dyna_start_at_e:
 	ldr	r1, [fp, #LO_next_interupt]
 	ldr	r10, [fp, #LO_cycle]
 	str	r1, [fp, #LO_last_count]
 	sub	r10, r10, r1
-	mov	pc, r0
+	bx	r0
 	.size	new_dyna_start, .-new_dyna_start
 
 /* --------------------------------------- */
@@ -443,7 +448,7 @@ FUNCTION(new_dyna_start):
 .else
 	\readop	r0, [r1, r3, lsl #\tab_shift]
 .endif
-	movcc	pc, lr
+	bxcc	lr
 	mov	r2, r12
 	str	r12, [fp, #LO_cycle]
 .endm
@@ -482,7 +487,7 @@ FUNCTION(jump_handler_read32):
 .else
 	\wrtop	r1, [r3, r12, lsl #\tab_shift]
 .endif
-	movcc	pc, lr
+	bxcc	lr
 	ldr	r12, [fp, #LO_last_count]
 	mov     r0, r1
 	add	r2, r2, r12
@@ -622,18 +627,6 @@ FUNCTION(rcnt2_read_count_m1):
 	mov	r0, r2, lsl #16-3
 	sub	r0, r0, r3, lsl #16-3
 	lsr	r0, #16			@ /= 8
-	bx	lr
-
-FUNCTION(call_gteStall):
-	/* r0 = op_cycles, r1 = cycles */
-	ldr	r2, [fp, #LO_last_count]
-	str	lr, [fp, #LO_saved_lr]
-	add	r1, r1, r2
-	str	r1, [fp, #LO_cycle]
-	add	r1, fp, #LO_psxRegs
-	bl	gteCheckStallRaw
-	ldr	lr, [fp, #LO_saved_lr]
-	add	r10, r10, r0
 	bx	lr
 
 #ifdef HAVE_ARMV6

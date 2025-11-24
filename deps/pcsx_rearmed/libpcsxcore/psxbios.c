@@ -325,7 +325,7 @@ static int card_io_delay;
 #define CARD_HARDLER_READM  0x5689 // fake, for psxBios_read()
 #define CARD_HARDLER_INFO   0x5B64
 
-#define HLEOP(n) SWAPu32((0x3b << 26) | (n));
+#define HLEOP(n) SWAPu32((0x3bu << 26) | (n));
 
 static u8 loadRam8(u32 addr)
 {
@@ -404,9 +404,22 @@ static void mips_return_void_c(u32 cycle)
 static int returned_from_exception(void)
 {
 	// 0x80000080 means it took another exception just after return
-	return pc0 == k0 || pc0 == 0x80000080;
+	return pc0 == k0 || pc0 == 0x80000080
+#ifdef LIGHTREC
+		// lightrec doesn't return at 0x80000080, so look
+		// for the next block too
+		|| pc0 == A_EXCEPTION
+#endif
+		;
 }
 
+int psxBiosSoftcallEnded(void)
+{
+	return pc0 == 0x80001000 || returned_from_exception();
+}
+
+// TODO: get rid of this softCall() thing as recursive cpu calls cause
+// complications with dynarecs
 static inline void softCall(u32 pc) {
 	u32 sra = ra;
 	u32 ssr = psxRegs.CP0.n.SR;
@@ -419,14 +432,15 @@ static inline void softCall(u32 pc) {
 	psxRegs.cpuInRecursion++;
 	psxCpu->Notify(R3000ACPU_NOTIFY_AFTER_LOAD, PTR_1);
 
-	while (pc0 != 0x80001000 && ++lim < 0x100000)
-		psxCpu->ExecuteBlock(EXEC_CALLER_HLE);
+	while (!psxBiosSoftcallEnded() && ++lim < 0x100000)
+		psxCpu->ExecuteBlock(&psxRegs, EXEC_CALLER_HLE);
 
 	psxCpu->Notify(R3000ACPU_NOTIFY_BEFORE_SAVE, PTR_1);
 	psxRegs.cpuInRecursion--;
 
-	if (lim == 0x100000)
-		PSXBIOS_LOG("softCall @%x hit lim\n", pc);
+	if (pc0 != 0x80001000)
+		log_unhandled("%s @%x did not return (@%x cnt=%d)\n",
+			__func__, pc, pc0, lim);
 	ra = sra;
 	psxRegs.CP0.n.SR |= ssr & 0x404;
 }
@@ -444,14 +458,15 @@ static inline void softCallInException(u32 pc) {
 	psxRegs.cpuInRecursion++;
 	psxCpu->Notify(R3000ACPU_NOTIFY_AFTER_LOAD, PTR_1);
 
-	while (!returned_from_exception() && pc0 != 0x80001000 && ++lim < 0x100000)
-		psxCpu->ExecuteBlock(EXEC_CALLER_HLE);
+	while (!psxBiosSoftcallEnded() && ++lim < 0x100000)
+		psxCpu->ExecuteBlock(&psxRegs, EXEC_CALLER_HLE);
 
 	psxCpu->Notify(R3000ACPU_NOTIFY_BEFORE_SAVE, PTR_1);
 	psxRegs.cpuInRecursion--;
 
-	if (lim == 0x100000)
-		PSXBIOS_LOG("softCallInException @%x hit lim\n", pc);
+	if (pc0 != 0x80001000 && !psxBiosSoftcallEnded())
+		log_unhandled("%s @%x did not return (@%x cnt=%d)\n",
+			__func__, pc, pc0, lim);
 	if (pc0 == 0x80001000)
 		ra = sra;
 }
@@ -1623,8 +1638,8 @@ static u8 cdrom_sync(int do_ack)
 {
 	u8 r = 0;
 	if (psxRegs.interrupt & (1u << PSXINT_CDR)) {
-		if ((s32)(psxRegs.cycle - event_cycles[PSXINT_CDR]) < 0)
-			psxRegs.cycle = event_cycles[PSXINT_CDR] + 1;
+		if ((s32)(psxRegs.cycle - psxRegs.event_cycles[PSXINT_CDR]) < 0)
+			psxRegs.cycle = psxRegs.event_cycles[PSXINT_CDR] + 1;
 		irq_test(&psxRegs.CP0);
 	}
 	if (do_ack) {
@@ -2270,8 +2285,8 @@ static void psxBios_WaitEvent() { // 0a
 
 	// retrigger this hlecall after the next emulation event
 	pc0 -= 4;
-	if ((s32)(next_interupt - psxRegs.cycle) > 0)
-		psxRegs.cycle = next_interupt;
+	if ((s32)(psxRegs.next_interupt - psxRegs.cycle) > 0)
+		psxRegs.cycle = psxRegs.next_interupt;
 	psxBranchTest();
 }
 
@@ -4564,7 +4579,7 @@ void psxBiosCheckBranch(void)
 	if (cycles_passed < 10 || cycles_passed > 50 || v0 != v0_expect)
 		return;
 
-	waste_cycles = schedule_timeslice() - psxRegs.cycle;
+	waste_cycles = schedule_timeslice(&psxRegs) - psxRegs.cycle;
 	loops = waste_cycles / cycles_passed;
 	if (loops > v0)
 		loops = v0;

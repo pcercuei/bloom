@@ -54,7 +54,7 @@ void CALLBACK SPUwriteRegister(unsigned long reg, unsigned short val,
  int changed = spu.regArea[rofs] != val;
  spu.regArea[rofs] = val;
 
- if (!changed && (ignore_dupe[rofs >> 5] & (1 << (rofs & 0x1f))))
+ if (!changed && (ignore_dupe[rofs >> 5] & (1u << (rofs & 0x1f))))
   return;
  // zero keyon/keyoff?
  if (val == 0 && (r & 0xff8) == 0xd88)
@@ -177,10 +177,21 @@ void CALLBACK SPUwriteRegister(unsigned long reg, unsigned short val,
     //-------------------------------------------------//
 
     case H_SPUmvolL:
-    case H_SPUmvolR:
-      if (val & 0x8000)
+    case H_SPUmvolR: {
+      int ofs = H_SPUcmvolL - H_SPUmvolL;
+      unsigned short *cur = &regAreaGet(r + ofs);
+      if (val & 0x8000) {
+        // this (for now?) lacks an update mechanism, so is instant
         log_unhandled("w master sweep: %08lx %04x\n", reg, val);
+        int was_neg = (*cur >> 14) & 1;
+        int dec = (val >> 13) & 1;
+        int inv = (val >> 12) & 1;
+        *cur = (was_neg ^ dec ^ inv) ? 0x7fff : 0;
+      }
+      else
+        *cur = val << 1;
       break;
+     }
 
     case 0x0dac:
      if (val != 4)
@@ -194,14 +205,6 @@ void CALLBACK SPUwriteRegister(unsigned long reg, unsigned short val,
     //-------------------------------------------------//
     case H_ExtRight:
      //auxprintf("ER %d\n",val);
-      break;
-    //-------------------------------------------------//
-    case H_SPUmvolL:
-     //auxprintf("ML %d\n",val);
-      break;
-    //-------------------------------------------------//
-    case H_SPUmvolR:
-     //auxprintf("MR %d\n",val);
       break;
     //-------------------------------------------------//
     case H_SPUMute1:
@@ -278,38 +281,38 @@ void CALLBACK SPUwriteRegister(unsigned long reg, unsigned short val,
       ReverbOn(16,24,val);
       break;
     //-------------------------------------------------//
-    case H_Reverb+0   : goto rvbd;
-    case H_Reverb+2   : goto rvbd;
-    case H_Reverb+4   : spu.rvb->IIR_ALPHA=(short)val;   break;
-    case H_Reverb+6   : spu.rvb->ACC_COEF_A=(short)val;  break;
-    case H_Reverb+8   : spu.rvb->ACC_COEF_B=(short)val;  break;
-    case H_Reverb+10  : spu.rvb->ACC_COEF_C=(short)val;  break;
-    case H_Reverb+12  : spu.rvb->ACC_COEF_D=(short)val;  break;
-    case H_Reverb+14  : spu.rvb->IIR_COEF=(short)val;    break;
-    case H_Reverb+16  : spu.rvb->FB_ALPHA=(short)val;    break;
-    case H_Reverb+18  : spu.rvb->FB_X=(short)val;        break;
-    case H_Reverb+20  : goto rvbd;
-    case H_Reverb+22  : goto rvbd;
-    case H_Reverb+24  : goto rvbd;
-    case H_Reverb+26  : goto rvbd;
-    case H_Reverb+28  : goto rvbd;
-    case H_Reverb+30  : goto rvbd;
-    case H_Reverb+32  : goto rvbd;
-    case H_Reverb+34  : goto rvbd;
-    case H_Reverb+36  : goto rvbd;
-    case H_Reverb+38  : goto rvbd;
-    case H_Reverb+40  : goto rvbd;
-    case H_Reverb+42  : goto rvbd;
-    case H_Reverb+44  : goto rvbd;
-    case H_Reverb+46  : goto rvbd;
-    case H_Reverb+48  : goto rvbd;
-    case H_Reverb+50  : goto rvbd;
-    case H_Reverb+52  : goto rvbd;
-    case H_Reverb+54  : goto rvbd;
-    case H_Reverb+56  : goto rvbd;
-    case H_Reverb+58  : goto rvbd;
-    case H_Reverb+60  : spu.rvb->IN_COEF_L=(short)val;   break;
-    case H_Reverb+62  : spu.rvb->IN_COEF_R=(short)val;   break;
+    case H_Reverb + 0x00 : goto rvbd;
+    case H_Reverb + 0x02 : goto rvbd;
+    case H_Reverb + 0x04 : spu.rvb->vIIR   = (signed short)val; break;
+    case H_Reverb + 0x06 : spu.rvb->vCOMB1 = (signed short)val; break;
+    case H_Reverb + 0x08 : spu.rvb->vCOMB2 = (signed short)val; break;
+    case H_Reverb + 0x0a : spu.rvb->vCOMB3 = (signed short)val; break;
+    case H_Reverb + 0x0c : spu.rvb->vCOMB4 = (signed short)val; break;
+    case H_Reverb + 0x0e : spu.rvb->vWALL  = (signed short)val; break;
+    case H_Reverb + 0x10 : spu.rvb->vAPF1  = (signed short)val; break;
+    case H_Reverb + 0x12 : spu.rvb->vAPF2  = (signed short)val; break;
+    case H_Reverb + 0x14 : goto rvbd;
+    case H_Reverb + 0x16 : goto rvbd;
+    case H_Reverb + 0x18 : goto rvbd;
+    case H_Reverb + 0x1a : goto rvbd;
+    case H_Reverb + 0x1c : goto rvbd;
+    case H_Reverb + 0x1e : goto rvbd;
+    case H_Reverb + 0x20 : goto rvbd;
+    case H_Reverb + 0x22 : goto rvbd;
+    case H_Reverb + 0x24 : goto rvbd;
+    case H_Reverb + 0x26 : goto rvbd;
+    case H_Reverb + 0x28 : goto rvbd;
+    case H_Reverb + 0x2a : goto rvbd;
+    case H_Reverb + 0x2c : goto rvbd;
+    case H_Reverb + 0x2e : goto rvbd;
+    case H_Reverb + 0x30 : goto rvbd;
+    case H_Reverb + 0x32 : goto rvbd;
+    case H_Reverb + 0x34 : goto rvbd;
+    case H_Reverb + 0x36 : goto rvbd;
+    case H_Reverb + 0x38 : goto rvbd;
+    case H_Reverb + 0x3a : goto rvbd;
+    case H_Reverb + 0x3c : spu.rvb->vLIN = (signed short)val; break;
+    case H_Reverb + 0x3e : spu.rvb->vRIN = (signed short)val; break;
    }
  return;
 
@@ -389,7 +392,12 @@ unsigned short CALLBACK SPUreadRegister(unsigned long reg, unsigned int cycles)
  
     case H_SPUMute1:
     case H_SPUMute2:
-     log_unhandled("r isOn: %08lx\n", reg);
+     log_unhandled("spu r isOn: %08lx %04x\n", reg, regAreaGet(r));
+     break;
+
+    case H_SPUmvolL:
+    case H_SPUmvolR:
+     log_unhandled("spu r mvol: %08lx %04x\n", reg, regAreaGet(r));
      break;
 
     case 0x0dac:
@@ -402,7 +410,7 @@ unsigned short CALLBACK SPUreadRegister(unsigned long reg, unsigned int cycles)
 
     default:
      if (r >= 0xda0)
-       log_unhandled("spu r %08lx\n", reg);
+       log_unhandled("spu r %08lx %04x\n", reg, regAreaGet(r));
      break;
   }
 

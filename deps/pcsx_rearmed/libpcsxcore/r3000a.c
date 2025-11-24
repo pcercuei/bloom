@@ -29,6 +29,11 @@
 #include "psxbios.h"
 #include "psxevents.h"
 #include "../include/compiler_features.h"
+#include <assert.h>
+
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
+#endif
 
 R3000Acpu *psxCpu = NULL;
 #ifdef DRC_DISABLE
@@ -36,6 +41,9 @@ psxRegisters psxRegs;
 #endif
 
 int psxInit() {
+	assert(PSXINT_COUNT <= ARRAY_SIZE(psxRegs.intCycle));
+	assert(ARRAY_SIZE(psxRegs.intCycle) == ARRAY_SIZE(psxRegs.event_cycles));
+
 #ifndef DRC_DISABLE
 	if (Config.Cpu == CPU_INTERPRETER) {
 		psxCpu = &psxInt;
@@ -54,6 +62,8 @@ int psxInit() {
 
 void psxReset() {
 	boolean introBypassed = FALSE;
+	boolean oldhle = Config.HLE;
+
 	psxMemReset();
 
 	memset(&psxRegs, 0, sizeof(psxRegs));
@@ -67,6 +77,11 @@ void psxReset() {
 		psxRegs.CP0.n.SR &= ~(1u << 22); // RAM exception vector
 	}
 
+	if (Config.HLE != oldhle) {
+		// at least ari64 drc compiles differently so hard reset
+		psxCpu->Shutdown();
+		psxCpu->Init();
+	}
 	psxCpu->ApplyConfig();
 	psxCpu->Reset();
 
@@ -126,7 +141,7 @@ void psxException(u32 cause, enum R3000Abdt bdt, psxCP0Regs *cp0) {
 }
 
 void psxBranchTest() {
-	if ((psxRegs.cycle - psxNextsCounter) >= psxNextCounter)
+	if ((psxRegs.cycle - psxRegs.psxNextsCounter) >= psxRegs.psxNextCounter)
 		psxRcntUpdate();
 
 	irq_test(&psxRegs.CP0);
@@ -166,11 +181,15 @@ void psxJumpTest() {
 	}
 }
 
+int psxExecuteBiosEnded(void) {
+	return (psxRegs.pc & 0xff800000) == 0x80000000;
+}
+
 void psxExecuteBios() {
 	int i;
 	for (i = 0; i < 5000000; i++) {
-		psxCpu->ExecuteBlock(EXEC_CALLER_BOOT);
-		if ((psxRegs.pc & 0xff800000) == 0x80000000)
+		psxCpu->ExecuteBlock(&psxRegs, EXEC_CALLER_BOOT);
+		if (psxExecuteBiosEnded())
 			break;
 	}
 	if (psxRegs.pc != 0x80030000)

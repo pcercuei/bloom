@@ -33,7 +33,7 @@
 #include "arm_features.h"
 #endif
 
-#ifdef HAVE_ARMV7
+#ifdef HAVE_ARMV6
  #define ssat32_to_16(v) \
   asm("ssat %0,#16,%1" : "=r" (v) : "r" (v))
 #else
@@ -333,11 +333,11 @@ INLINE int GetInterpolationGauss(const sample_buf *sb, int spos)
  int gpos = sb->interp.gauss.pos;
  int vl = (spos >> 6) & ~3;
  int vr;
- vr  = (gauss[vl+0] * gval(0)) >> 15;
- vr += (gauss[vl+1] * gval(1)) >> 15;
- vr += (gauss[vl+2] * gval(2)) >> 15;
- vr += (gauss[vl+3] * gval(3)) >> 15;
- return vr;
+ vr  = gauss[vl+0] * gval(0);
+ vr += gauss[vl+1] * gval(1);
+ vr += gauss[vl+2] * gval(2);
+ vr += gauss[vl+3] * gval(3);
+ return vr >> 15;
 }
 
 static void decode_block_data(int *dest, const unsigned char *src, int predict_nr, int shift_factor)
@@ -1256,8 +1256,8 @@ void do_samples(unsigned int cycles_to, int force_no_thread)
 static void do_samples_finish(int *SSumLR, int ns_to,
  int silentch, int decode_pos)
 {
-  int vol_l = ((int)regAreaGet(H_SPUmvolL) << 17) >> 17;
-  int vol_r = ((int)regAreaGet(H_SPUmvolR) << 17) >> 17;
+  int vol_l = ((int)regAreaGet(H_SPUcmvolL) << 16) >> 17;
+  int vol_r = ((int)regAreaGet(H_SPUcmvolR) << 16) >> 17;
   int ns;
   int d;
 
@@ -1574,6 +1574,14 @@ static void exit_spu_thread(void)
 
 #endif
 
+long CALLBACK SPUfreeze(unsigned int ulFreezeMode, struct SPUFreeze * pF,
+ unsigned int cycles)
+{
+ if (worker != NULL)
+  sync_worker_thread(1);
+ return DoFreeze(ulFreezeMode, pF, cycles);
+}
+
 // SPUINIT: this func will be called first by the main emu
 long CALLBACK SPUinit(void)
 {
@@ -1723,6 +1731,9 @@ void spu_get_debug_info(int *chans_out, int *run_chans, int *fmod_chans_out, int
  *run_chans = ~spu.dwChannelsAudible & ~spu.dwChannelDead & irq_chans;
  *fmod_chans_out = fmod_chans;
  *noise_chans_out = noise_chans;
+ // sometimes unused
+ (void)do_samples_skip_fmod;
+ (void)SkipADSR;
 }
 
 // vim:shiftwidth=1:expandtab

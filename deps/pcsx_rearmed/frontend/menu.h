@@ -7,6 +7,7 @@ void menu_loop(void);
 void menu_finish(void);
 
 void menu_notify_mode_change(int w, int h, int bpp);
+int  menu_load_cd_image(const char *fname);
 int  menu_load_config(int is_game);
 
 enum g_opts_opts {
@@ -15,6 +16,7 @@ enum g_opts_opts {
 	OPT_NO_FRAMELIM = 1 << 2,
 	OPT_SHOWSPU = 1 << 3,
 	OPT_TSGUN_NOTRIGGER = 1 << 4,
+	OPT_VSYNC = 1 << 5,
 };
 
 enum g_scaler_opts {

@@ -36,8 +36,6 @@
 #define DO_EXCEPTION_RESERVEDI
 #define HANDLE_LOAD_DELAY
 
-static int branchSeen = 0;
-
 #ifdef __i386__
 #define INT_ATTR __attribute__((regparm(2)))
 #else
@@ -156,7 +154,7 @@ static void intExceptionDebugBp(psxRegisters *regs, u32 pc)
 	cp0->n.Cause |= (regs->branching << 30) | (R3000E_Bp << 2);
 	cp0->n.SR = (cp0->n.SR & ~0x3f) | ((cp0->n.SR & 0x0f) << 2);
 	cp0->n.EPC = regs->branching ? pc - 4 : pc;
-	psxRegs.pc = 0x80000040;
+	regs->pc = 0x80000040;
 }
 
 static int execBreakCheck(psxRegisters *regs, u32 pc)
@@ -412,7 +410,7 @@ static void psxDoDelayBranch(psxRegisters *regs, u32 tar1, u32 code1) {
 static void doBranch(psxRegisters *regs, u32 tar, enum R3000Abdt taken) {
 	u32 code, pc, pc_final;
 
-	branchSeen = regs->branching = taken;
+	regs->branchSeen = regs->branching = taken;
 	pc_final = taken == R3000A_BRANCH_TAKEN ? tar : regs->pc + 4;
 
 	// fetch the delay slot
@@ -758,6 +756,8 @@ static inline int checkLD(psxRegisters *regs, u32 addr, u32 m) {
 		return 0;
 	}
 	if (unlikely(BUS_LOCKED_ADDR(addr))) {
+		log_unhandled("bus error read addr=%08x @%08x ra=%08x\n",
+			addr, regs->pc - 4, regs->GPR.n.ra);
 		intException(regs, regs->pc - 4, R3000E_DBE << 2);
 		return 0;
 	}
@@ -781,6 +781,8 @@ static inline int checkST(psxRegisters *regs, u32 addr, u32 m) {
 		return 0;
 	}
 	if (unlikely(BUS_LOCKED_ADDR(addr))) {
+		log_unhandled("bus error write addr=%08x @%08x ra=%08x\n",
+			addr, regs->pc - 4, regs->GPR.n.ra);
 		intException(regs, regs->pc - 4, R3000E_DBE << 2);
 		return 0;
 	}
@@ -941,9 +943,9 @@ void MTC0(psxRegisters *regs_, int reg, u32 val) {
 //	SysPrintf("MTC0 %d: %x\n", reg, val);
 	switch (reg) {
 		case 12: // SR
-			if (unlikely((regs_->CP0.n.SR ^ val) & (1 << 16)))
+			if (unlikely((regs_->CP0.n.SR ^ val) & (1u << 16)))
 				psxMemOnIsolate((val >> 16) & 1);
-			if (unlikely((regs_->CP0.n.SR ^ val) & (7 << 29)))
+			if (unlikely((regs_->CP0.n.SR ^ val) & (7u << 29)))
 				setupCop(val);
 			regs_->CP0.n.SR = val;
 			psxTestSWInts(regs_, 1);
@@ -1129,7 +1131,7 @@ OP(psxHLE) {
 	}
 	dloadFlush(regs_);
 	psxHLEt[hleCode]();
-	branchSeen = 1;
+	regs_->branchSeen = 1;
 }
 
 static void (INT_ATTR *psxBSC[64])(psxRegisters *regs_, u32 code) = {
@@ -1168,6 +1170,7 @@ void (*psxCP2[64])(struct psxCP2Regs *regs) = {
 ///////////////////////////////////////////
 
 static int intInit() {
+	intApplyConfig();
 	return 0;
 }
 
@@ -1201,31 +1204,34 @@ static inline void execIbp(u8 **memRLUT, psxRegisters *regs) {
 	psxBSC[regs->code >> 26](regs, regs->code);
 }
 
-static void intExecute() {
-	psxRegisters *regs_ = &psxRegs;
+static void intExecute(psxRegisters *regs) {
 	u8 **memRLUT = psxMemRLUT;
-	extern int stop;
 
-	while (!stop)
-		execI_(memRLUT, regs_);
+	while (!regs->stop)
+		execI_(memRLUT, regs);
 }
 
-static void intExecuteBp() {
-	psxRegisters *regs_ = &psxRegs;
+static void intExecuteBp(psxRegisters *regs) {
 	u8 **memRLUT = psxMemRLUT;
-	extern int stop;
 
-	while (!stop)
-		execIbp(memRLUT, regs_);
+	while (!regs->stop)
+		execIbp(memRLUT, regs);
 }
 
-void intExecuteBlock(enum blockExecCaller caller) {
-	psxRegisters *regs_ = &psxRegs;
+static void intExecuteBlock(psxRegisters *regs, enum blockExecCaller caller) {
 	u8 **memRLUT = psxMemRLUT;
 
-	branchSeen = 0;
-	while (!branchSeen)
-		execI_(memRLUT, regs_);
+	regs->branchSeen = 0;
+	while (!regs->branchSeen)
+		execI_(memRLUT, regs);
+}
+
+static void intExecuteBlockBp(psxRegisters *regs, enum blockExecCaller caller) {
+	u8 **memRLUT = psxMemRLUT;
+
+	regs->branchSeen = 0;
+	while (!regs->branchSeen)
+		execIbp(memRLUT, regs);
 }
 
 static void intClear(u32 Addr, u32 Size) {
@@ -1242,7 +1248,8 @@ static void intNotify(enum R3000Anote note, void *data) {
 		setupCop(psxRegs.CP0.n.SR);
 		// fallthrough
 	case R3000ACPU_NOTIFY_CACHE_ISOLATED: // Armored Core?
-		memset(&ICache, 0xff, sizeof(ICache));
+		if (fetch == fetchICache)
+			memset(&ICache, 0xff, sizeof(ICache));
 		break;
 	case R3000ACPU_NOTIFY_CACHE_UNISOLATED:
 		break;
@@ -1316,6 +1323,7 @@ void intApplyConfig() {
 		psxSPC[0x08] = psxJRe;
 		psxSPC[0x09] = psxJALRe;
 		psxInt.Execute = intExecuteBp;
+		psxInt.ExecuteBlock = intExecuteBlockBp;
 	} else {
 		psxBSC[0x20] = psxLB;
 		psxBSC[0x21] = psxLH;
@@ -1333,12 +1341,15 @@ void intApplyConfig() {
 		psxSPC[0x08] = psxJR;
 		psxSPC[0x09] = psxJALR;
 		psxInt.Execute = intExecute;
+		psxInt.ExecuteBlock = intExecuteBlock;
 	}
 
 	// the dynarec may occasionally call the interpreter, in such a case the
 	// cache won't work (cache only works right if all fetches go through it)
-	if (!Config.icache_emulation || psxCpu != &psxInt)
+	if (!Config.icache_emulation || psxCpu != &psxInt) {
 		fetch = fetchNoCache;
+		memset(&ICache, 0xff, sizeof(ICache));
+	}
 	else
 		fetch = fetchICache;
 

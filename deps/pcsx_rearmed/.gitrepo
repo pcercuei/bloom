@@ -4,9 +4,9 @@
 ; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
 ;
 [subrepo]
-	remote = https://github.com/libretro/pcsx_rearmed.git
+	remote = https://github.com/notaz/pcsx_rearmed
 	branch = master
-	commit = 6d4dbe7a2b2b6ad967401437dce3a355546e682a
-	parent = e3156179623d7a5392e7b656536fc73f230d8136
+	commit = 3b48e2876ab1ca6300acad223606eeb59f670d8f
+	parent = 49a340c47c705f69c23b4302d907ae0600977b42
 	method = merge
-	cmdver = 0.4.6
+	cmdver = 0.4.9

@@ -163,36 +163,29 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "disabled",
    },
-#if 0 // ndef _WIN32 // currently disabled, see USE_READ_THREAD in libpcsxcore/cdriso.c
-   {
-      "pcsx_rearmed_async_cd",
-      "CD Access Method (Restart)",
-      NULL,
-      "Select method used to read data from content disk images. 'Synchronous' mimics original hardware. 'Asynchronous' can reduce stuttering on devices with slow storage. 'Pre-Cache (CHD)' loads disk image into memory for faster access (CHD files only).",
-      NULL,
-      "system",
-      {
-         { "sync",     "Synchronous" },
-         { "async",    "Asynchronous" },
-         { "precache", "Pre-Cache (CHD)" },
-         { NULL, NULL},
-      },
-      "sync",
-   },
-#endif
-#ifdef HAVE_CDROM
+#if defined(HAVE_CDROM) || defined(USE_ASYNC_CDROM)
 #define V(x) { #x, NULL }
    {
-      "pcsx_rearmed_phys_cd_readahead",
-      "Physical CD read-ahead",
+      "pcsx_rearmed_cd_readahead",
+      "CD read-ahead",
       NULL,
-      "(Hardware CD-ROM only) Reads the specified amount of sectors ahead of time to try to avoid later stalls. 333000 will try to read the complete disk (requires an additional 750MB of RAM).",
+      "Reads the specified amount of sectors ahead of time to try to avoid later stalls. "
+#ifdef HAVE_CDROM
+      "Affects both physical CD-ROM and CD images. "
+#endif
+#if !defined(_3DS) && !defined(VITA)
+      "333000 will try to read the complete disk (requires an additional 750MB of RAM)."
+#endif
+      ,
       NULL,
       "system",
       {
          V(0),  V(1),  V(2),  V(3),  V(4),  V(5),  V(6),  V(7),
          V(8),  V(9),  V(10), V(11), V(12), V(13), V(14), V(15),
-         V(16), V(32), V(64), V(128), V(256), V(512), V(1024), V(333000),
+         V(16), V(32), V(64), V(128), V(256), V(512), V(1024),
+#if !defined(_3DS) && !defined(VITA)
+	 V(333000),
+#endif
          { NULL, NULL},
       },
       "12",
@@ -214,21 +207,33 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "enabled",
    },
+#if !defined(LIGHTREC) && defined(NDRC_THREAD)
+   {
+      "pcsx_rearmed_drc_thread",
+      "DynaRec threading",
+      NULL,
+      "Run the dynarec on another thread.",
+      NULL,
+      "system",
+      {
+         { "auto", "Auto" },
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "auto",
+   },
 #endif
+#endif // DRC_DISABLE
    {
       "pcsx_rearmed_psxclock",
       "PSX CPU Clock Speed (%)",
       NULL,
-      "Overclock or under-clock the PSX CPU. The value has to be lower than 100 because of some slowdowns (cache misses, hw access penalties, etc.) that are not emulated. Try adjusting this if the game is too slow, too fast or hangs."
-#if defined(HAVE_PRE_ARMV7) && !defined(_3DS)
-      " Default is 50."
-#else
-      " Default is 57."
-#endif
-      ,
+      "Overclock or under-clock the PSX CPU. Should be much less than 100 (something like 57) due to some real hardware slowdowns not being emulated. Usually should be left at 'Auto', else glitches or hangs are likely.",
       NULL,
       "system",
       {
+         { "auto", "Auto" },
          { "30",  NULL },
          { "31",  NULL },
          { "32",  NULL },
@@ -302,25 +307,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "100", NULL },
          { NULL, NULL },
       },
-#if defined(HAVE_PRE_ARMV7) && !defined(_3DS)
-      "50",
-#else
-      "57",
-#endif
+      "auto",
    },
    {
       "pcsx_rearmed_dithering",
       "Dithering Pattern",
       NULL,
-      "Enable emulation of the dithering technique used by the PSX to smooth out color banding artifacts. Increases performance requirements.",
+      "Enable emulation of the dithering technique used by the PSX to smooth out color banding artifacts. \"Force\" enables it even if the game turns it off. Increases performance requirements.",
       NULL,
       "video",
       {
          { "disabled", NULL },
          { "enabled",  NULL },
+         { "force",    "Force" },
          { NULL, NULL },
       },
-#if defined HAVE_LIBNX || defined _3DS
+#if defined(_3DS)
       "disabled",
 #else
       "enabled",
@@ -410,7 +412,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "3"
    },
    {
-      "pcsx_rearmed_display_internal_fps",
+      "pcsx_rearmed_display_fps_v2",
       "Display Internal FPS",
       NULL,
       "Show the internal frame rate at which the emulated PlayStation system is rendering content. Note: Requires on-screen notifications to be enabled in the libretro frontend.",
@@ -419,6 +421,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       {
          { "disabled", NULL },
          { "enabled",  NULL },
+         { "extra",  NULL },
          { NULL, NULL },
       },
       "disabled",
@@ -437,6 +440,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "auto",
+   },
+   {
+      "pcsx_rearmed_rgb32_output",
+      "RGB32 output",
+      NULL,
+      "Improves color depth for true color modes (most FMVs and occasional title screens). Causes higher CPU usage due to double memory bandwidth requirement, even in 15bpp modes. Takes effect on game reload only (libretro limitation).",
+      NULL,
+      "video",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled",
    },
    {
       "pcsx_rearmed_gpu_slow_llists",
@@ -508,6 +525,19 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       {
          V(-16), V(-15), V(-14), V(-13), V(-12), V(-11), V(-10), V(-9), V(-8), V(-7), V(-6), V(-5), V(-4), V(-3), V(-2), V(-1),
 	 V(0), V(1), V(2), V(3), V(4), V(5), V(6), V(7), V(8), V(9), V(10), V(11), V(12), V(13), V(14), V(15), V(16),
+         { NULL, NULL },
+      },
+      "0",
+   },
+   {
+      "pcsx_rearmed_screen_centering_h_adj",
+      "(GPU) Manual height adjustment",
+      NULL,
+      "Height adjustment. Only effective when 'Screen centering' is set to 'Manual'.",
+      NULL,
+      "video",
+      {
+         V(-64), V(-48), V(-40), V(-32), V(-24), V(-16), V(-8), V(-7), V(-6), V(-5), V(-4), V(-3), V(-2), V(-1), V(0),
          { NULL, NULL },
       },
       "0",
@@ -715,6 +745,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "disabled",
    },
+#ifndef GPU_UNAI_NO_OLD
+   {
+      "pcsx_rearmed_gpu_unai_old_renderer",
+      "(GPU) Old renderer",
+      "Old renderer",
+      "This enables faster, but less accurate code.",
+      NULL,
+      "gpu_unai",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL},
+      },
+      "disabled",
+   },
+#endif
    {
       "pcsx_rearmed_gpu_unai_blending",
       "(GPU) Texture Blending",
@@ -728,6 +774,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL},
       },
       "enabled",
+   },
+   {
+      "pcsx_rearmed_gpu_unai_skipline",
+      "(GPU) Skip every 2nd line",
+      "Skip every 2nd line",
+      "Skips every second scanline. Can be enabled to improve performance at the expense of display inaccuracies (artifacts etc.).",
+      NULL,
+      "gpu_unai",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL},
+      },
+      "disabled",
    },
    {
       "pcsx_rearmed_gpu_unai_lighting",
@@ -884,7 +944,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "square", "Square" },
          { NULL, NULL },
       },
-      "circle",
+      "square",
    },
    {
       "pcsx_rearmed_vibration",
@@ -1029,7 +1089,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "pcsx_rearmed_crosshair1",
       "Player 1 Lightgun Crosshair",
       NULL,
-      "Toggle player 1's crosshair for the Guncon or Konami Gun",
+      "Toggle player 1's crosshair for the Guncon or Konami Gun. Only works if RGB32 output is off (video options).",
       NULL,
       "input",
       {
@@ -1046,7 +1106,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "pcsx_rearmed_crosshair2",
       "Player 2 Lightgun Crosshair",
       NULL,
-      "Toggle player 2's crosshair for the Guncon or Konami Gun",
+      "Toggle player 2's crosshair for the Guncon or Konami Gun. Only works if RGB32 output is off (video options).",
       NULL,
       "input",
       {
@@ -1585,6 +1645,30 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "disabled",
    },
+#ifdef _3DS
+#define V(x) { #x, NULL }
+   {
+      "pcsx_rearmed_3ds_appcputime",
+      "3DS AppCpuTimeLimit",
+      NULL,
+      "% of syscore (core #1) CPU time allocated to the emulator",
+      NULL,
+      "speed_hack",
+      {
+         V( 5),  V(10),
+         V(15),  V(20),
+         V(25),  V(30),
+         V(35),  V(40),
+         V(45),  V(50),
+         V(55),  V(60),
+         V(65),  V(70),
+         V(75),  V(80),
+         { NULL, NULL},
+      },
+      "35",
+   },
+#undef V
+#endif // _3DS
    {
       "pcsx_rearmed_cd_turbo",
       "Turbo CD",
