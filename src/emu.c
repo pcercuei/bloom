@@ -29,6 +29,9 @@
 #include "emu.h"
 #include "pvr.h"
 
+KOS_INIT_FLAGS(INIT_DEFAULT
+	       | (WITH_SMB_SERVER[0] ? INIT_NET : 0));
+
 int fs_fat_init(void);
 void fs_fat_shutdown(void);
 
@@ -151,6 +154,8 @@ int main(int argc, char **argv)
 		ide_init();
 	if (WITH_SDCARD)
 		sdcard_init();
+	if (WITH_SMB_SERVER[0])
+		smb_init(WITH_SMB_SERVER);
 
 	input_init();
 
@@ -244,6 +249,8 @@ int main(int argc, char **argv)
 
 	input_shutdown();
 
+	if (WITH_SMB_SERVER[0])
+		smb_shutdown();
 	if (WITH_SDCARD)
 		sdcard_shutdown();
 	if (WITH_IDE)
