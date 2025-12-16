@@ -36,11 +36,11 @@ static void emu_attach_cont_cb(maple_device_t *dev)
 	if (cont_has_capabilities(dev, 0xffff3f00)) {
 		printf("Plugged a BlueRetro / usb4maple controller in port %u\n",
 		       dev->port);
-		in_type[dev->port] = PSE_PAD_TYPE_ANALOGPAD;
 	} else {
 		printf("Plugged a standard controller in port %u\n", dev->port);
-		in_type[dev->port] = PSE_PAD_TYPE_STANDARD;
 	}
+
+	in_type[dev->port] = PSE_PAD_TYPE_ANALOGPAD;
 
 	if (dev->port > 1) {
 		/* Plugged in port C/D - enable multitap */
