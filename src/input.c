@@ -10,6 +10,7 @@
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <dc/maple/mouse.h>
+#include <dc/maple/purupuru.h>
 #include <kos/regfield.h>
 
 #include <stdbool.h>
@@ -217,6 +218,24 @@ long PAD2_readPort(PadDataS *pad) {
 }
 
 void plat_trigger_vibrate(int pad, int low, int high) {
+	maple_device_t *dev;
+	unsigned int i;
+
+	for (i = 0; i < MAPLE_UNIT_COUNT; i++) {
+		dev = maple_enum_dev(pad, i);
+
+		if (dev && (dev->info.functions & MAPLE_FUNC_PURUPURU)) {
+			purupuru_rumble(dev, &(purupuru_effect_t){
+				.cont   =  true,
+				.motor  =  1,
+				.fpow   =  low ? 1 : (uint8_t)high >> 5,
+				.freq   =  21,
+				.inc    =  38,
+			});
+
+			return;
+		}
+	}
 }
 
 void pl_gun_byte2(int port, unsigned char byte)
