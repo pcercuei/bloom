@@ -16,6 +16,8 @@
    along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <stdio.h>
+
 #include "compat.h"
 
 #if defined(_WINDOWS) || defined(_XBOX)
@@ -415,47 +417,20 @@ ssize_t writev(t_socket fd, const struct iovec* vector, int count)
 #ifdef NEED_READV
 ssize_t readv(t_socket fd, const struct iovec* vector, int count)
 {
-        /* Find the total number of bytes to be read.  */
-        size_t bytes = 0;
-        int i;
-        char *buffer;
-        ssize_t bytes_read;
-        char *bp;
-        for (i = 0; i < count; ++i)
-        {
-                /* Check for ssize_t overflow.  */
-                if (((ssize_t)-1) - bytes < vector[i].iov_len) {
-                        errno = EINVAL;
-                        return -1;
-                }
-                bytes += vector[i].iov_len;
-        }
-        buffer = (char *)malloc(bytes);
-        if (buffer == NULL)
-                return -1;
+	ssize_t ret, total = 0, bytes = vector->iov_len;
+	char *ptr = vector->iov_base;
 
-        /* Read the data.  */
-        bytes_read = read((int)fd, buffer, bytes);
-        if (bytes_read < 0) {
-                free(buffer);
-                return -1;
-        }
+	do {
+		ret = read((int)fd, ptr, bytes);
+		if (ret < 0)
+			return ret;
 
-        /* Copy the data from BUFFER into the memory specified by VECTOR.  */
-        bytes = bytes_read;
-	bp = buffer;
-        for (i = 0; i < count; ++i) {
-            size_t copy = (vector[i].iov_len < bytes) ? vector[i].iov_len : bytes;
+		bytes -= ret;
+		ptr += ret;
+		total += ret;
+	} while(bytes > 0);
 
-            memcpy((void *)vector[i].iov_base, (void *)bp, copy);	
-	    bp += copy;
-	    bytes -= copy;
-	    if (bytes == 0)
-	    break;
-	}
-
-        free(buffer);
-        return bytes_read;
+	return total;
 }
 #endif
 

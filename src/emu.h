@@ -31,6 +31,9 @@ void ide_shutdown(void);
 void sdcard_init(void);
 void sdcard_shutdown(void);
 
+int smb_init(const char *url);
+void smb_shutdown(void);
+
 void mcd_fs_init(void);
 void mcd_fs_shutdown(void);
 void mcd_fs_hotplug_vmu(struct maple_device *dev);

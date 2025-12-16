@@ -355,6 +355,27 @@ if (WITH_CHD)
 	target_link_libraries(libpcsxcore PUBLIC libchdr)
 endif(WITH_CHD)
 
+set(WITH_SMB_SERVER "" CACHE STRING "URL to a Samba (SMB) server to map")
+if (WITH_SMB_SERVER)
+	#	find_library(SMB2_LIBRARIES smb2 REQUIRED)
+#	find_path(SMB2_INCLUDE_DIR smb2/libsmb2.h REQUIRED
+#		HINTS ${KOS_PORTS}/include/libsmb2
+#	)
+
+#	add_library(smb2 STATIC IMPORTED)
+#	set_target_properties(smb2 PROPERTIES
+#		IMPORTED_LOCATION ${SMB2_LIBRARIES}
+#		INCLUDE_DIRECTORIES ${SMB2_INCLUDE_DIR}
+#		INTERFACE_INCLUDE_DIRECTORIES ${SMB2_INCLUDE_DIR}
+#	)
+
+	add_subdirectory(deps/libsmb2)
+
+	target_link_libraries(bloom PRIVATE smb2)
+	target_sources(bloom PRIVATE src/smb2.c)# src/readv_writev.c)
+endif()
+
+
 set(WITH_EMBEDDED_BIOS_PATH
 	"${CMAKE_SOURCE_DIR}/openbios/openbios.bin"
 	CACHE PATH "Path to an optional BIOS file to pack"
