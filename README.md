@@ -44,7 +44,7 @@ Building
 --------
 
 You need the latest version of KallistiOS `master` branch installed, and preferably a
-dc-chain toolchain built with the `gcc-15.0.0-lra`. If you upload builds with dc-tool, you also need the latest version of both dc-tool and dc-load.
+dc-chain toolchain built with `gcc-15.0.0-lra`. If you upload builds with dc-tool, you also need the latest version of both dc-tool and dc-load.
 
 To build Bloom, run:
 
@@ -60,6 +60,8 @@ This will build Bloom with the default settings.
 
 To configure Bloom you can use `kos-ccmake` instead, which will open a
 (curses-based) user interface with all the options for the project.
+
+For building a bootable cdi, see [build-cdi](docs/build.cdi).
 
 Building with debug support
 ---------------------------
