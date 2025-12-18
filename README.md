@@ -61,7 +61,12 @@ This will build Bloom with the default settings.
 To configure Bloom you can use `kos-ccmake` instead, which will open a
 (curses-based) user interface with all the options for the project.
 
-For building a bootable cdi, see [build-cdi](docs/build-cdi.md).
+To build a binary for burning to a disc, run:
+
+```
+kos-objcopy -O binary bloom.elf bloom.bin
+/opt/toolschains/dc/kos/utils/scramble/scramble bloom.bin 1ST_READ.BIN
+```
 
 Building with debug support
 ---------------------------
