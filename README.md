@@ -43,8 +43,9 @@ Features
 Building
 --------
 
-You need the latest version of KallistiOS installed, and preferably a
-dc-chain toolchain built with the latest GCC version. If you upload builds with dc-tool, you also need the latest version of both dc-tool and dc-load.
+You need the latest version of KallistiOS `master` branch installed, and preferably a
+dc-chain toolchain built with the `gcc-15.0.0-lra` profile.
+If you upload builds with dc-tool, you also need the latest version of both dc-tool and dc-load.
 
 To build Bloom, run:
 
@@ -60,6 +61,20 @@ This will build Bloom with the default settings.
 
 To configure Bloom you can use `kos-ccmake` instead, which will open a
 (curses-based) user interface with all the options for the project.
+
+Building a 1ST_READ.BIN
+-----------------------
+
+To build a bootable 1ST_READ.BIN binary for burning to a disc, first build Bloom normally, then run:
+
+```
+kos-objcopy -O binary bloom.elf bloom.bin
+${KOS_BASE}/utils/scramble/scramble bloom.bin 1ST_READ.BIN
+```
+
+This 1ST_READ.BIN file can then be burned using e.g. BootDreams, or a CDI can be created using e.g. mkdcdisc.
+
+Note that using the bloom.elf file with mkdcdisc directly won't work.
 
 Building with debug support
 ---------------------------
