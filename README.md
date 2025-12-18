@@ -43,8 +43,8 @@ Features
 Building
 --------
 
-You need the latest version of KallistiOS installed, and preferably a
-dc-chain toolchain built with the latest GCC version. If you upload builds with dc-tool, you also need the latest version of both dc-tool and dc-load.
+You need the latest version of KallistiOS `master` branch installed, and preferably a
+dc-chain toolchain built with the `gcc-15.0.0-lra`. If you upload builds with dc-tool, you also need the latest version of both dc-tool and dc-load.
 
 To build Bloom, run:
 
