@@ -1139,7 +1139,7 @@ static void pvr_start_scene(void)
 	pvr_add_clip(3);
 }
 
-__pvr __attribute__((optimize(2)))
+__pvr
 static void draw_prim(const pvr_poly_hdr_t *hdr,
 		      const struct vertex_coords *coords,
 		      uint16_t voffset, const uint32_t *color,
@@ -1972,7 +1972,7 @@ static bool poly_should_clip(const struct poly *poly)
 	return false;
 }
 
-__pvr
+__pvr __attribute__((optimize(2)))
 static void process_poly(struct poly *poly, bool scissor)
 {
 	struct texture_page *page;
