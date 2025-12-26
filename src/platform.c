@@ -42,7 +42,7 @@ static uint32_t *pvram_sq;
 static bool frame_was_24bpp;
 
 float screen_fw, screen_fh;
-static unsigned int screen_w, screen_h;
+unsigned int screen_w, screen_h;
 unsigned int screen_bpp;
 
 static uint64_t last_cputime;

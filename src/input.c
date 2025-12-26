@@ -9,6 +9,7 @@
 #include <psemu_plugin_defs.h>
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
+#include <dc/maple/lightgun.h>
 #include <dc/maple/mouse.h>
 #include <dc/maple/purupuru.h>
 #include <kos/regfield.h>
@@ -16,6 +17,11 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
+
+#include <libpcsxcore/r3000a.h>
+
+#include "bloom-config.h"
+#include "emu.h"
 
 /* Scale factor of analog sticks / 128.
  * sqrtf(128^2 + 128^2) == ~181.02f */
@@ -73,15 +79,25 @@ static void emu_attach_mouse_cb(maple_device_t *dev)
 	in_type[dev->port] = PSE_PAD_TYPE_MOUSE;
 }
 
+static void emu_attach_lightgun_cb(maple_device_t *dev)
+{
+	printf("Plugged a lightgun in port %u\n", dev->port);
+	in_type[dev->port] = PSE_PAD_TYPE_GUN;
+
+	maple_gun_enable(dev->port);
+}
+
 void input_init(void) {
         maple_device_t *dev;
 	unsigned int i;
 
 	maple_attach_callback(MAPLE_FUNC_CONTROLLER, emu_attach_cont_cb);
 	maple_attach_callback(MAPLE_FUNC_MOUSE, emu_attach_mouse_cb);
+	maple_attach_callback(MAPLE_FUNC_LIGHTGUN, emu_attach_lightgun_cb);
 
 	maple_detach_callback(MAPLE_FUNC_CONTROLLER, emu_detach_cb);
 	maple_detach_callback(MAPLE_FUNC_MOUSE, emu_detach_cb);
+	maple_detach_callback(MAPLE_FUNC_LIGHTGUN, emu_detach_cb);
 
 	for (i = 0; i < 4; i++) {
 		dev = maple_enum_type(i, MAPLE_FUNC_CONTROLLER);
@@ -91,6 +107,10 @@ void input_init(void) {
 		dev = maple_enum_type(i, MAPLE_FUNC_MOUSE);
 		if (dev)
 			emu_attach_mouse_cb(dev);
+
+		dev = maple_enum_type(i, MAPLE_FUNC_LIGHTGUN);
+		if (dev)
+			emu_attach_lightgun_cb(dev);
 	}
 }
 
@@ -146,6 +166,7 @@ long PAD1_readPort(PadDataS *pad) {
         maple_device_t *dev;
 	cont_state_t *state;
 	uint16_t buttons = 0;
+	int x, y;
 
 	pad->controllerType = in_type[pad->requestPadIndex];
 	if (pad->controllerType == PSE_PAD_TYPE_NONE)
@@ -189,16 +210,18 @@ long PAD1_readPort(PadDataS *pad) {
 		buttons |= BIT(DKEY_L1);
 	if (state->rtrig > 128)
 		buttons |= BIT(DKEY_R1);
-	if (state->buttons & CONT_A)
-		buttons |= BIT(DKEY_CROSS);
+	if (state->buttons & CONT_A) {
+		if (pad->controllerType == PSE_PAD_TYPE_GUN)
+			buttons |= BIT(DKEY_SQUARE);
+		else
+			buttons |= BIT(DKEY_CROSS);
+	}
 	if (state->buttons & CONT_B)
 		buttons |= BIT(DKEY_CIRCLE);
 	if (state->buttons & CONT_X)
 		buttons |= BIT(DKEY_SQUARE);
 	if (state->buttons & CONT_Y)
 		buttons |= BIT(DKEY_TRIANGLE);
-
-	pad->buttonStatus = ~buttons;
 
 	if (pad->controllerType == PSE_PAD_TYPE_ANALOGPAD) {
 		pad->rightJoyX = analog_scale(state->joy2x + 128);
@@ -208,7 +231,15 @@ long PAD1_readPort(PadDataS *pad) {
 
 		if (state->buttons & CONT_DPAD2_RIGHT)
 			pad->ds.padMode ^= 1;
+	} else if(pad->controllerType == PSE_PAD_TYPE_GUN) {
+		maple_gun_read_pos(&x, &y);
+
+		psxScheduleIrq10(4, x * 1629 / SCREEN_WIDTH,
+				 y * screen_h / SCREEN_HEIGHT);
+		maple_gun_enable(pad->requestPadIndex);
 	}
+
+	pad->buttonStatus = ~buttons;
 
 	return 0;
 }

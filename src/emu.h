@@ -23,6 +23,7 @@ struct maple_device;
 
 extern _Bool started;
 extern unsigned int screen_bpp;
+extern unsigned int screen_w, screen_h;
 
 _Bool runMenu(void);
 
