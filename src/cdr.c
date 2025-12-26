@@ -27,7 +27,7 @@
 
 static mutex_t lock;
 
-static CDROM_TOC cdrom_toc;
+static cd_toc_t cdrom_toc;
 static unsigned int curr_lba;
 
 static inline void lba_to_msf(unsigned int lba, unsigned char *min,
