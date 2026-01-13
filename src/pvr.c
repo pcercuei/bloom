@@ -1452,6 +1452,89 @@ static pvr_poly_hdr_t poly_set_mask = {
 	},
 };
 
+__noinline
+static void poly_draw_check_mask(pvr_poly_hdr_t *hdr,
+				 const struct vertex_coords *coords,
+				 uint16_t voffset, const uint32_t *colors,
+				 unsigned int nb, uint16_t zoffset,
+				 uint16_t flags)
+{
+	uint32_t colors_alt[4];
+	unsigned int i;
+	float z;
+
+	/* We need to render the source texture's pixels conditionally, depending on
+	 * both the source alpha and the destination alpha (which encodes for the
+	 * sticky bit). Since there is no way to do this directly, we render a black
+	 * image of the source texture onto the non-sticky bits, and then perform a
+	 * regular additive blending on top.
+	 */
+	for (i = 0; i < nb; i++)
+		colors_alt[i] = 0xffffff;
+
+	/* Invert background pixels */
+	hdr->m2.blend_src = PVR_BLEND_INVDESTCOLOR;
+	hdr->m2.blend_dst = PVR_BLEND_ZERO;
+	hdr->m0.txr_en = hdr->m1.txr_en = false;
+	z = get_zvalue(zoffset);
+	draw_prim(hdr, coords, voffset, colors_alt,
+		  nb, z, 0, flags & ~POLY_TEXTURED);
+
+	/* Create a mask of the source texture into the second accumulator.
+	 * Opaque pixels are 0xffffffff, transparent pixels are 0x00ffffff. */
+	hdr->m2.shading = PVR_TXRENV_REPLACE;
+	hdr->m2.blend_src = PVR_BLEND_ONE;
+	hdr->m2.blend_dst = PVR_BLEND_ZERO;
+	hdr->m0.txr_en = hdr->m1.txr_en = true;
+	hdr->m2.blend_dst_acc2 = true;
+	hdr->m0.oargb_en = true;
+	z = get_zvalue(zoffset + 1);
+	draw_prim(hdr, coords, voffset, colors_alt,
+		  nb, z, 0xffffff, flags);
+
+	/* Modify the mask so that opaque pixels are 0x00ffffff, transparent pixels
+	 * are 0x00000000 */
+	hdr->m2.blend_src = PVR_BLEND_DESTALPHA;
+	hdr->m2.blend_dst = PVR_BLEND_ZERO;
+	hdr->m0.txr_en = hdr->m1.txr_en = false;
+	hdr->m2.blend_dst_acc2 = true;
+	hdr->m0.oargb_en = false;
+	hdr->m2.alpha = true;
+	z = get_zvalue(zoffset + 2);
+	draw_prim(hdr, coords, voffset, colors_alt,
+		  nb, z, 0, flags & ~POLY_TEXTURED);
+
+	/* Add mask to inverted background, without overwriting the sticky bits */
+	hdr->m2.shading = PVR_TXRENV_REPLACE;
+	hdr->m2.blend_src = PVR_BLEND_INVDESTALPHA;
+	hdr->m2.blend_dst = PVR_BLEND_ONE;
+	hdr->m2.blend_src_acc2 = true;
+	hdr->m2.blend_dst_acc2 = false;
+	hdr->m2.alpha = false;
+	z = get_zvalue(zoffset + 3);
+	draw_prim(hdr, coords, voffset, colors_alt,
+		  nb, z, 0, flags & ~POLY_TEXTURED);
+
+	/* Invert background pixels once again */
+	hdr->m2.blend_src = PVR_BLEND_INVDESTCOLOR;
+	hdr->m2.blend_dst = PVR_BLEND_ZERO;
+	hdr->m0.txr_en = hdr->m1.txr_en = false;
+	hdr->m2.blend_src_acc2 = false;
+	hdr->m2.blend_dst_acc2 = false;
+	z = get_zvalue(zoffset + 4);
+	draw_prim(hdr, coords, voffset, colors_alt,
+		  nb, z, 0, flags & ~POLY_TEXTURED);
+
+	/* Finally, render the texture using additive blending without overwriting
+	 * the sticky bits */
+	hdr->m2.shading = PVR_TXRENV_MODULATE;
+	hdr->m2.blend_src = PVR_BLEND_DESTALPHA;
+	hdr->m2.blend_dst = PVR_BLEND_ONE;
+	hdr->m0.txr_en = hdr->m1.txr_en = true;
+	z = get_zvalue(zoffset + 5);
+	draw_prim(hdr, coords, voffset, colors, nb, z, 0, flags);
+}
+
 __pvr
 static void poly_draw_now(const struct poly *poly)
 {
@@ -1487,6 +1570,7 @@ static void poly_draw_now(const struct poly *poly)
 		   && pvr.old_blending_is_none
 		   && pvr.old_set_mask == set_mask
 		   && pvr.old_check_mask == check_mask
+		   && (!textured || !check_mask)
 		   && tex == pvr.old_tex)) {
 		draw_prim(NULL, coords, voffset, colors, nb, z, 0, flags);
 		return;
@@ -1535,8 +1619,14 @@ static void poly_draw_now(const struct poly *poly)
 		if (unlikely(poly->flags & POLY_FB)) {
 			hdr.m2.shading = PVR_TXRENV_DECAL;
 		} else if (unlikely(check_mask)) {
-			hdr.m2.blend_src = PVR_BLEND_DESTALPHA;
-			hdr.m2.blend_dst = PVR_BLEND_INVDESTALPHA;
+			if (textured) {
+				poly_draw_check_mask(&hdr, coords, voffset, colors,
+						     nb, zoffset, flags);
+				break;
+			} else {
+				hdr.m2.blend_src = PVR_BLEND_DESTALPHA;
+				hdr.m2.blend_dst = PVR_BLEND_INVDESTALPHA;
+			}
 		}
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
@@ -2034,6 +2124,7 @@ static void process_poly(struct poly *poly, bool scissor)
 		poly->zoffset = pvr.zoffset++;
 
 		if (unlikely(check_mask)) {
+			pvr.zoffset += 5;
 			poly->flags |= POLY_CHECK_MASK;
 			poly_enqueue(PVR_LIST_TR_POLY, poly);
 		} else {
@@ -2050,6 +2141,7 @@ static void process_poly(struct poly *poly, bool scissor)
 			 * blending */
 			poly->flags &= ~POLY_BRIGHT;
 			poly->blending_mode = BLENDING_MODE_ADD;
+			poly->zoffset = pvr.zoffset++;
 			poly_enqueue(PVR_LIST_TR_POLY, poly);
 		}
 
