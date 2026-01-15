@@ -220,6 +220,12 @@ struct pvr_renderer {
 	uint32_t set_mask :1;
 	uint32_t check_mask :1;
 
+	uint32_t overpaint :1;
+
+	pvr_list_t pt_list :3;
+	pvr_list_t list :3;
+	pvr_list_t polybuf_start_list :3;
+
 	uint32_t page_x :4;
 	uint32_t page_y :1;
 	enum blending_mode blending_mode :3;
@@ -1081,6 +1087,12 @@ static void pvr_start_scene(void)
 	pvr_scene_begin();
 
 	pvr.new_frame = 0;
+
+	if (!WITH_24BPP) {
+		pvr.overpaint = pvr.start_x == pvr.view_x
+			&& pvr.start_y == pvr.view_y;
+		vid_set_dithering(!pvr.overpaint);
+	}
 }
 
 __pvr
@@ -1144,6 +1156,7 @@ static void render_square(const struct square_fcoords *coords,
 	}
 }
 
+__noinline
 static void pvr_render_fb(void)
 {
 	pvr_poly_hdr_t *sq_hdr;
@@ -1297,7 +1310,7 @@ poly_get_texture_page(const struct poly *poly)
 static pvr_poly_hdr_t poly_textured = {
 	.m0 = {
 		.hdr_type = PVR_HDR_POLY,
-		.list_type = PVR_LIST_TR_POLY,
+		.list_type = PVR_LIST_PT_POLY,
 		.auto_strip_len = true,
 		.txr_en = true,
 		.gouraud = true,
@@ -1324,7 +1337,7 @@ static pvr_poly_hdr_t poly_textured = {
 static pvr_poly_hdr_t poly_nontextured = {
 	.m0 = {
 		.hdr_type = PVR_HDR_POLY,
-		.list_type = PVR_LIST_TR_POLY,
+		.list_type = PVR_LIST_PT_POLY,
 		.auto_strip_len = true,
 		.gouraud = true,
 	},
@@ -1639,12 +1652,26 @@ static void pvr_load_bg(void)
 }
 
 __pvr
+static void pvr_start_list(pvr_list_t list)
+{
+	pvr_list_begin(list);
+
+	if (!WITH_24BPP && list == PVR_LIST_TR_POLY && pvr.overpaint) {
+		/* We just opened the TR list; if we need to render the front
+		 * buffer, do it now, as it needs to be in the background. */
+		pvr_render_fb();
+	}
+
+	pvr.list = list;
+}
+
+__pvr
 static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 {
-	if (!WITH_HYBRID_RENDERING || likely(list == PVR_LIST_PT_POLY)) {
+	if (!WITH_HYBRID_RENDERING || likely(list == pvr.list)) {
 		if (unlikely(pvr.new_frame)) {
 			pvr_start_scene();
-			pvr_list_begin(list);
+			pvr_start_list(pvr.list);
 		}
 
 		poly_draw_now(poly);
@@ -1655,15 +1682,13 @@ static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 	}
 }
 
-static void polybuf_render_from_start(void)
+static void polybuf_render_from_start(pvr_list_t list)
 {
 	unsigned int i;
 
-	poly_prefetch(&polybuf[0]);
-
 	pvr.old_blending_is_none = false;
-	poly_textured.m0.list_type = PVR_LIST_TR_POLY;
-	poly_nontextured.m0.list_type = PVR_LIST_TR_POLY;
+	poly_textured.m0.list_type = list;
+	poly_nontextured.m0.list_type = list;
 
 	for (i = 0; i < pvr.polybuf_cnt_start; i++) {
 		poly_prefetch(&polybuf[i + 1]);
@@ -1673,6 +1698,17 @@ static void polybuf_render_from_start(void)
 	}
 
 	pvr.polybuf_cnt_start = 0;
+}
+
+static void polybuf_deferred_render(void)
+{
+	if (pvr.polybuf_cnt_start) {
+		poly_prefetch(&polybuf[0]);
+
+		pvr_start_list(pvr.polybuf_start_list);
+		polybuf_render_from_start(pvr.polybuf_start_list);
+		pvr_list_finish();
+	}
 }
 
 static inline struct vertex_coords
@@ -1855,7 +1891,6 @@ static void process_poly(struct poly *poly, bool scissor)
 	uint16_t umin, umax;
 	uint8_t codebook;
 	bool check_mask, set_mask;
-	pvr_list_t list;
 
 	if (poly->flags & POLY_TEXTURED) {
 		if (scissor && unlikely(poly->bpp != TEXTURE_4BPP)) {
@@ -1912,12 +1947,7 @@ static void process_poly(struct poly *poly, bool scissor)
 			poly->flags |= POLY_CHECK_MASK;
 			poly_enqueue(PVR_LIST_TR_POLY, poly);
 		} else {
-			if (WITH_HYBRID_RENDERING)
-				list = PVR_LIST_PT_POLY;
-			else
-				list = PVR_LIST_TR_POLY;
-
-			poly_enqueue(list, poly);
+			poly_enqueue(pvr.pt_list, poly);
 		}
 
 		if (unlikely(poly->flags & POLY_BRIGHT)) {
@@ -2634,12 +2664,20 @@ void hw_render_start(void)
 
 	/* Reset lists */
 	if (WITH_HYBRID_RENDERING) {
+		pvr.pt_list = PVR_LIST_PT_POLY;
+
 		/* Default to PT list */
-		poly_textured.m0.list_type = PVR_LIST_PT_POLY;
-		poly_nontextured.m0.list_type = PVR_LIST_PT_POLY;
+		pvr.list = pvr.pt_list;
+		pvr.polybuf_start_list = PVR_LIST_TR_POLY;
 
 		pvr.polybuf_cnt_start = 0;
+	} else {
+		pvr.pt_list = PVR_LIST_TR_POLY;
+		pvr.list = PVR_LIST_TR_POLY;
 	}
+
+	poly_textured.m0.list_type = pvr.list;
+	poly_nontextured.m0.list_type = pvr.list;
 }
 
 static void pvr_render_black_square(uint16_t x0, uint16_t x1,
@@ -2659,7 +2697,7 @@ static void pvr_render_outlines(void)
 	float z = get_zvalue(pvr.zoffset++);
 	pvr_poly_hdr_t *sq_hdr;
 
-	pvr_list_begin(PVR_LIST_OP_POLY);
+	pvr_start_list(PVR_LIST_OP_POLY);
 
 	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
 	copy32(sq_hdr, &op_black_header);
@@ -2682,42 +2720,39 @@ static void pvr_render_outlines(void)
 
 void hw_render_stop(void)
 {
-	bool overpaint;
-
 	process_gpu_commands();
 
-	if (unlikely(pvr.new_frame)) {
-		pvr_start_scene();
-		pvr_list_begin(PVR_LIST_TR_POLY);
-	} else if (WITH_HYBRID_RENDERING) {
+	if (likely(!pvr.new_frame))
 		pvr_list_finish();
-		pvr_list_begin(PVR_LIST_TR_POLY);
+
+	if (WITH_HYBRID_RENDERING && likely(pvr.polybuf_cnt_start)) {
+		if (unlikely(pvr.new_frame)) {
+			pvr_start_scene();
+			pvr.new_frame = 0;
+		}
+
+		polybuf_deferred_render();
+	} else if (WITH_HYBRID_RENDERING && !WITH_24BPP
+		   && pvr.overpaint
+		   && pvr.polybuf_start_list == PVR_LIST_TR_POLY) {
+		/* The TR list was not opened, but we need to render the front
+		 * buffer - open it now. */
+		pvr_start_list(PVR_LIST_TR_POLY);
+		pvr_list_finish();
 	}
 
-	if (!WITH_24BPP) {
-		overpaint = pvr.start_x == pvr.view_x
-			&& pvr.start_y == pvr.view_y;
-		vid_set_dithering(!overpaint);
+	if (likely(!pvr.new_frame)) {
+		if (pvr.has_bg)
+			pvr_load_bg();
 
-		if (overpaint)
-			pvr_render_fb();
+		pvr_render_outlines();
+
+		pvr_scene_finish();
+
+		/* Discard any textures covered by the draw area */
+		pvr_update_caches(pvr.start_x, pvr.start_y,
+				  gpu.screen.hres, gpu.screen.vres, true);
 	}
-
-	if (WITH_HYBRID_RENDERING && likely(pvr.polybuf_cnt_start))
-		polybuf_render_from_start();
-
-	pvr_list_finish();
-
-	if (pvr.has_bg)
-		pvr_load_bg();
-
-	pvr_render_outlines();
-
-	pvr_scene_finish();
-
-	/* Discard any textures covered by the draw area */
-	pvr_update_caches(pvr.start_x, pvr.start_y,
-			  gpu.screen.hres, gpu.screen.vres, true);
 
 	pvr.start_x = pvr.view_x;
 	pvr.start_y = pvr.view_y;
