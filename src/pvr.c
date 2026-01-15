@@ -1086,9 +1086,9 @@ static void pvr_start_scene(void)
 __pvr
 static void draw_prim(const pvr_poly_hdr_t *hdr,
 		      const struct vertex_coords *coords,
-		      uint16_t voffset, const uint32_t *color,
-		      unsigned int nb, float z,
-		      uint32_t oargb, uint16_t flags)
+		      uint16_t voffset,
+		      const uint32_t *color, unsigned int nb,
+		      float z, uint32_t oargb)
 {
 	pvr_poly_hdr_t *sq_hdr;
 	pvr_vertex_t *vert;
@@ -1363,7 +1363,6 @@ static void poly_draw_now(const struct poly *poly)
 	const struct vertex_coords *coords = poly->coords;
 	const uint32_t *colors = poly->colors;
 	uint32_t colors_alt[4];
-	uint16_t flags = poly->flags;
 	bool textured = poly->flags & POLY_TEXTURED;
 	bool bright = poly->flags & POLY_BRIGHT;
 	bool set_mask = poly->flags & POLY_SET_MASK;
@@ -1392,7 +1391,7 @@ static void poly_draw_now(const struct poly *poly)
 		   && pvr.old_set_mask == set_mask
 		   && pvr.old_check_mask == check_mask
 		   && tex == pvr.old_tex)) {
-		draw_prim(NULL, coords, voffset, colors, nb, z, 0, flags);
+		draw_prim(NULL, coords, voffset, colors, nb, z, 0);
 		return;
 	}
 
@@ -1409,7 +1408,7 @@ static void poly_draw_now(const struct poly *poly)
 
 		colors = colors_alt;
 
-		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
+		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 		return;
 	}
 
@@ -1438,7 +1437,7 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_dst = PVR_BLEND_INVDESTALPHA;
 		}
 
-		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
+		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 		break;
 
 	case BLENDING_MODE_QUARTER:
@@ -1460,7 +1459,7 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_src = PVR_BLEND_DESTALPHA;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 
-		draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0, flags);
+		draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 
 		break;
 
@@ -1476,14 +1475,14 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_src = PVR_BLEND_ONE;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 
-		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
+		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 
 		if (bright) {
 			z = get_zvalue(zoffset + 1);
 
 			/* Make the source texture twice as bright by adding it
 			 * again. */
-			draw_prim(NULL, coords, voffset, colors, nb, z, 0, flags);
+			draw_prim(NULL, coords, voffset, colors, nb, z, 0);
 		}
 
 		break;
@@ -1505,8 +1504,7 @@ static void poly_draw_now(const struct poly *poly)
 		hdr.m2.blend_dst = PVR_BLEND_ZERO;
 		hdr.m0.txr_en = hdr.m1.txr_en = false;
 
-		draw_prim(&hdr, coords, voffset, colors_alt,
-			  nb, z, 0, flags & ~POLY_TEXTURED);
+		draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 
 		hdr.m2.alpha = true;
 		if (unlikely(check_mask))
@@ -1517,14 +1515,14 @@ static void poly_draw_now(const struct poly *poly)
 		hdr.m0.txr_en = hdr.m1.txr_en = textured;
 		z = get_zvalue(zoffset + 1);
 
-		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
+		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 
 		if (bright) {
 			z = get_zvalue(zoffset + 2);
 
 			/* Make the source texture twice as bright by adding it
 			 * again */
-			draw_prim(NULL, coords, voffset, colors, nb, z, 0, flags);
+			draw_prim(NULL, coords, voffset, colors, nb, z, 0);
 		}
 
 		hdr.m2.alpha = false;
@@ -1533,8 +1531,7 @@ static void poly_draw_now(const struct poly *poly)
 		hdr.m0.txr_en = hdr.m1.txr_en = false;
 		z = get_zvalue(zoffset + 3);
 
-		draw_prim(&hdr, coords, voffset, colors_alt,
-			  nb, z, 0, flags & ~POLY_TEXTURED);
+		draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 		break;
 
 	case BLENDING_MODE_HALF:
@@ -1559,8 +1556,7 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_dst_acc2 = true;
 			hdr.m2.shading = PVR_TXRENV_MODULATE;
 
-			draw_prim(&hdr, coords, voffset, colors_alt,
-				  nb, z, 0x00808080, flags);
+			draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0x00808080);
 
 			/* Now, opaque pixels will be 0xff808080 in the second
 			 * accumulation buffer, and transparent pixels will be
@@ -1574,8 +1570,7 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.shading = PVR_TXRENV_REPLACE;
 			z = get_zvalue(zoffset + 1);
 
-			draw_prim(&hdr, coords, voffset, colors_alt,
-				  nb, z, 0, flags);
+			draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 
 			hdr.m2.blend_src_acc2 = false;
 		} else {
@@ -1585,8 +1580,7 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_src = PVR_BLEND_DESTCOLOR;
 			hdr.m2.blend_dst = PVR_BLEND_ZERO;
 
-			draw_prim(&hdr, coords, voffset, colors_alt,
-				  nb, z, 0, flags);
+			draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 		}
 
 		if (unlikely(check_mask)) {
@@ -1599,8 +1593,7 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_dst = PVR_BLEND_INVDESTALPHA;
 
 			z = get_zvalue(zoffset + 2);
-			draw_prim(&hdr, coords, voffset, colors_alt,
-				  nb, z, 0, flags);
+			draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 		}
 
 		hdr.m2.shading = PVR_TXRENV_MODULATE;
@@ -1624,7 +1617,7 @@ static void poly_draw_now(const struct poly *poly)
 		hdr.m0.txr_en = hdr.m1.txr_en = textured;
 		z = get_zvalue(zoffset + 3);
 
-		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
+		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 		break;
 	}
 }
@@ -2658,7 +2651,7 @@ static void pvr_render_black_square(uint16_t x0, uint16_t x1,
 	};
 	static const uint32_t colors[4] = { 0 };
 
-	draw_prim(NULL, coords, 0.0f, colors, 4, z, 0, 0);
+	draw_prim(NULL, coords, 0.0f, colors, 4, z, 0);
 }
 
 static void pvr_render_outlines(void)
