@@ -53,8 +53,6 @@
 
 #define BITLL(x)	(1ull << (x))
 
-#define ARRAY_SIZE(x)	(sizeof(x) / sizeof((x)[0]))
-
 #define CODEBOOK_AREA_SIZE (256 * 256)
 
 #define NB_CODEBOOKS_4BPP   \
@@ -72,13 +70,6 @@
 #define COORDS_V_OFFSET (1.0f / 32768.0f)
 
 #define __pvr __attribute__((section(".sub0")))
-
-typedef struct pvr_vertex_part2 {
-	float u1;
-	float v1;
-	uint32_t argb;
-	uint32_t oargb;
-} pvr_vertex_part2_t;
 
 union PacketBuffer {
 	uint32_t U4[16];
@@ -180,15 +171,6 @@ struct square_fcoords {
 	float v[4];
 };
 
-struct cube_vertex {
-	float x, y, z;
-};
-
-struct clip_area {
-	float x1, x2, y1, y2;
-	uint16_t zoffset;
-};
-
 #define POLY_BRIGHT		BIT(0)
 #define POLY_IGN_MASK		BIT(1)
 #define POLY_SET_MASK		BIT(2)
@@ -196,7 +178,6 @@ struct clip_area {
 #define POLY_TEXTURED		BIT(4)
 #define POLY_4VERTEX		BIT(5)
 #define POLY_FB			BIT(6)
-#define POLY_NOCLIP		BIT(7)
 
 struct poly {
 	alignas(32)
@@ -239,8 +220,6 @@ struct pvr_renderer {
 	uint32_t set_mask :1;
 	uint32_t check_mask :1;
 
-	uint32_t clip_test :1;
-
 	uint32_t page_x :4;
 	uint32_t page_y :1;
 	enum blending_mode blending_mode :3;
@@ -259,9 +238,6 @@ struct pvr_renderer {
 	unsigned int reap_bank, to_reap[2];
 
 	unsigned int polybuf_cnt_start;
-
-	unsigned int nb_clips;
-	struct clip_area clips[64];
 
 	unsigned int cmdbuf_offt;
 	bool old_blending_is_none;
@@ -979,7 +955,7 @@ static void invalidate_texture_area(unsigned int page_offset,
 		.texpage_id = page_offset,
 		.bpp = TEXTURE_16BPP,
 		.blending_mode = BLENDING_MODE_NONE,
-		.flags = POLY_TEXTURED | POLY_4VERTEX | POLY_FB | POLY_NOCLIP,
+		.flags = POLY_TEXTURED | POLY_4VERTEX | POLY_FB,
 		.colors = { 0x0, 0x0, 0x0, 0x0 },
 		.coords = {
 			{ xmin, ymin, umin, vmin },
@@ -1097,36 +1073,6 @@ static inline float get_zvalue(uint16_t zoffset)
 	return fint32.vf;
 }
 
-static void pvr_add_clip(uint16_t zoffset)
-{
-	float x1, x2, y1, y2;
-
-	if (screen_bpp == 24)
-		return;
-
-	if (unlikely(pvr.nb_clips == ARRAY_SIZE(pvr.clips))) {
-		printf("Too many clip areas\n");
-	} else {
-		x1 = (float)pvr.draw_x1 * screen_fw;
-		y1 = (float)pvr.draw_y1 * screen_fh;
-		x2 = (float)pvr.draw_x2 * screen_fw;
-		y2 = (float)pvr.draw_y2 * screen_fh;
-
-		if (x2 < x1)
-			x2 = x1;
-		if (y2 < y1)
-			y2 = y1;
-
-		pvr.clips[pvr.nb_clips++] = (struct clip_area){
-			.x1 = x1,
-			.x2 = x2,
-			.y1 = y1,
-			.y2 = y2,
-			.zoffset = zoffset,
-		};
-	}
-}
-
 static void pvr_start_scene(void)
 {
 	pvr_wait_ready();
@@ -1135,8 +1081,6 @@ static void pvr_start_scene(void)
 	pvr_scene_begin();
 
 	pvr.new_frame = 0;
-
-	pvr_add_clip(3);
 }
 
 __pvr
@@ -1146,11 +1090,8 @@ static void draw_prim(const pvr_poly_hdr_t *hdr,
 		      unsigned int nb, float z,
 		      uint32_t oargb, uint16_t flags)
 {
-	bool textured = flags & POLY_TEXTURED;
-	bool modified = !(flags & POLY_NOCLIP);
 	pvr_poly_hdr_t *sq_hdr;
 	pvr_vertex_t *vert;
-	pvr_vertex_part2_t *vert2;
 	unsigned int i;
 
 	if (unlikely(hdr)) {
@@ -1176,27 +1117,10 @@ static void draw_prim(const pvr_poly_hdr_t *hdr,
 		vert->oargb = oargb;
 		vert->x = fr0;
 		vert->y = fr1;
-		if (textured) {
-			vert->u = fr2 + COORDS_U_OFFSET;
-			vert->v = fr3 + COORDS_V_OFFSET;
-		} else {
-			vert->argb0 = color[i];
-			vert->argb1 = 0;
-		}
+		vert->u = fr2 + COORDS_U_OFFSET;
+		vert->v = fr3 + COORDS_V_OFFSET;
 
 		pvr_dr_commit(vert);
-
-		if (unlikely(!textured || !modified))
-			continue;
-
-		vert2 = (pvr_vertex_part2_t *)pvr_dr_target(pvr.dr_state);
-
-		vert2->u1 = fr2 + COORDS_U_OFFSET;
-		vert2->v1 = fr3 + COORDS_V_OFFSET;
-		vert2->argb = 0x0;
-		vert2->oargb = 0x0;
-
-		pvr_dr_commit(vert2);
 	}
 }
 
@@ -1377,8 +1301,6 @@ static pvr_poly_hdr_t poly_textured = {
 		.auto_strip_len = true,
 		.txr_en = true,
 		.gouraud = true,
-		.mod_normal = true,
-		.modifier_en = true,
 	},
 	.m1 = {
 		.txr_en = true,
@@ -1397,16 +1319,6 @@ static pvr_poly_hdr_t poly_textured = {
 	.m3 = {
 		.pixel_mode = PVR_PIXEL_MODE_ARGB1555,
 	},
-	.modifier.m2 = {
-		.fog_type = PVR_FOG_DISABLE,
-		.blend_dst = PVR_BLEND_ONE,
-		.blend_src = PVR_BLEND_ONE,
-		.shading = PVR_TXRENV_MODULATE,
-		.alpha = true,
-	},
-	.modifier.m3 = {
-		.pixel_mode = PVR_PIXEL_MODE_ARGB1555,
-	},
 };
 
 static pvr_poly_hdr_t poly_nontextured = {
@@ -1415,8 +1327,6 @@ static pvr_poly_hdr_t poly_nontextured = {
 		.list_type = PVR_LIST_TR_POLY,
 		.auto_strip_len = true,
 		.gouraud = true,
-		.mod_normal = true,
-		.modifier_en = true,
 	},
 	.m1 = {
 		.culling = PVR_CULLING_SMALL,
@@ -1426,12 +1336,6 @@ static pvr_poly_hdr_t poly_nontextured = {
 		.fog_type = PVR_FOG_DISABLE,
 		.blend_dst = PVR_BLEND_ZERO,
 		.blend_src = PVR_BLEND_ONE,
-	},
-	.modifier.m2 = {
-		.fog_type = PVR_FOG_DISABLE,
-		.blend_dst = PVR_BLEND_ONE,
-		.blend_src = PVR_BLEND_ONE,
-		.alpha = true,
 	},
 };
 
@@ -1507,11 +1411,6 @@ static void poly_draw_now(const struct poly *poly)
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
 		return;
-	}
-
-	if (unlikely(poly->flags & POLY_NOCLIP)) {
-		hdr.m0.modifier_en = false;
-		hdr.m0.mod_normal = false;
 	}
 
 	if (textured) {
@@ -1955,23 +1854,6 @@ static void process_poly_multipage(struct poly *poly)
 	process_poly(&poly2, true);
 }
 
-static bool poly_should_clip(const struct poly *poly)
-{
-	unsigned int i;
-
-	if (pvr.clip_test) {
-		for (i = 0; i < poly_get_vertex_count(poly); i++) {
-			if (poly->coords[i].x < pvr.draw_x1
-			    || poly->coords[i].x > pvr.draw_x2
-			    || poly->coords[i].y < pvr.draw_y1
-			    || poly->coords[i].y > pvr.draw_y2)
-				return true;
-		}
-	}
-
-	return false;
-}
-
 __pvr __attribute__((optimize(2)))
 static void process_poly(struct poly *poly, bool scissor)
 {
@@ -2037,7 +1919,7 @@ static void process_poly(struct poly *poly, bool scissor)
 			poly->flags |= POLY_CHECK_MASK;
 			poly_enqueue(PVR_LIST_TR_POLY, poly);
 		} else {
-			if (WITH_HYBRID_RENDERING && !poly_should_clip(poly))
+			if (WITH_HYBRID_RENDERING)
 				list = PVR_LIST_PT_POLY;
 			else
 				list = PVR_LIST_TR_POLY;
@@ -2235,7 +2117,7 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 
 		poly = (struct poly){
 			.blending_mode = BLENDING_MODE_NONE,
-			.flags = POLY_IGN_MASK | POLY_4VERTEX | POLY_NOCLIP,
+			.flags = POLY_IGN_MASK | POLY_4VERTEX,
 			.colors = { color32, color32, color32, color32 },
 			.coords = {
 				[0] = { .x = x02, .y = y01 },
@@ -2249,13 +2131,6 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 	}
 }
 
-static inline bool pvr_clip_test(void)
-{
-	return pvr.draw_x1 || pvr.draw_y1
-		|| pvr.draw_x2 != gpu.screen.hres
-		|| pvr.draw_y2 != gpu.screen.vres;
-}
-
 __pvr
 static void process_gpu_commands(void)
 {
@@ -2266,7 +2141,6 @@ static void process_gpu_commands(void)
 	struct poly poly;
 	uint32_t cmd, len;
 	uint16_t draw_x, draw_y;
-	bool draw_updated;
 
 	for (cmd_offt = 0; cmd_offt < pvr.cmdbuf_offt; cmd_offt += 1 + len) {
 		pbuffer = (const union PacketBuffer *)&cmdbuf[cmd_offt];
@@ -2332,30 +2206,18 @@ static void process_gpu_commands(void)
 				/* Set top-left corner of drawing area */
 				draw_x = pbuffer->U4[0] & 0x3ff;
 				draw_y = (pbuffer->U4[0] >> 10) & 0x1ff;
-				draw_updated = draw_x - pvr.start_x != pvr.draw_x1
-					|| draw_y - pvr.start_y != pvr.draw_y1;
 
 				pvr.draw_x1 = draw_x - pvr.start_x;
 				pvr.draw_y1 = draw_y - pvr.start_y;
-				pvr.clip_test = pvr_clip_test();
-
-				if (!pvr.new_frame && draw_updated)
-					pvr_add_clip(pvr.zoffset++);
 				break;
 
 			case 0xe4:
 				/* Set bottom-right corner of drawing area */
 				draw_x = (pbuffer->U4[0] & 0x3ff) + 1;
 				draw_y = ((pbuffer->U4[0] >> 10) & 0x1ff) + 1;
-				draw_updated = draw_x - pvr.start_x != pvr.draw_x2
-					|| draw_y - pvr.start_y != pvr.draw_y2;
 
 				pvr.draw_x2 = draw_x - pvr.start_x;
 				pvr.draw_y2 = draw_y - pvr.start_y;
-				pvr.clip_test = pvr_clip_test();
-
-				if (!pvr.new_frame && draw_updated)
-					pvr_add_clip(pvr.zoffset++);
 				break;
 
 			case 0xe5:
@@ -2774,7 +2636,6 @@ void hw_render_start(void)
 	pvr.inval_counter_at_start = pvr.inval_counter;
 	pvr.cmdbuf_offt = 0;
 	pvr.old_blending_is_none = false;
-	pvr.nb_clips = 0;
 
 	reset_texture_pages();
 
@@ -2797,7 +2658,7 @@ static void pvr_render_black_square(uint16_t x0, uint16_t x1,
 	};
 	static const uint32_t colors[4] = { 0 };
 
-	draw_prim(NULL, coords, 0.0f, colors, 4, z, 0, POLY_NOCLIP);
+	draw_prim(NULL, coords, 0.0f, colors, 4, z, 0, 0);
 }
 
 static void pvr_render_outlines(void)
@@ -2822,130 +2683,6 @@ static void pvr_render_outlines(void)
 		pvr_render_black_square(0, gpu.screen.hres,
 					gpu.screen.y + gpu.screen.h,
 					gpu.screen.vres, z);
-
-	pvr_list_finish();
-}
-
-static void render_mod_strip(const struct cube_vertex *vertices,
-			     size_t count, uint32_t mode)
-{
-	unsigned int i, curr_mode = PVR_MODIFIER_OTHER_POLY;
-	pvr_poly_hdr_t *sq_hdr;
-	float *mod;
-
-	for (i = 0; i < count - 2; i++) {
-		if (i == count - 3)
-			curr_mode = mode;
-
-		sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
-		pvr_mod_compile(sq_hdr, PVR_LIST_TR_MOD, curr_mode, PVR_CULLING_NONE);
-		pvr_dr_commit(sq_hdr);
-
-		mod = (void *)pvr_dr_target(pvr.dr_state);
-		*(uint32_t *)mod = PVR_CMD_VERTEX_EOL;
-		mod[1] = vertices[i + 0].x;
-		mod[2] = vertices[i + 0].y;
-		mod[3] = vertices[i + 0].z;
-		mod[4] = vertices[i + 1].x;
-		mod[5] = vertices[i + 1].y;
-		mod[6] = vertices[i + 1].z;
-		mod[7] = vertices[i + 2].x;
-
-		pvr_dr_commit(mod);
-		mod = (void *)pvr_dr_target(pvr.dr_state);
-
-		mod[0] = vertices[i + 2].y;
-		mod[1] = vertices[i + 2].z;
-		pvr_dr_commit(mod);
-	}
-}
-
-static void render_mod_cube(float x1, float y1, float z1,
-			    float x2, float y2, float z2)
-{
-	const struct cube_vertex cube_vertices_part1[] = {
-		{ x1, y1, z2 },
-		{ x1, y2, z2 },
-		{ x2, y1, z2 },
-		{ x2, y2, z2 },
-		{ x2, y1, z1 },
-		{ x2, y2, z1 },
-		{ x1, y1, z1 },
-		{ x1, y2, z1 },
-	};
-	const struct cube_vertex cube_vertices_part2[] = {
-		{ x2, y2, z2 },
-		{ x2, y2, z1 },
-		{ x1, y2, z2 },
-		{ x1, y2, z1 },
-		{ x1, y1, z2 },
-		{ x1, y1, z1 },
-		{ x2, y1, z2 },
-		{ x2, y1, z1 },
-	};
-
-	render_mod_strip(cube_vertices_part1, ARRAY_SIZE(cube_vertices_part1),
-			 PVR_MODIFIER_OTHER_POLY);
-	render_mod_strip(cube_vertices_part2, ARRAY_SIZE(cube_vertices_part2),
-			 PVR_MODIFIER_OTHER_POLY);
-}
-
-static void render_mod_square(float x, float y, float z,
-			      float w, float h, uint32_t mode)
-{
-	const struct cube_vertex square_vertices[] = {
-		{ x + w, y, z },
-		{ x + w, y + h, z },
-		{ x, y, z },
-		{ x, y + h, z },
-	};
-
-	render_mod_strip(square_vertices, ARRAY_SIZE(square_vertices), mode);
-
-}
-
-static void pvr_render_modifier_volumes(void)
-{
-	unsigned int i;
-	uint16_t newz;
-	float z;
-
-	pvr_list_begin(PVR_LIST_TR_MOD);
-
-	/* During the scene the game may change the render area a few times.
-	 * For each change, render a modifier volume as a rectangular cuboid
-	 * whose X/Y coordinates delimitate the render area, and the Z
-	 * coordinates deliminate the start and end depth of the render area.
-	 * Those volumes are then rendered as "exclude" modifiers, and an
-	 * "include" modifier plane is rendered on top. The result is that only
-	 * pixels inside those volumes will be rendered, anything outside will
-	 * be clipped.
-	 * Note that in theory we should use PVR_MODIFIER_EXCLUDE_LAST_POLY on
-	 * the last polygon of each cuboid; however doing so will cause weird
-	 * graphical glitches, and for a reason beyond me, it works without it.
-	 */
-
-	for (i = 0; i < pvr.nb_clips; i++) {
-		if (i < pvr.nb_clips - 1)
-			newz = pvr.clips[i + 1].zoffset;
-		else
-			newz = pvr.zoffset++;
-
-		if (pvr.clips[i].x1 == pvr.clips[i].x2
-		    || pvr.clips[i].y1 == pvr.clips[i].y2)
-			continue;
-
-		render_mod_cube(pvr.clips[i].x1,
-				pvr.clips[i].y1,
-				get_zvalue(pvr.clips[i].zoffset),
-				pvr.clips[i].x2,
-				pvr.clips[i].y2,
-				get_zvalue(newz));
-	}
-
-	z = get_zvalue(pvr.zoffset++);
-	render_mod_square(0.0f, 0.0f, z, 640.0f, 480.0f,
-			  PVR_MODIFIER_INCLUDE_LAST_POLY);
 
 	pvr_list_finish();
 }
@@ -2982,9 +2719,6 @@ void hw_render_stop(void)
 		pvr_load_bg();
 
 	pvr_render_outlines();
-
-	if (pvr.nb_clips)
-		pvr_render_modifier_volumes();
 
 	pvr_scene_finish();
 
