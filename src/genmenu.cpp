@@ -241,7 +241,7 @@ void MyMenu::populate(fs::path path, bool back)
 	std::shared_ptr<AnimFadeIn> anim;
 	std::set<fs::path> fileset;
 	std::set<fs::path> dirset;
-	dirent_t *d;
+	const dirent_t *d;
 	bool is_file;
 	bool is_credits = path.compare("/rd/credits") == 0;
 	int fd;
