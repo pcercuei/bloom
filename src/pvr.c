@@ -184,7 +184,7 @@ struct poly {
 	uint8_t texpage_id;
 	enum texture_bpp bpp :8;
 	enum blending_mode blending_mode :8;
-	uint8_t _pad;
+	uint8_t depthcmp;
 	uint16_t flags;
 	uint16_t clut;
 	uint16_t zoffset;
@@ -221,6 +221,8 @@ struct pvr_renderer {
 	uint32_t check_mask :1;
 
 	uint32_t overpaint :1;
+
+	uint32_t depthcmp :3;
 
 	pvr_list_t pt_list :3;
 	pvr_list_t list :3;
@@ -961,6 +963,7 @@ static void invalidate_texture_area(unsigned int page_offset,
 		.texpage_id = page_offset,
 		.bpp = TEXTURE_16BPP,
 		.blending_mode = BLENDING_MODE_NONE,
+		.depthcmp = PVR_DEPTHCMP_ALWAYS,
 		.flags = POLY_TEXTURED | POLY_4VERTEX | POLY_FB,
 		.colors = { 0x0, 0x0, 0x0, 0x0 },
 		.coords = {
@@ -1062,7 +1065,7 @@ static inline int16_t y_to_yoffset(int16_t y)
 	return y + pvr.draw_offt_y;
 }
 
-static inline float get_zvalue(uint16_t zoffset)
+static float get_zvalue(uint16_t zoffset, bool set_mask, bool check_mask)
 {
 	union fint32 {
 		unsigned int vint;
@@ -1167,7 +1170,7 @@ static void pvr_render_fb(void)
 
 	__builtin_prefetch(&fake_tex_header);
 
-	z = get_zvalue(0);
+	z = get_zvalue(0, false, false);
 	frontbuf = pvr_get_front_buffer();
 	hi_chip = (uint32_t)frontbuf & PVR_RAM_SIZE;
 	m3 = (struct pvr_poly_hdr_mode3){
@@ -1192,7 +1195,7 @@ static void pvr_render_fb(void)
 	pvr_dr_commit(sq_hdr);
 
 	uoffset = hi_chip ? 2.0f / 1024.0f : 0.0f;
-	z = get_zvalue(1);
+	z = get_zvalue(1, false, false);
 
 	render_square(&fb_fcoords_left, z, uoffset);
 	render_square(&fb_fcoords_right, z, uoffset);
@@ -1202,7 +1205,7 @@ static void pvr_render_fb(void)
 	sq_hdr->m3 = m3;
 	pvr_dr_commit(sq_hdr);
 
-	z = get_zvalue(2);
+	z = get_zvalue(2, false, false);
 	uoffset = hi_chip ? 1.0f / 1024.0f : -1.0f / 1024.0f;
 	render_square(&fb_fcoords_left, z, uoffset);
 	render_square(&fb_fcoords_right, z, uoffset);
@@ -1397,7 +1400,7 @@ static void poly_draw_now(const struct poly *poly)
 
 	__builtin_prefetch(poly_hdr);
 
-	z = get_zvalue(zoffset);
+	z = get_zvalue(zoffset, set_mask, check_mask);
 
 	if (likely(poly->blending_mode == BLENDING_MODE_NONE
 		   && pvr.old_blending_is_none
@@ -1440,6 +1443,9 @@ static void poly_draw_now(const struct poly *poly)
 				hdr.m2.u_size = PVR_UV_SIZE_512;
 		}
 	}
+
+	if (unlikely(poly->depthcmp != PVR_DEPTHCMP_GEQUAL))
+		hdr.m1.depth_cmp = poly->depthcmp;
 
 	switch (poly->blending_mode) {
 	case BLENDING_MODE_NONE:
@@ -1491,7 +1497,7 @@ static void poly_draw_now(const struct poly *poly)
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 
 		if (bright) {
-			z = get_zvalue(zoffset + 1);
+			z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
 			/* Make the source texture twice as bright by adding it
 			 * again. */
@@ -1526,12 +1532,12 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_src = PVR_BLEND_ONE;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 		hdr.m0.txr_en = hdr.m1.txr_en = textured;
-		z = get_zvalue(zoffset + 1);
+		z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 
 		if (bright) {
-			z = get_zvalue(zoffset + 2);
+			z = get_zvalue(zoffset + 2, set_mask, check_mask);
 
 			/* Make the source texture twice as bright by adding it
 			 * again */
@@ -1542,7 +1548,7 @@ static void poly_draw_now(const struct poly *poly)
 		hdr.m2.blend_src = PVR_BLEND_INVDESTCOLOR;
 		hdr.m2.blend_dst = PVR_BLEND_ZERO;
 		hdr.m0.txr_en = hdr.m1.txr_en = false;
-		z = get_zvalue(zoffset + 3);
+		z = get_zvalue(zoffset + 3, set_mask, check_mask);
 
 		draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 		break;
@@ -1581,7 +1587,7 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_dst = PVR_BLEND_INVSRCALPHA;
 			hdr.m2.blend_dst_acc2 = false;
 			hdr.m2.shading = PVR_TXRENV_REPLACE;
-			z = get_zvalue(zoffset + 1);
+			z = get_zvalue(zoffset + 1, set_mask, check_mask);
 
 			draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 
@@ -1605,7 +1611,7 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_src = PVR_BLEND_DESTCOLOR;
 			hdr.m2.blend_dst = PVR_BLEND_INVDESTALPHA;
 
-			z = get_zvalue(zoffset + 2);
+			z = get_zvalue(zoffset + 2, set_mask, check_mask);
 			draw_prim(&hdr, coords, voffset, colors_alt, nb, z, 0);
 		}
 
@@ -1628,7 +1634,7 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_src = PVR_BLEND_ONE;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 		hdr.m0.txr_en = hdr.m1.txr_en = textured;
-		z = get_zvalue(zoffset + 3);
+		z = get_zvalue(zoffset + 3, set_mask, check_mask);
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0);
 		break;
@@ -2019,6 +2025,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 
 	poly = (struct poly){
 		.blending_mode = blending_mode,
+		.depthcmp = pvr.depthcmp,
 		.flags = POLY_4VERTEX,
 		.colors = { color0, color0, color0, color1 },
 		.coords = {
@@ -2035,6 +2042,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 
 	poly = (struct poly){
 		.blending_mode = blending_mode,
+		.depthcmp = pvr.depthcmp,
 		.flags = POLY_4VERTEX,
 		.colors = { color0, color1, color1, color1 },
 		.coords = {
@@ -2140,6 +2148,7 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 
 		poly = (struct poly){
 			.blending_mode = BLENDING_MODE_NONE,
+			.depthcmp = PVR_DEPTHCMP_ALWAYS,
 			.flags = POLY_IGN_MASK | POLY_4VERTEX,
 			.colors = { color32, color32, color32, color32 },
 			.coords = {
@@ -2161,6 +2170,7 @@ static void process_gpu_commands(void)
 	unsigned int cmd_offt, len_polyline = 0;
 	const union PacketBuffer *pbuffer;
 	enum blending_mode blending_mode;
+	bool new_set, new_check;
 	struct poly poly;
 	uint32_t cmd, len;
 	uint16_t draw_x, draw_y;
@@ -2256,8 +2266,28 @@ static void process_gpu_commands(void)
 
 			case 0xe6:
 				/* VRAM mask settings */
-				pvr.set_mask = !!(pbuffer->U4[0] & 0x1);
-				pvr.check_mask = !!(pbuffer->U4[0] & 0x2);
+				new_set = pbuffer->U4[0] & 0x1;
+				new_check = (pbuffer->U4[0] & 0x2) >> 1;
+
+				if (!new_set && pvr.set_mask) {
+					/* We have to switch to using TR polys
+					 * exclusively now. */
+					pvr.pt_list = PVR_LIST_TR_POLY;
+
+					/* TODO: If we're currently using the PT list, switch
+					 * to the TR list, and flush all currently queued TR
+					 * polys */
+				}
+
+				if (pvr.pt_list == PVR_LIST_TR_POLY) {
+					if (new_check)
+						pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
+					else
+						pvr.depthcmp = PVR_DEPTHCMP_ALWAYS;
+				}
+
+				pvr.set_mask = new_set;
+				pvr.check_mask = new_check;
 				break;
 
 			default:
@@ -2285,6 +2315,7 @@ static void process_gpu_commands(void)
 			poly_alloc_cache(&poly);
 
 			poly = (struct poly){
+				.depthcmp = pvr.depthcmp,
 				.colors = { 0xffffff },
 			};
 
@@ -2457,6 +2488,7 @@ static void process_gpu_commands(void)
 
 			poly = (struct poly){
 				.blending_mode = blending_mode,
+				.depthcmp = pvr.depthcmp,
 				.colors = { color, color, color, color },
 				.coords = {
 					[0] = { .x = x1, .y = y0 },
@@ -2656,6 +2688,7 @@ void hw_render_start(void)
 	pvr.new_frame = 1;
 	pvr.has_bg = 0;
 	pvr.zoffset = 3;
+	pvr.depthcmp = PVR_DEPTHCMP_GEQUAL;
 	pvr.inval_counter_at_start = pvr.inval_counter;
 	pvr.cmdbuf_offt = 0;
 	pvr.old_blending_is_none = false;
@@ -2694,7 +2727,7 @@ static void pvr_render_black_square(uint16_t x0, uint16_t x1,
 
 static void pvr_render_outlines(void)
 {
-	float z = get_zvalue(pvr.zoffset++);
+	float z = get_zvalue(pvr.zoffset++, false, false);
 	pvr_poly_hdr_t *sq_hdr;
 
 	pvr_start_list(PVR_LIST_OP_POLY);
