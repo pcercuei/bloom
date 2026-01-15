@@ -1985,7 +1985,7 @@ static void process_poly(struct poly *poly, bool scissor)
 		}
 
 		/* Mask poly */
-		if (poly->flags & POLY_TEXTURED) {
+		if ((poly->flags & POLY_TEXTURED) && !check_mask) {
 			poly->blending_mode = BLENDING_MODE_NONE;
 			poly->clut |= CLUT_IS_MASK;
 
