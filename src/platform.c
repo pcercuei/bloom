@@ -9,6 +9,7 @@
 #include <libpcsxcore/psxcounters.h>
 #include <libpcsxcore/gpu.h>
 
+#include <kos/thread.h>
 #include <arch/timer.h>
 #include <dc/matrix.h>
 #include <dc/pvr.h>
@@ -46,6 +47,9 @@ static bool frame_was_24bpp;
 float screen_fw, screen_fh;
 static unsigned int screen_w, screen_h;
 unsigned int screen_bpp;
+
+static uint64_t last_cputime;
+static uint64_t last_idletime;
 
 static void dc_alloc_pvram(void)
 {
@@ -188,11 +192,12 @@ static inline void copy24(const uint16_t *vram, int w, int h)
 static void dc_vout_flip(const void *vram, int offset, int bgr24,
 			 int x, int y, int w, int h, int dims_changed)
 {
-	uint64_t new_timer;
+	float ymin, ymax, xmin, xmax, idle_diff, cpu_diff;
+	uint64_t new_timer, cputime, idletime;
+	pvr_stats_t pvr_stats;
 	pvr_poly_cxt_t cxt;
 	pvr_poly_hdr_t hdr;
 	pvr_vertex_t vert;
-	float ymin, ymax, xmin, xmax;
 	int copy_w;
 
 	if (!started || !vram)
@@ -293,11 +298,24 @@ static void dc_vout_flip(const void *vram, int offset, int bgr24,
 	}
 
 	if (new_timer > (timer_ms + 1000)) {
-		vmu_printf("\n FPS: %5.1f\n\n %ux%u-%u", (float)frames,
-			   screen_w, screen_h, screen_bpp);
+		pvr_get_stats(&pvr_stats);
+
+		cputime = timer_ns_gettime64();
+		idletime = thd_get_cpu_time(thd_get_idle());
+
+		idle_diff = idletime - last_idletime;
+		cpu_diff = cputime - last_cputime;
+
+		vmu_printf(" FPS: %5.1f\n\n %ux%u-%u\n PVR %02.02f%%\n SH4 %02.02f%%",
+			   (float)frames, screen_w, screen_h, screen_bpp,
+			   (float)pvr_stats.rnd_last_time * 100.0f / 16666666.7f,
+			   100.0f - 100.0f * idle_diff / cpu_diff);
 
 		timer_ms = new_timer;
 		frames = 0;
+
+		last_cputime = cputime;
+		last_idletime = idletime;
 	}
 }
 
