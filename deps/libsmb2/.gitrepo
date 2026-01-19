@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/sahlberg/libsmb2.git
+	branch = master
+	commit = 28e0658e2226fe6ae5325dce671ef9c8b0e7ac95
+	parent = 3d4bd52dd497bd791a9433aca74076c7972afeb2
+	method = merge
+	cmdver = 0.4.9
