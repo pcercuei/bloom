@@ -185,7 +185,7 @@ struct cube_vertex {
 };
 
 struct clip_area {
-	float x1, x2, y1, y2;
+	int16_t x1, x2, y1, y2;
 	uint16_t zoffset;
 };
 
@@ -1097,9 +1097,10 @@ static inline float get_zvalue(uint16_t zoffset)
 	return fint32.vf;
 }
 
+__noinline
 static void pvr_add_clip(uint16_t zoffset)
 {
-	float x1, x2, y1, y2;
+	int16_t x1, x2, y1, y2;
 
 	if (screen_bpp == 24)
 		return;
@@ -1107,10 +1108,10 @@ static void pvr_add_clip(uint16_t zoffset)
 	if (unlikely(pvr.nb_clips == ARRAY_SIZE(pvr.clips))) {
 		printf("Too many clip areas\n");
 	} else {
-		x1 = (float)pvr.draw_x1 * screen_fw;
-		y1 = (float)pvr.draw_y1 * screen_fh;
-		x2 = (float)pvr.draw_x2 * screen_fw;
-		y2 = (float)pvr.draw_y2 * screen_fh;
+		x1 = pvr.draw_x1 * screen_fw;
+		y1 = pvr.draw_y1 * screen_fh;
+		x2 = pvr.draw_x2 * screen_fw;
+		y2 = pvr.draw_y2 * screen_fh;
 
 		if (x2 < x1)
 			x2 = x1;
@@ -1127,7 +1128,8 @@ static void pvr_add_clip(uint16_t zoffset)
 	}
 }
 
-static void pvr_start_scene(void)
+__noinline
+static void pvr_start_scene(pvr_list_t list)
 {
 	pvr_wait_ready();
 	pvr_reap_textures();
@@ -1136,6 +1138,7 @@ static void pvr_start_scene(void)
 
 	pvr.new_frame = 0;
 
+	pvr_list_begin(list);
 	pvr_add_clip(3);
 }
 
@@ -1750,10 +1753,8 @@ __pvr
 static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 {
 	if (!WITH_HYBRID_RENDERING || likely(list == PVR_LIST_PT_POLY)) {
-		if (unlikely(pvr.new_frame)) {
-			pvr_start_scene();
-			pvr_list_begin(list);
-		}
+		if (unlikely(pvr.new_frame))
+			pvr_start_scene(list);
 
 		poly_draw_now(poly);
 	} else if (unlikely(pvr.polybuf_cnt_start == __array_size(polybuf))) {
@@ -2906,9 +2907,9 @@ static void render_mod_square(float x, float y, float z,
 
 static void pvr_render_modifier_volumes(void)
 {
+	int16_t x1, y1, x2, y2;
 	unsigned int i;
-	uint16_t newz;
-	float z;
+	float z, newz;
 
 	pvr_list_begin(PVR_LIST_TR_MOD);
 
@@ -2927,20 +2928,20 @@ static void pvr_render_modifier_volumes(void)
 
 	for (i = 0; i < pvr.nb_clips; i++) {
 		if (i < pvr.nb_clips - 1)
-			newz = pvr.clips[i + 1].zoffset;
+			newz = get_zvalue(pvr.clips[i + 1].zoffset);
 		else
-			newz = pvr.zoffset++;
+			newz = get_zvalue(pvr.zoffset++);
 
-		if (pvr.clips[i].x1 == pvr.clips[i].x2
-		    || pvr.clips[i].y1 == pvr.clips[i].y2)
+		x1 = pvr.clips[i].x1;
+		x2 = pvr.clips[i].x2;
+		y1 = pvr.clips[i].y1;
+		y2 = pvr.clips[i].y2;
+		z = get_zvalue(pvr.clips[i].zoffset);
+
+		if (x1 == x2 || y1 == y2)
 			continue;
 
-		render_mod_cube(pvr.clips[i].x1,
-				pvr.clips[i].y1,
-				get_zvalue(pvr.clips[i].zoffset),
-				pvr.clips[i].x2,
-				pvr.clips[i].y2,
-				get_zvalue(newz));
+		render_mod_cube(x1, y1, z, x2, y2, newz);
 	}
 
 	z = get_zvalue(pvr.zoffset++);
@@ -2957,8 +2958,7 @@ void hw_render_stop(void)
 	process_gpu_commands();
 
 	if (unlikely(pvr.new_frame)) {
-		pvr_start_scene();
-		pvr_list_begin(PVR_LIST_TR_POLY);
+		pvr_start_scene(PVR_LIST_TR_POLY);
 	} else if (WITH_HYBRID_RENDERING) {
 		pvr_list_finish();
 		pvr_list_begin(PVR_LIST_TR_POLY);
