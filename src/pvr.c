@@ -197,6 +197,7 @@ struct clip_area {
 #define POLY_4VERTEX		BIT(5)
 #define POLY_FB			BIT(6)
 #define POLY_NOCLIP		BIT(7)
+#define POLY_TILECLIP		BIT(8)
 
 struct poly {
 	alignas(32)
@@ -273,6 +274,7 @@ struct pvr_renderer {
 };
 
 static void process_poly(struct poly *poly, bool scissor);
+static void poly_enqueue(pvr_list_t list, const struct poly *poly);
 
 static struct pvr_renderer pvr;
 
@@ -1101,6 +1103,7 @@ __noinline
 static void pvr_add_clip(uint16_t zoffset)
 {
 	int16_t x1, x2, y1, y2;
+	struct poly poly;
 
 	if (screen_bpp == 24)
 		return;
@@ -1117,6 +1120,14 @@ static void pvr_add_clip(uint16_t zoffset)
 			x2 = x1;
 		if (y2 < y1)
 			y2 = y1;
+		if (x1 < 0)
+			x1 = 0;
+		if (y1 < 0)
+			y1 = 0;
+		if (x2 > 640)
+			x2 = 640;
+		if (y2 > 480)
+			y2 = 480;
 
 		pvr.clips[pvr.nb_clips++] = (struct clip_area){
 			.x1 = x1,
@@ -1125,6 +1136,17 @@ static void pvr_add_clip(uint16_t zoffset)
 			.y2 = y2,
 			.zoffset = zoffset,
 		};
+
+		poly_alloc_cache(&poly);
+
+		poly = (struct poly){
+			.flags = POLY_TILECLIP,
+			.coords[0] = { x1, y1, x2, y2 },
+		};
+
+		poly_enqueue(PVR_LIST_PT_POLY, &poly);
+		poly_enqueue(PVR_LIST_TR_POLY, &poly);
+		poly_discard(&poly);
 	}
 }
 
@@ -1378,6 +1400,7 @@ static pvr_poly_hdr_t poly_textured = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
 		.auto_strip_len = true,
+		.clip_mode = PVR_USERCLIP_INSIDE,
 		.txr_en = true,
 		.gouraud = true,
 		.mod_normal = true,
@@ -1417,6 +1440,7 @@ static pvr_poly_hdr_t poly_nontextured = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
 		.auto_strip_len = true,
+		.clip_mode = PVR_USERCLIP_INSIDE,
 		.gouraud = true,
 		.mod_normal = true,
 		.modifier_en = true,
@@ -1443,6 +1467,7 @@ static pvr_poly_hdr_t poly_set_mask = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
 		.auto_strip_len = true,
+		.clip_mode = PVR_USERCLIP_INSIDE,
 	},
 	.m1 = {
 		.culling = PVR_CULLING_SMALL,
@@ -1454,6 +1479,66 @@ static pvr_poly_hdr_t poly_set_mask = {
 		.blend_src = PVR_BLEND_ZERO,
 	},
 };
+
+static pvr_poly_hdr_t poly_dummy = {
+	.m0 = {
+		.hdr_type = PVR_HDR_POLY,
+		.list_type = PVR_LIST_TR_POLY,
+		.auto_strip_len = true,
+	},
+	.m1 = {
+		.culling = PVR_CULLING_SMALL,
+		.depth_cmp = PVR_DEPTHCMP_NEVER,
+	},
+	.m2 = {
+		.fog_type = PVR_FOG_DISABLE,
+		.blend_dst = PVR_BLEND_ONE,
+		.blend_src = PVR_BLEND_ZERO,
+	},
+};
+
+static void pvr_send_dummy(const struct poly *poly)
+{
+	pvr_poly_hdr_t *sq_hdr;
+	pvr_vertex_t *vert;
+	unsigned int i;
+
+	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	copy32(sq_hdr, &poly_dummy);
+	pvr_dr_commit(sq_hdr);
+
+	for (i = 0; i < 3; i++) {
+		vert = pvr_dr_target(pvr.dr_state);
+		vert->flags = (i == 2) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+		pvr_dr_commit(vert);
+	}
+}
+
+static void pvr_tile_clip(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
+{
+	pvr_poly_hdr_t *sq_hdr;
+
+	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+
+	sq_hdr->m0.hdr_type = PVR_HDR_USERCLIP;
+	sq_hdr->start_x = x1 / 32;
+	sq_hdr->start_y = y1 / 32;
+	sq_hdr->end_x = (x2 - 1) / 32;
+	sq_hdr->end_y = (y2 - 1) / 32;
+	pvr_dr_commit(sq_hdr);
+}
+
+__noinline
+static void poly_do_tile_clip(const struct poly *poly)
+{
+	/* Changing the tile clipping area causes the poly submitted previously
+	 * to render incorrectly. Avoid graphical glitches by submitting a dummy
+	 * invisible polygon before changing the clipping settings. */
+	pvr_send_dummy(poly);
+
+	pvr_tile_clip(poly->coords[0].x, poly->coords[0].y,
+		      poly->coords[0].u, poly->coords[0].v);
+}
 
 __pvr
 static void poly_draw_now(const struct poly *poly)
@@ -1471,6 +1556,15 @@ static void poly_draw_now(const struct poly *poly)
 	pvr_poly_hdr_t hdr, *poly_hdr;
 	pvr_ptr_t tex = NULL;
 	float z;
+
+	if (unlikely(poly->flags & POLY_TILECLIP)) {
+		/* We'll send a new header, so the next poly can't reuse the
+		 * previous one */
+		pvr.old_blending_is_none = false;
+
+		poly_do_tile_clip(poly);
+		return;
+	}
 
 	if (textured) {
 		voffset = poly->voffset;
@@ -1515,6 +1609,7 @@ static void poly_draw_now(const struct poly *poly)
 	if (unlikely(poly->flags & POLY_NOCLIP)) {
 		hdr.m0.modifier_en = false;
 		hdr.m0.mod_normal = false;
+		hdr.m0.clip_mode = PVR_USERCLIP_DISABLE;
 	}
 
 	if (textured) {
@@ -1773,6 +1868,7 @@ static void polybuf_render_from_start(void)
 	pvr.old_blending_is_none = false;
 	poly_textured.m0.list_type = PVR_LIST_TR_POLY;
 	poly_nontextured.m0.list_type = PVR_LIST_TR_POLY;
+	poly_dummy.m0.list_type = PVR_LIST_TR_POLY;
 
 	for (i = 0; i < pvr.polybuf_cnt_start; i++) {
 		poly_prefetch(&polybuf[i + 1]);
@@ -2784,6 +2880,7 @@ void hw_render_start(void)
 		/* Default to PT list */
 		poly_textured.m0.list_type = PVR_LIST_PT_POLY;
 		poly_nontextured.m0.list_type = PVR_LIST_PT_POLY;
+		poly_dummy.m0.list_type = PVR_LIST_PT_POLY;
 
 		pvr.polybuf_cnt_start = 0;
 	}
@@ -2898,6 +2995,7 @@ static void pvr_render_modifier_volumes(void)
 	float z, newz;
 
 	pvr_list_begin(PVR_LIST_TR_MOD);
+	pvr_tile_clip(0.0f, 0.0f, 640.0f, 480.0f);
 
 	/* During the scene the game may change the render area a few times.
 	 * For each change, render a modifier volume as a rectangular cuboid
