@@ -2888,26 +2888,12 @@ static void render_mod_cube(float x1, float y1, float z1,
 	render_mod_strip(cube_vertices_part1, ARRAY_SIZE(cube_vertices_part1),
 			 PVR_MODIFIER_OTHER_POLY);
 	render_mod_strip(cube_vertices_part2, ARRAY_SIZE(cube_vertices_part2),
-			 PVR_MODIFIER_OTHER_POLY);
-}
-
-static void render_mod_square(float x, float y, float z,
-			      float w, float h, uint32_t mode)
-{
-	const struct cube_vertex square_vertices[] = {
-		{ x + w, y, z },
-		{ x + w, y + h, z },
-		{ x, y, z },
-		{ x, y + h, z },
-	};
-
-	render_mod_strip(square_vertices, ARRAY_SIZE(square_vertices), mode);
-
+			 PVR_MODIFIER_INCLUDE_LAST_POLY);
 }
 
 static void pvr_render_modifier_volumes(void)
 {
-	int16_t x1, y1, x2, y2;
+	int16_t x1, y1, x2, y2, tilex1, tiley1, tilex2, tiley2;
 	unsigned int i;
 	float z, newz;
 
@@ -2936,17 +2922,21 @@ static void pvr_render_modifier_volumes(void)
 		x2 = pvr.clips[i].x2;
 		y1 = pvr.clips[i].y1;
 		y2 = pvr.clips[i].y2;
+		tilex1 = 0;
+		tiley1 = 0;
+		tilex2 = 640;
+		tiley2 = 480;
 		z = get_zvalue(pvr.clips[i].zoffset);
 
-		if (x1 == x2 || y1 == y2)
-			continue;
-
-		render_mod_cube(x1, y1, z, x2, y2, newz);
+		if (x1 != tilex1)
+			render_mod_cube(tilex1, tiley1, z, x1, tiley2, newz);
+		if (x2 != tilex2)
+			render_mod_cube(x2, tiley1, z, tilex2, tiley2, newz);
+		if (y1 != tiley1)
+			render_mod_cube(tilex1, tiley1, z, tilex2, y1, newz);
+		if (y2 != tiley2)
+			render_mod_cube(tilex1, y2, z, tilex2, tiley2, newz);
 	}
-
-	z = get_zvalue(pvr.zoffset++);
-	render_mod_square(0.0f, 0.0f, z, 640.0f, 480.0f,
-			  PVR_MODIFIER_INCLUDE_LAST_POLY);
 
 	pvr_list_finish();
 }
