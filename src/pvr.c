@@ -3020,10 +3020,10 @@ static void pvr_render_modifier_volumes(void)
 		x2 = pvr.clips[i].x2;
 		y1 = pvr.clips[i].y1;
 		y2 = pvr.clips[i].y2;
-		tilex1 = 0;
-		tiley1 = 0;
-		tilex2 = 640;
-		tiley2 = 480;
+		tilex1 = x1 & -32;
+		tiley1 = y1 & -32;
+		tilex2 = (x2 + 31) & -32;
+		tiley2 = (y2 + 31) & -32;
 		z = get_zvalue(pvr.clips[i].zoffset);
 
 		if (x1 != tilex1)
