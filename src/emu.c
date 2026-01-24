@@ -131,7 +131,7 @@ static pvr_init_params_t pvr_init_params_fsaa = {
 		HARDWARE_ACCELERATED ? PVR_BINSIZE_8 : PVR_BINSIZE_0,
 		HARDWARE_ACCELERATED ? PVR_BINSIZE_16 : PVR_BINSIZE_0,
 	},
-	.vertex_buf_size = 512 * 1024,
+	.vertex_buf_size = 768 * 1024,
 	.fsaa_enabled = WITH_FSAA,
 	.opb_overflow_count = 3,
 };
