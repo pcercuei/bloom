@@ -1150,20 +1150,6 @@ static void pvr_add_clip(uint16_t zoffset)
 	}
 }
 
-__noinline
-static void pvr_start_scene(pvr_list_t list)
-{
-	pvr_wait_ready();
-	pvr_reap_textures();
-
-	pvr_scene_begin();
-
-	pvr.new_frame = 0;
-
-	pvr_list_begin(list);
-	pvr_add_clip(3);
-}
-
 __pvr
 static void draw_prim(const pvr_poly_hdr_t *hdr,
 		      const struct vertex_coords *coords,
@@ -1844,6 +1830,33 @@ static void pvr_load_bg(void)
 	}
 }
 
+static void pvr_set_list(pvr_list_t list)
+{
+	pvr.old_blending_is_none = false;
+
+	pvr_list_begin(list);
+
+	if (WITH_HYBRID_RENDERING) {
+		poly_textured.m0.list_type = list;
+		poly_nontextured.m0.list_type = list;
+		poly_dummy.m0.list_type = list;
+	}
+}
+
+__noinline
+static void pvr_start_scene(pvr_list_t list)
+{
+	pvr_wait_ready();
+	pvr_reap_textures();
+
+	pvr_scene_begin();
+	pvr_set_list(list);
+
+	pvr.new_frame = 0;
+
+	pvr_add_clip(3);
+}
+
 __pvr
 static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 {
@@ -1864,11 +1877,6 @@ static void polybuf_render_from_start(void)
 	unsigned int i;
 
 	poly_prefetch(&polybuf[0]);
-
-	pvr.old_blending_is_none = false;
-	poly_textured.m0.list_type = PVR_LIST_TR_POLY;
-	poly_nontextured.m0.list_type = PVR_LIST_TR_POLY;
-	poly_dummy.m0.list_type = PVR_LIST_TR_POLY;
 
 	for (i = 0; i < pvr.polybuf_cnt_start; i++) {
 		poly_prefetch(&polybuf[i + 1]);
@@ -2871,19 +2879,10 @@ void hw_render_start(void)
 	pvr.inval_counter_at_start = pvr.inval_counter;
 	pvr.cmdbuf_offt = 0;
 	pvr.old_blending_is_none = false;
+	pvr.polybuf_cnt_start = 0;
 	pvr.nb_clips = 0;
 
 	reset_texture_pages();
-
-	/* Reset lists */
-	if (WITH_HYBRID_RENDERING) {
-		/* Default to PT list */
-		poly_textured.m0.list_type = PVR_LIST_PT_POLY;
-		poly_nontextured.m0.list_type = PVR_LIST_PT_POLY;
-		poly_dummy.m0.list_type = PVR_LIST_PT_POLY;
-
-		pvr.polybuf_cnt_start = 0;
-	}
 }
 
 static void pvr_render_black_square(uint16_t x0, uint16_t x1,
@@ -3049,7 +3048,7 @@ void hw_render_stop(void)
 		pvr_start_scene(PVR_LIST_TR_POLY);
 	} else if (WITH_HYBRID_RENDERING) {
 		pvr_list_finish();
-		pvr_list_begin(PVR_LIST_TR_POLY);
+		pvr_set_list(PVR_LIST_TR_POLY);
 	}
 
 	if (!WITH_24BPP) {
