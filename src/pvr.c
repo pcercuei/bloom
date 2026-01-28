@@ -2141,6 +2141,13 @@ static void process_poly(struct poly *poly, bool scissor)
 		if (unlikely(check_mask)) {
 			poly->flags |= POLY_CHECK_MASK;
 			poly_enqueue(PVR_LIST_TR_POLY, poly);
+		} else if (WITH_BILINEAR) {
+			poly_enqueue(PVR_LIST_TR_POLY, poly);
+
+			if (WITH_HYBRID_RENDERING && !poly_should_clip(poly)) {
+				poly->zoffset = pvr.zoffset++;
+				poly_enqueue(PVR_LIST_PT_POLY, poly);
+			}
 		} else {
 			if (WITH_HYBRID_RENDERING && !poly_should_clip(poly))
 				list = PVR_LIST_PT_POLY;
