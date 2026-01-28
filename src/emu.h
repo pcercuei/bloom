@@ -11,8 +11,13 @@
 #include <sys/cdefs.h>
 __BEGIN_DECLS
 
+#include "bloom-config.h"
+
 #define likely(x) __predict_true(!!(x))
 #define unlikely(x) __predict_false(!!(x))
+
+#define SCREEN_WIDTH	((WITH_480P ? 640 : 320) << WITH_FSAA)
+#define SCREEN_HEIGHT	(WITH_480P ? 480 : 240)
 
 struct maple_device;
 

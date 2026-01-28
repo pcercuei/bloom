@@ -1124,10 +1124,10 @@ static void pvr_add_clip(uint16_t zoffset)
 			x1 = 0;
 		if (y1 < 0)
 			y1 = 0;
-		if (x2 > 640)
-			x2 = 640;
-		if (y2 > 480)
-			y2 = 480;
+		if (x2 > SCREEN_WIDTH)
+			x2 = SCREEN_WIDTH;
+		if (y2 > SCREEN_HEIGHT)
+			y2 = SCREEN_HEIGHT;
 
 		pvr.clips[pvr.nb_clips++] = (struct clip_area){
 			.x1 = x1,
@@ -2994,7 +2994,7 @@ static void pvr_render_modifier_volumes(void)
 	float z, newz;
 
 	pvr_list_begin(PVR_LIST_TR_MOD);
-	pvr_tile_clip(0.0f, 0.0f, 640.0f, 480.0f);
+	pvr_tile_clip(0.0f, 0.0f, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT);
 
 	/* During the scene the game may change the render area a few times.
 	 * For each change, render a modifier volume as a rectangular cuboid

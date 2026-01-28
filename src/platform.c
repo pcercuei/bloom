@@ -33,9 +33,6 @@
 #define TEX_WIDTH  1024
 #define TEX_HEIGHT 512
 
-#define SCREEN_WIDTH	((float)((WITH_480P ? 640 : 320) << WITH_FSAA))
-#define SCREEN_HEIGHT	(WITH_480P ? 480.0f : 240.0f)
-
 static unsigned int frames;
 static uint64_t timer_ms;
 
@@ -98,8 +95,8 @@ static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 	screen_bpp = bpp;
 
 	/* Use 1280x480 when using FSAA */
-	screen_fw = SCREEN_WIDTH / (float)raw_w;
-	screen_fh = SCREEN_HEIGHT / (float)raw_h;
+	screen_fw = (float)SCREEN_WIDTH / (float)raw_w;
+	screen_fh = (float)SCREEN_HEIGHT / (float)raw_h;
 
 	if (HARDWARE_ACCELERATED) {
 		matrix_t matrix = {
