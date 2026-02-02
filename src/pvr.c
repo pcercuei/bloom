@@ -1506,7 +1506,9 @@ static void pvr_tile_clip(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
 
 	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
 
-	sq_hdr->m0.hdr_type = PVR_HDR_USERCLIP;
+	sq_hdr->m0 = (pvr_poly_hdr_cmd_t){
+		.hdr_type = PVR_HDR_USERCLIP,
+	};
 	sq_hdr->start_x = x1 / 32;
 	sq_hdr->start_y = y1 / 32;
 	sq_hdr->end_x = (x2 - 1) / 32;
