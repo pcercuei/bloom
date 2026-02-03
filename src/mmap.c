@@ -89,7 +89,7 @@ int lightrec_init_mmap(void)
 	for (i = 0; i < 8; i++) {
 		err = mmu_page_map_static(OFFSET + 0x1fc00000 + i * 0x10000,
 					  (uintptr_t)psxR + i * 0x10000,
-					  PAGE_SIZE_64K, MMU_KERNEL_RDWR, true);
+					  PAGE_SIZE_64K, MMU_KERNEL_RDONLY, true);
 		if (err)
 			goto handle_err;
 	}
