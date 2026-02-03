@@ -279,7 +279,8 @@ static void copy_bios(void)
 }
 KOS_INIT_EARLY(copy_bios);
 
-void psxMemReset() {
+void psxMemReset()
+{
 	bool success = false;
 	file_t fd;
 
@@ -287,7 +288,7 @@ void psxMemReset() {
 		fd = fs_open(WITH_BIOS_PATH, O_RDONLY);
 
 		if (fd != -1) {
-			success = fs_read(fd, psxR, 0x80000) == 0x80000;
+			success = load_bios(fd);
 			fs_close(fd);
 		}
 	}

@@ -43,6 +43,8 @@ void mcd_fs_hotplug_vmu(struct maple_device *dev);
 void input_init(void);
 void input_shutdown(void);
 
+_Bool load_bios(int fd);
+
 /* Copy 32 bytes from src to dst. Both must be aligned to 32 bytes. */
 void copy32(void *dst, const void *src);
 

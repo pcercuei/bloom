@@ -123,3 +123,8 @@ void lightrec_free_mmap(void)
 {
 	mmu_shutdown();
 }
+
+bool load_bios(int fd)
+{
+	return fs_read(fd, (s8 *)(_arch_mem_top + 0x10000), 0x80000) == 0x80000;
+}
