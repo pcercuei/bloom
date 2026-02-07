@@ -115,8 +115,9 @@ void Background::renderStep()
 	}
 }
 
-void Background::draw(int list)
+void Background::draw(int list_id)
 {
+	pvr_list_t list = static_cast<pvr_list_t>(list_id);
 	pvr_poly_cxt_t cxt;
 	pvr_poly_hdr_t hdr;
 	pvr_vertex_t vert;
