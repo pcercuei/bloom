@@ -2729,7 +2729,7 @@ static void process_gpu_commands(void)
 			uint16_t w, h, x0, y0, x1, y1;
 			bool bright = false;
 			uint32_t color;
-			uint8_t flags = POLY_4VERTEX;
+			uint16_t flags = POLY_4VERTEX;
 
 			if (!textured || !raw_tex) {
 				/* BGR->RGB swap */
