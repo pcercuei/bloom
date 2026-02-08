@@ -28,6 +28,7 @@
 #cmakedefine01 WITH_480P
 #cmakedefine01 WITH_HYBRID_RENDERING
 #cmakedefine01 WITH_MAGENTA_BG
+#cmakedefine01 WITH_CLIPPING
 #cmakedefine01 WITH_EMBEDDED_BIOS_PATH
 
 #endif /* BLOOM_CONFIG_H */
