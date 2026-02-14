@@ -1142,7 +1142,6 @@ static void pvr_add_clip(uint16_t zoffset)
 			.coords[0] = { x1, y1, x2, y2 },
 		};
 
-		poly_enqueue(PVR_LIST_PT_POLY, &poly);
 		poly_enqueue(PVR_LIST_TR_POLY, &poly);
 		poly_discard(&poly);
 	}
