@@ -265,8 +265,7 @@ struct pvr_renderer {
 
 	unsigned int cmdbuf_offt;
 	bool old_blending_is_none;
-	bool old_set_mask;
-	bool old_check_mask;
+	uint16_t old_flags;
 	pvr_ptr_t old_tex;
 
 	pvr_ptr_t fake_tex;
@@ -1652,8 +1651,7 @@ static void poly_draw_now(const struct poly *poly)
 
 	if (likely(poly->blending_mode == BLENDING_MODE_NONE
 		   && pvr.old_blending_is_none
-		   && pvr.old_set_mask == set_mask
-		   && pvr.old_check_mask == check_mask
+		   && pvr.old_flags == flags
 		   && (!textured || !check_mask)
 		   && tex == pvr.old_tex)) {
 		draw_prim(NULL, coords, voffset, colors, nb, z, 0, flags);
@@ -1661,8 +1659,7 @@ static void poly_draw_now(const struct poly *poly)
 	}
 
 	pvr.old_blending_is_none = poly->blending_mode == BLENDING_MODE_NONE;
-	pvr.old_set_mask = set_mask;
-	pvr.old_check_mask = check_mask;
+	pvr.old_flags = flags;
 	pvr.old_tex = tex;
 
 	copy32(&hdr, poly_hdr);
