@@ -1467,6 +1467,7 @@ static pvr_poly_hdr_t poly_dummy = {
 	.m0 = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
+		.clip_mode = PVR_USERCLIP_INSIDE,
 		.auto_strip_len = true,
 	},
 	.m1 = {
@@ -1480,14 +1481,26 @@ static pvr_poly_hdr_t poly_dummy = {
 	},
 };
 
-static void pvr_send_dummy(const struct poly *poly)
+__noinline
+static void pvr_avoid_tile_clip_glitch(void)
 {
 	pvr_poly_hdr_t *sq_hdr;
 	pvr_vertex_t *vert;
 	unsigned int i;
+	pvr_poly_hdr_cmd_t m0 = poly_dummy.m0;
+
+	/* Changing the tile clipping area causes the poly submitted previously
+	 * to render incorrectly. Avoid graphical glitches by submitting a dummy
+	 * invisible polygon before changing the clipping settings. */
+
+	/* This is also needed when switching between polygons with different
+	 * values for m0.clip_mode. */
+	if (unlikely(pvr.old_flags & POLY_NOCLIP))
+		m0.clip_mode = PVR_USERCLIP_DISABLE;
 
 	sq_hdr = pvr_dr_target();
 	copy32(sq_hdr, &poly_dummy);
+	sq_hdr->m0 = m0;
 	pvr_dr_commit(sq_hdr);
 
 	for (i = 0; i < 3; i++) {
@@ -1516,10 +1529,7 @@ static void pvr_tile_clip(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
 __noinline
 static void poly_do_tile_clip(const struct poly *poly)
 {
-	/* Changing the tile clipping area causes the poly submitted previously
-	 * to render incorrectly. Avoid graphical glitches by submitting a dummy
-	 * invisible polygon before changing the clipping settings. */
-	pvr_send_dummy(poly);
+	pvr_avoid_tile_clip_glitch();
 
 	pvr_tile_clip(poly->coords[0].x, poly->coords[0].y,
 		      poly->coords[0].u, poly->coords[0].v);
@@ -1656,6 +1666,9 @@ static void poly_draw_now(const struct poly *poly)
 		draw_prim(NULL, coords, voffset, colors, nb, z, 0, flags);
 		return;
 	}
+
+	if (unlikely((pvr.old_flags ^ flags) & POLY_NOCLIP))
+		pvr_avoid_tile_clip_glitch();
 
 	pvr.old_blending_is_none = poly->blending_mode == BLENDING_MODE_NONE;
 	pvr.old_flags = flags;
@@ -3090,7 +3103,6 @@ static void pvr_render_modifier_volumes(void)
 	float z, newz;
 
 	pvr_list_begin(PVR_LIST_TR_MOD);
-	pvr_tile_clip(0.0f, 0.0f, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT);
 
 	/* During the scene the game may change the render area a few times.
 	 * For each change, render a modifier volume as a rectangular cuboid
@@ -3147,17 +3159,29 @@ void hw_render_stop(void)
 		pvr_set_list(PVR_LIST_TR_POLY);
 	}
 
+	if (WITH_HYBRID_RENDERING && likely(pvr.polybuf_cnt_start))
+		polybuf_render_from_start();
+
 	if (!WITH_24BPP) {
 		overpaint = pvr.start_x == pvr.view_x
 			&& pvr.start_y == pvr.view_y;
 		vid_set_dithering(!overpaint);
 
-		if (overpaint)
+		if (overpaint) {
+			/* We'll most likely render the FB with different clip
+			 * parameters, so we need to send dummy polys to avoid
+			 * glitches. */
+			pvr_avoid_tile_clip_glitch();
+
 			pvr_render_fb();
+
+			pvr.old_flags |= POLY_NOCLIP;
+		}
 	}
 
-	if (WITH_HYBRID_RENDERING && likely(pvr.polybuf_cnt_start))
-		polybuf_render_from_start();
+	/* Closing the TR list will reset the tile clip parameters, so we
+	 * need to send a dummy poly to avoid glitches. */
+	pvr_avoid_tile_clip_glitch();
 
 	pvr_list_finish();
 
