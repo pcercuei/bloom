@@ -2428,7 +2428,7 @@ static void cmd_clear_image(const union PacketBuffer *pbuffer)
 
 	pvr_update_caches(x0, y0, w0, h0, true);
 
-	if (overlap_draw_area(x0, y0, x0 + w0, y0 + h0)) {
+	if (screen_bpp != 24 && overlap_draw_area(x0, y0, x0 + w0, y0 + h0)) {
 		color32 = __builtin_bswap32(pbuffer->U4[0]) >> 8;
 
 		x13 = max32(x0, pvr.start_x) - pvr.start_x;
