@@ -221,7 +221,6 @@ struct pvr_renderer {
 	uint32_t new_gp1;
 
 	unsigned int zoffset;
-	uint32_t dr_state;
 
 	int16_t draw_x1;
 	int16_t draw_y1;
@@ -1165,7 +1164,7 @@ static void draw_prim(const pvr_poly_hdr_t *hdr,
 	unsigned int i;
 
 	if (unlikely(hdr)) {
-		sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+		sq_hdr = pvr_dr_target();
 		copy32(sq_hdr, hdr);
 		pvr_dr_commit(sq_hdr);
 	}
@@ -1179,7 +1178,7 @@ static void draw_prim(const pvr_poly_hdr_t *hdr,
 		asm inline("ftrv xmtrx, fv0\n"
 			   : "+f"(fr0), "+f"(fr1), "+f"(fr2), "+f"(fr3));
 
-		vert = pvr_dr_target(pvr.dr_state);
+		vert = pvr_dr_target();
 
 		vert->flags = (i == nb - 1) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
 		vert->z = z;
@@ -1200,7 +1199,7 @@ static void draw_prim(const pvr_poly_hdr_t *hdr,
 		if (unlikely(!textured || !modified))
 			continue;
 
-		vert2 = (pvr_vertex_part2_t *)pvr_dr_target(pvr.dr_state);
+		vert2 = pvr_dr_target();
 
 		vert2->u1 = fr2 + COORDS_U_OFFSET;
 		vert2->v1 = fr3 + COORDS_V_OFFSET;
@@ -1218,7 +1217,7 @@ static void render_square(const struct square_fcoords *coords,
 	unsigned int i;
 
 	for(i = 0; i < 4; i++) {
-		vert = pvr_dr_target(pvr.dr_state);
+		vert = pvr_dr_target();
 		*vert = (pvr_vertex_t){
 			.flags = i == 3 ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX,
 			.x = coords->x[i],
@@ -1252,7 +1251,7 @@ static void pvr_render_fb(void)
 	};
 
 	__builtin_prefetch(&frontbuf_step1_header);
-	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	sq_hdr = pvr_dr_target();
 	copy32(sq_hdr, &fake_tex_header);
 	pvr_dr_commit(sq_hdr);
 
@@ -1260,7 +1259,7 @@ static void pvr_render_fb(void)
 
 	__builtin_prefetch(&frontbuf_step2_header);
 
-	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	sq_hdr = pvr_dr_target();
 	copy32(sq_hdr, &frontbuf_step1_header);
 	sq_hdr->m3 = m3;
 	pvr_dr_commit(sq_hdr);
@@ -1271,7 +1270,7 @@ static void pvr_render_fb(void)
 	render_square(&fb_fcoords_left, z, uoffset);
 	render_square(&fb_fcoords_right, z, uoffset);
 
-	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	sq_hdr = pvr_dr_target();
 	copy32(sq_hdr, &frontbuf_step2_header);
 	sq_hdr->m3 = m3;
 	pvr_dr_commit(sq_hdr);
@@ -1489,12 +1488,12 @@ static void pvr_send_dummy(const struct poly *poly)
 	pvr_vertex_t *vert;
 	unsigned int i;
 
-	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	sq_hdr = pvr_dr_target();
 	copy32(sq_hdr, &poly_dummy);
 	pvr_dr_commit(sq_hdr);
 
 	for (i = 0; i < 3; i++) {
-		vert = pvr_dr_target(pvr.dr_state);
+		vert = pvr_dr_target();
 		vert->flags = (i == 2) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
 		pvr_dr_commit(vert);
 	}
@@ -1504,7 +1503,7 @@ static void pvr_tile_clip(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
 {
 	pvr_poly_hdr_t *sq_hdr;
 
-	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	sq_hdr = pvr_dr_target();
 
 	sq_hdr->m0 = (pvr_poly_hdr_cmd_t){
 		.hdr_type = PVR_HDR_USERCLIP,
@@ -3005,7 +3004,7 @@ static void pvr_render_outlines(void)
 
 	pvr_list_begin(PVR_LIST_OP_POLY);
 
-	sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+	sq_hdr = pvr_dr_target();
 	copy32(sq_hdr, &op_black_header);
 	pvr_dr_commit(sq_hdr);
 
@@ -3035,11 +3034,11 @@ static void render_mod_strip(const struct cube_vertex *vertices,
 		if (i == count - 3)
 			curr_mode = mode;
 
-		sq_hdr = (void *)pvr_dr_target(pvr.dr_state);
+		sq_hdr = pvr_dr_target();
 		pvr_mod_compile(sq_hdr, PVR_LIST_TR_MOD, curr_mode, PVR_CULLING_NONE);
 		pvr_dr_commit(sq_hdr);
 
-		mod = (void *)pvr_dr_target(pvr.dr_state);
+		mod = pvr_dr_target();
 		*(uint32_t *)mod = PVR_CMD_VERTEX_EOL;
 		mod[1] = vertices[i + 0].x;
 		mod[2] = vertices[i + 0].y;
@@ -3050,7 +3049,7 @@ static void render_mod_strip(const struct cube_vertex *vertices,
 		mod[7] = vertices[i + 2].x;
 
 		pvr_dr_commit(mod);
-		mod = (void *)pvr_dr_target(pvr.dr_state);
+		mod = pvr_dr_target();
 
 		mod[0] = vertices[i + 2].y;
 		mod[1] = vertices[i + 2].z;
