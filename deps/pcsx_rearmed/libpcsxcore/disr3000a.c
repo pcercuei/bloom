@@ -28,6 +28,8 @@
 #pragma GCC diagnostic ignored "-Wrestrict"
 #endif
 
+#include <stdio.h>
+
 char ostr[256];
 
 // Names of registers
