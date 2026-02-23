@@ -32,7 +32,7 @@ static int _OpenPlugins() {
 	return 0;
 }
 
-int OpenPlugins() {
+int OpenPlugins(int) {
 	int ret;
 
 	plugin_call_rearmed_cbs();

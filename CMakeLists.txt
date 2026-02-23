@@ -131,12 +131,13 @@ add_library(libpcsxcore STATIC
 	${PCSX_REAL_DIR}/libpcsxcore/cheat.c
 	${PCSX_REAL_DIR}/libpcsxcore/database.c
 	${PCSX_REAL_DIR}/libpcsxcore/decode_xa.c
-	${PCSX_REAL_DIR}/libpcsxcore/disr3000a.c
 	${PCSX_REAL_DIR}/libpcsxcore/gpu.c
 	${PCSX_REAL_DIR}/libpcsxcore/gte.c
+	${PCSX_REAL_DIR}/libpcsxcore/gte_nf.c
 	${PCSX_REAL_DIR}/libpcsxcore/gte_divider.c
 	${PCSX_REAL_DIR}/libpcsxcore/mdec.c
 	${PCSX_REAL_DIR}/libpcsxcore/misc.c
+	${PCSX_REAL_DIR}/libpcsxcore/pad.c
 	${PCSX_REAL_DIR}/libpcsxcore/plugins.c
 	${PCSX_REAL_DIR}/libpcsxcore/ppf.c
 	${PCSX_REAL_DIR}/libpcsxcore/psxbios.c
@@ -149,7 +150,6 @@ add_library(libpcsxcore STATIC
 	${PCSX_REAL_DIR}/libpcsxcore/psxmem.c
 	${PCSX_REAL_DIR}/libpcsxcore/r3000a.c
 	${PCSX_REAL_DIR}/libpcsxcore/sio.c
-	${PCSX_REAL_DIR}/libpcsxcore/socket.c
 	${PCSX_REAL_DIR}/libpcsxcore/spu.c
 	${PCSX_REAL_DIR}/libpcsxcore/new_dynarec/emu_if.c
 	${PCSX_REAL_DIR}/libpcsxcore/lightrec/plugin.c
