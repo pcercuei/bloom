@@ -7,6 +7,7 @@
 
 #include <stdalign.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <arch/cache.h>
 #include <dc/cdrom.h>
 #include <kos/mutex.h>
