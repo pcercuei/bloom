@@ -103,16 +103,16 @@ static void emu_exit(uint8_t, uint32_t)
 
 static int load_boot_sstate(const char *path)
 {
-	s8 *mapped_psxR = psxR;
+	void *mapped_psxR = psxRegs.ptrs.psxR;
 	int ret;
 
 	/* LoadState writes the BIOS area, so we can't use the read-only virtual
 	 * mapping - temporarily switch to the backing area */
-	psxR = (s8 *)(_arch_mem_top + 0x10000);
+	psxRegs.ptrs.psxR = (void *)(_arch_mem_top + 0x10000);
 
 	ret = LoadState(path);
 
-	psxR = mapped_psxR;
+	psxRegs.ptrs.psxR = mapped_psxR;
 
 	return ret;
 }
@@ -123,7 +123,7 @@ bool emu_check_cd(const char *path)
 
 	ReloadCdromPlugin();
 
-	if (OpenPlugins() < 0) {
+	if (OpenPlugins(1) < 0) {
 		fprintf(stderr, "Could not open plugins\n");
 		return false;
 	}
@@ -229,7 +229,7 @@ int main(int argc, char **argv)
 			pvr_renderer_init();
 
 		started = true;
-		OpenPlugins();
+		OpenPlugins(1);
 
 		EmuReset();
 

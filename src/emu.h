@@ -13,7 +13,9 @@ __BEGIN_DECLS
 
 #include "bloom-config.h"
 
+#undef likely
 #define likely(x) __predict_true(!!(x))
+#undef unlikely
 #define unlikely(x) __predict_false(!!(x))
 
 #define SCREEN_WIDTH	((WITH_480P ? 640 : 320) << WITH_FSAA)

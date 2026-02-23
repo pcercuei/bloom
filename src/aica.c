@@ -220,11 +220,6 @@ void SPUplayADPCMchannel(void *xap, unsigned int cycles, int is_start)
 {
 }
 
-long SPUfreeze(unsigned long mode, void *pF, unsigned int cycles)
-{
-	return 0;
-}
-
 void SPUsetCDvol(unsigned char ll, unsigned char lr,
 		 unsigned char rl, unsigned char rr, unsigned int cycle)
 {

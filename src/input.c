@@ -113,7 +113,7 @@ long PAD__close(void) {
 	return PSE_PAD_ERR_SUCCESS;
 }
 
-static long reportMouse(maple_device_t *dev, PadDataS *pad)
+static void reportMouse(maple_device_t *dev, PadDataS *pad)
 {
 	mouse_state_t *state = (mouse_state_t *)maple_dev_status(dev);
 	uint16_t buttons = 0;
@@ -126,8 +126,6 @@ static long reportMouse(maple_device_t *dev, PadDataS *pad)
 	pad->moveX = state->dx;
 	pad->moveY = state->dy;
 	pad->buttonStatus = ~buttons;
-
-	return 0;
 }
 
 static inline uint8_t clamp8(int value)
@@ -158,7 +156,7 @@ static uint16_t button_combo(unsigned int idx, uint8_t bit_yes, uint8_t bit_no)
 	return BIT(bit_no);
 }
 
-long PAD1_readPort(PadDataS *pad) {
+void PAD1_readPort(PadDataS *pad, int *is_multitap) {
 	unsigned int idx = pad->requestPadIndex;
 	maple_device_t *dev;
 	cont_state_t *state;
@@ -167,20 +165,26 @@ long PAD1_readPort(PadDataS *pad) {
 
 	pad->controllerType = in_type[idx];
 	if (pad->controllerType == PSE_PAD_TYPE_NONE)
-		return 0;
+		return;
 
 	dev = maple_enum_dev(idx, 0);
 	if (!dev)
-		return 0;
+		return;
 
-	if (idx == 1)
+	if (idx == 1) {
+		*is_multitap = use_multitap;
 		pad->portMultitap = use_multitap;
+	} else {
+		*is_multitap = 0;
+	}
 
-	if (dev->info.functions & MAPLE_FUNC_MOUSE)
-		return reportMouse(dev, pad);
+	if (dev->info.functions & MAPLE_FUNC_MOUSE) {
+		reportMouse(dev, pad);
+		return;
+	}
 
 	if (!(dev->info.functions & MAPLE_FUNC_CONTROLLER))
-		return 0;
+		return;
 
 	state = (cont_state_t *)maple_dev_status(dev);
 	if (state->buttons & CONT_Z)
@@ -262,12 +266,10 @@ long PAD1_readPort(PadDataS *pad) {
 		if (state->buttons & CONT_DPAD2_RIGHT)
 			pad->ds.padMode ^= 1;
 	}
-
-	return 0;
 }
 
-long PAD2_readPort(PadDataS *pad) {
-	return PAD1_readPort(pad);
+void PAD2_readPort(PadDataS *pad, int *is_multitap) {
+	PAD1_readPort(pad, is_multitap);
 }
 
 void plat_trigger_vibrate(int pad, int low, int high) {
