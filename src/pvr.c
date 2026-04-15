@@ -73,6 +73,8 @@
 
 #define __pvr __attribute__((section(".sub0")))
 
+#define PVR_USERCLIP_MODE (WITH_CLIPPING ? PVR_USERCLIP_INSIDE : PVR_USERCLIP_DISABLE)
+
 typedef struct pvr_vertex_part2 {
 	float u1;
 	float v1;
@@ -1383,7 +1385,7 @@ static pvr_poly_hdr_t poly_textured = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
 		.auto_strip_len = true,
-		.clip_mode = PVR_USERCLIP_INSIDE,
+		.clip_mode = PVR_USERCLIP_MODE,
 		.txr_en = true,
 		.gouraud = true,
 		.mod_normal = true,
@@ -1423,7 +1425,7 @@ static pvr_poly_hdr_t poly_nontextured = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
 		.auto_strip_len = true,
-		.clip_mode = PVR_USERCLIP_INSIDE,
+		.clip_mode = PVR_USERCLIP_MODE,
 		.gouraud = true,
 		.mod_normal = true,
 		.modifier_en = true,
@@ -1450,7 +1452,7 @@ static pvr_poly_hdr_t poly_set_mask = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
 		.auto_strip_len = true,
-		.clip_mode = PVR_USERCLIP_INSIDE,
+		.clip_mode = PVR_USERCLIP_MODE,
 	},
 	.m1 = {
 		.culling = PVR_CULLING_SMALL,
@@ -1467,7 +1469,7 @@ static pvr_poly_hdr_t poly_dummy = {
 	.m0 = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
-		.clip_mode = PVR_USERCLIP_INSIDE,
+		.clip_mode = PVR_USERCLIP_MODE,
 		.auto_strip_len = true,
 	},
 	.m1 = {
