@@ -2362,6 +2362,7 @@ static void draw_line(int16_t x0, int16_t y0, uint32_t color0,
 	process_poly(&poly, false);
 }
 
+__noinline
 static uint32_t get_line_length(const uint32_t *list, uint32_t *end, bool shaded)
 {
 	const uint32_t *pos = &list[3 + shaded];
@@ -2499,8 +2500,8 @@ static void process_gpu_commands(void)
 		semi_trans = cmd & 0x02;
 		raw_tex = cmd & 0x01;
 
-		if ((cmd >> 5) == 0x2) {
-			if (multiple) {
+		if (unlikely((cmd >> 5) == 0x2)) {
+			if (unlikely(multiple)) {
 				len_polyline = get_line_length((uint32_t *)pbuffer,
 							       (uint32_t *)0xffffffff,
 							       multicolor);
@@ -2852,8 +2853,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 
 		len = cmd_lengths[cmd];
 
-		if ((cmd >> 5) == 0x2) {
-			if (multiple) {
+		if (unlikely((cmd >> 5) == 0x2)) {
+			if (unlikely(multiple)) {
 				/* Handle polylines */
 				len_polyline = get_line_length(list, list_end,
 							       multicolor);
