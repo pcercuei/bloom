@@ -1954,8 +1954,12 @@ static void pvr_start_scene(pvr_list_t list)
 
 	pvr.new_frame = 0;
 
-	if (WITH_CLIPPING)
+	if (WITH_CLIPPING) {
 		pvr_add_clip(3);
+
+		/* Reset tile clip */
+		pvr_tile_clip(0.0f, 0.0f, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT);
+	}
 }
 
 __pvr
