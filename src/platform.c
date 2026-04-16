@@ -297,7 +297,7 @@ static void dc_vout_flip(const void *vram, int offset, int bgr24,
 	if (new_timer > (timer_ms + 1000)) {
 		pvr_get_stats(&pvr_stats);
 
-		cputime = timer_ns_gettime64();
+		cputime = timer_ms_gettime64();
 		idletime = thd_get_cpu_time(thd_get_idle());
 
 		idle_diff = idletime - last_idletime;
