@@ -73,8 +73,6 @@
 
 #define __pvr __attribute__((section(".sub0")))
 
-#define PVR_USERCLIP_MODE (WITH_CLIPPING ? PVR_USERCLIP_INSIDE : PVR_USERCLIP_DISABLE)
-
 typedef struct pvr_vertex_part2 {
 	float u1;
 	float v1;
@@ -1385,11 +1383,8 @@ static pvr_poly_hdr_t poly_textured = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
 		.auto_strip_len = true,
-		.clip_mode = PVR_USERCLIP_MODE,
 		.txr_en = true,
 		.gouraud = true,
-		.mod_normal = true,
-		.modifier_en = true,
 	},
 	.m1 = {
 		.txr_en = true,
@@ -1425,10 +1420,7 @@ static pvr_poly_hdr_t poly_nontextured = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
 		.auto_strip_len = true,
-		.clip_mode = PVR_USERCLIP_MODE,
 		.gouraud = true,
-		.mod_normal = true,
-		.modifier_en = true,
 	},
 	.m1 = {
 		.culling = PVR_CULLING_SMALL,
@@ -1452,7 +1444,6 @@ static pvr_poly_hdr_t poly_set_mask = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
 		.auto_strip_len = true,
-		.clip_mode = PVR_USERCLIP_MODE,
 	},
 	.m1 = {
 		.culling = PVR_CULLING_SMALL,
@@ -1469,7 +1460,6 @@ static pvr_poly_hdr_t poly_dummy = {
 	.m0 = {
 		.hdr_type = PVR_HDR_POLY,
 		.list_type = PVR_LIST_TR_POLY,
-		.clip_mode = PVR_USERCLIP_MODE,
 		.auto_strip_len = true,
 	},
 	.m1 = {
@@ -1497,8 +1487,8 @@ static void pvr_avoid_tile_clip_glitch(void)
 
 	/* This is also needed when switching between polygons with different
 	 * values for m0.clip_mode. */
-	if (unlikely(pvr.old_flags & POLY_NOCLIP))
-		m0.clip_mode = PVR_USERCLIP_DISABLE;
+	if (likely(!(pvr.old_flags & POLY_NOCLIP)))
+		m0.clip_mode = PVR_USERCLIP_INSIDE;
 
 	sq_hdr = pvr_dr_target();
 	copy32(sq_hdr, &poly_dummy);
@@ -1688,10 +1678,10 @@ static void poly_draw_now(const struct poly *poly)
 		return;
 	}
 
-	if (unlikely(poly->flags & POLY_NOCLIP)) {
-		hdr.m0.modifier_en = false;
-		hdr.m0.mod_normal = false;
-		hdr.m0.clip_mode = PVR_USERCLIP_DISABLE;
+	if (WITH_CLIPPING && likely(!(poly->flags & POLY_NOCLIP))) {
+		hdr.m0.modifier_en = true;
+		hdr.m0.mod_normal = true;
+		hdr.m0.clip_mode = PVR_USERCLIP_INSIDE;
 	}
 
 	if (textured) {
