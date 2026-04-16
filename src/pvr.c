@@ -1194,7 +1194,7 @@ static void draw_prim(const pvr_poly_hdr_t *hdr,
 
 		pvr_dr_commit(vert);
 
-		if (unlikely(!textured || !modified))
+		if (!WITH_CLIPPING || unlikely(!textured || !modified))
 			continue;
 
 		vert2 = pvr_dr_target();
