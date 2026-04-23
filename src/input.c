@@ -24,6 +24,8 @@
 unsigned short in_keystate[8];
 
 static bool use_multitap;
+static uint8_t start_mask;
+static uint8_t combo_mask;
 
 int in_type[8] = {
    PSE_PAD_TYPE_NONE, PSE_PAD_TYPE_NONE,
@@ -142,20 +144,35 @@ static inline uint8_t analog_scale(uint8_t val)
 	return clamp8((uint32_t)val * SCALE_FACTOR / 128 + 128 - SCALE_FACTOR);
 }
 
+static uint16_t button_combo(unsigned int idx, uint8_t bit_yes, uint8_t bit_no)
+{
+	/* If we pressed any other key at the same time as START,
+	 * consider we did a combo */
+	if (start_mask & BIT(idx)) {
+		combo_mask |= BIT(idx);
+
+		return BIT(bit_yes);
+	}
+
+	return BIT(bit_no);
+}
+
 long PAD1_readPort(PadDataS *pad) {
-        maple_device_t *dev;
+	unsigned int idx = pad->requestPadIndex;
+	maple_device_t *dev;
 	cont_state_t *state;
 	uint16_t buttons = 0;
+	uint8_t joyx, joyy;
 
-	pad->controllerType = in_type[pad->requestPadIndex];
+	pad->controllerType = in_type[idx];
 	if (pad->controllerType == PSE_PAD_TYPE_NONE)
 		return 0;
 
-	dev = maple_enum_dev(pad->requestPadIndex, 0);
+	dev = maple_enum_dev(idx, 0);
 	if (!dev)
 		return 0;
 
-	if (pad->requestPadIndex == 1)
+	if (idx == 1)
 		pad->portMultitap = use_multitap;
 
 	if (dev->info.functions & MAPLE_FUNC_MOUSE)
@@ -171,8 +188,21 @@ long PAD1_readPort(PadDataS *pad) {
 		buttons |= BIT(DKEY_L3);
 	if (state->buttons & CONT_DPAD2_DOWN)
 		buttons |= BIT(DKEY_R3);
-	if (state->buttons & CONT_START)
-		buttons |= BIT(DKEY_START);
+	if (state->buttons & CONT_START) {
+		if (!(start_mask & BIT(idx))) {
+			/* START button pressed - enter combo mode */
+			start_mask |= BIT(idx);
+			combo_mask &= ~BIT(idx);
+		}
+	} else if (start_mask & BIT(idx)) {
+		/* START button released. */
+
+		/* We didn't do any combo? - send START key */
+		if (!(combo_mask & BIT(idx)))
+			buttons |= BIT(DKEY_START);
+
+		start_mask &= ~BIT(idx);
+	}
 	if (state->buttons & CONT_DPAD_UP)
 		buttons |= BIT(DKEY_UP);
 	if (state->buttons & CONT_DPAD_RIGHT)
@@ -186,15 +216,15 @@ long PAD1_readPort(PadDataS *pad) {
 	if (state->buttons & CONT_D)
 		buttons |= BIT(DKEY_R2);
 	if (state->ltrig > 128)
-		buttons |= BIT(DKEY_L1);
+		buttons |= button_combo(idx, DKEY_L2, DKEY_L1);
 	if (state->rtrig > 128)
-		buttons |= BIT(DKEY_R1);
+		buttons |= button_combo(idx, DKEY_R2, DKEY_R1);
 	if (state->buttons & CONT_A)
-		buttons |= BIT(DKEY_CROSS);
+		buttons |= button_combo(idx, DKEY_SELECT, DKEY_CROSS);
 	if (state->buttons & CONT_B)
-		buttons |= BIT(DKEY_CIRCLE);
+		buttons |= button_combo(idx, DKEY_R3, DKEY_CIRCLE);
 	if (state->buttons & CONT_X)
-		buttons |= BIT(DKEY_SQUARE);
+		buttons |= button_combo(idx, DKEY_L3, DKEY_SQUARE);
 	if (state->buttons & CONT_Y)
 		buttons |= BIT(DKEY_TRIANGLE);
 
@@ -203,8 +233,22 @@ long PAD1_readPort(PadDataS *pad) {
 	if (pad->controllerType == PSE_PAD_TYPE_ANALOGPAD) {
 		pad->rightJoyX = analog_scale(state->joy2x + 128);
 		pad->rightJoyY = analog_scale(state->joy2y + 128);
-		pad->leftJoyX = analog_scale(state->joyx + 128);
-		pad->leftJoyY = analog_scale(state->joyy + 128);
+
+		joyx = analog_scale(state->joyx + 128);
+		joyy = analog_scale(state->joyy + 128);
+
+		if (start_mask & BIT(idx)) {
+			/* If the START key is pressed, map the analog stick
+			 * input to the second analog */
+			pad->rightJoyX = joyx;
+			pad->rightJoyY = joyy;
+
+			if (joyx < 64 || joyy < 64 || joyx > 192 || joyy > 192)
+				combo_mask |= BIT(idx);
+		} else {
+			pad->leftJoyX = joyx;
+			pad->leftJoyY = joyy;
+		}
 
 		if (state->buttons & CONT_DPAD2_RIGHT)
 			pad->ds.padMode ^= 1;
