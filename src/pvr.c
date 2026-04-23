@@ -2197,7 +2197,7 @@ static void process_poly(struct poly *poly, bool scissor)
 				for (i = 0; i < poly_get_vertex_count(poly); i++)
 					poly->coords[i].u -= offt << (8 - poly->bpp);
 
-				poly->texpage_id += offt;
+				poly->texpage_id = (poly->texpage_id + offt) % 32;
 			}
 
 			/* If the U values overlap a page boundary, cut our poly
