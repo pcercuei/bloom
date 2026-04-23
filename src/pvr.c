@@ -2282,14 +2282,6 @@ static void process_poly(struct poly *poly, bool scissor)
 		poly_enqueue(PVR_LIST_TR_POLY, poly);
 		poly->flags &= ~POLY_CHECK_MASK;
 
-		if (unlikely(set_mask)) {
-			poly->flags |= POLY_SET_MASK;
-			poly->zoffset = pvr.zoffset++;
-			poly_enqueue(PVR_LIST_TR_POLY, poly);
-
-			poly->flags &= ~POLY_SET_MASK;
-		}
-
 		/* Mask poly */
 		if (poly->flags & POLY_TEXTURED) {
 			poly->blending_mode = BLENDING_MODE_NONE;
@@ -2298,6 +2290,12 @@ static void process_poly(struct poly *poly, bool scissor)
 			/* Process the mask poly as a regular one */
 			process_poly(poly, false);
 			return;
+		}
+
+		if (unlikely(set_mask)) {
+			poly->flags |= POLY_SET_MASK;
+			poly->zoffset = pvr.zoffset++;
+			poly_enqueue(PVR_LIST_TR_POLY, poly);
 		}
 	}
 
