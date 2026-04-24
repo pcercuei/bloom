@@ -573,13 +573,16 @@ static void load_palette(struct texture_page *page, unsigned int offset,
 		 * semi-transparent or not. */
 		if (pixel != 0x0000) {
 			color = bgr_to_rgb(pixel);
+
+			if (likely(!(clut & CLUT_IS_MASK)))
+				color |= 0x8000;
+			else if (color & 0x8000)
+				color = 0;
+
 			color |= color << 16;
 			color |= color << 32;
 
-			if (clut & CLUT_IS_MASK)
-				sq[i] = color ^ 0x8000800080008000ull;
-			else
-				sq[i] = color | 0x8000800080008000ull;
+			sq[i] = color;
 		} else {
 			sq[i] = 0;
 		}
