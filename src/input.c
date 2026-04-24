@@ -25,6 +25,7 @@ unsigned short in_keystate[8];
 
 static bool use_multitap;
 static uint8_t start_mask;
+static uint8_t old_start_mask;
 static uint8_t combo_mask;
 
 int in_type[8] = {
@@ -194,6 +195,12 @@ long PAD1_readPort(PadDataS *pad) {
 			start_mask |= BIT(idx);
 			combo_mask &= ~BIT(idx);
 		}
+	} else if (old_start_mask & BIT(idx)) {
+		/* START button released one frame ago - keep START pressed for
+		 * just one frame more */
+		buttons |= BIT(DKEY_START);
+
+		old_start_mask &= ~BIT(idx);
 	} else if (start_mask & BIT(idx)) {
 		/* START button released. */
 
@@ -202,6 +209,7 @@ long PAD1_readPort(PadDataS *pad) {
 			buttons |= BIT(DKEY_START);
 
 		start_mask &= ~BIT(idx);
+		old_start_mask |= BIT(idx);
 	}
 	if (state->buttons & CONT_DPAD_UP)
 		buttons |= BIT(DKEY_UP);
