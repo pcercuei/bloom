@@ -1671,6 +1671,12 @@ static void poly_draw_now(const struct poly *poly)
 
 	copy32(&hdr, poly_hdr);
 
+	if (WITH_CLIPPING && likely(!(poly->flags & POLY_NOCLIP))) {
+		hdr.m0.modifier_en = true;
+		hdr.m0.mod_normal = true;
+		hdr.m0.clip_mode = PVR_USERCLIP_INSIDE;
+	}
+
 	if (unlikely(set_mask)) {
 		for (i = 0; i < nb; i++)
 			colors_alt[i] = 0x0;
@@ -1679,12 +1685,6 @@ static void poly_draw_now(const struct poly *poly)
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
 		return;
-	}
-
-	if (WITH_CLIPPING && likely(!(poly->flags & POLY_NOCLIP))) {
-		hdr.m0.modifier_en = true;
-		hdr.m0.mod_normal = true;
-		hdr.m0.clip_mode = PVR_USERCLIP_INSIDE;
 	}
 
 	if (textured) {
