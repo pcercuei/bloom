@@ -191,7 +191,8 @@ struct poly {
 	uint16_t flags;
 	uint16_t clut;
 	uint16_t zoffset;
-	uint16_t voffset;
+	uint8_t _pad2;
+	uint8_t codebook;
 	pvr_ptr_t tex;
 	uint32_t colors[4];
 	struct vertex_coords coords[4];
@@ -1603,8 +1604,10 @@ static void poly_draw_now(const struct poly *poly)
 	}
 
 	if (textured) {
-		voffset = poly->voffset;
+		voffset = get_voffset(poly->bpp, poly->codebook);
 		tex = poly->tex;
+		if (likely(poly->bpp != TEXTURE_16BPP))
+			tex += poly->codebook << (5 + (3 << poly->bpp));
 		poly_hdr = &poly_textured;
 	} else if (unlikely(set_mask)) {
 		poly_hdr = &poly_set_mask;
@@ -2180,7 +2183,6 @@ static void process_poly(struct poly *poly, bool scissor)
 	uint16_t umin, umax, flags;
 	struct texture_page *page;
 	unsigned int i, offt;
-	uint8_t codebook;
 	pvr_list_t list;
 
 	/* If the clip area matches the screen area, we don't need to clip */
@@ -2217,17 +2219,10 @@ static void process_poly(struct poly *poly, bool scissor)
 
 		page = poly_get_texture_page(poly);
 
-		if (unlikely(poly->bpp == TEXTURE_16BPP)) {
-			poly->tex = page->tex;
-		} else {
-			codebook = find_texture_codebook(page, poly->clut);
-			poly->voffset = get_voffset(poly->bpp, codebook);
+		poly->tex = page->tex;
 
-			if (likely(poly->bpp == TEXTURE_4BPP))
-				poly->tex = (pvr_ptr_t)&page->vq->codebook4[codebook];
-			else
-				poly->tex = (pvr_ptr_t)&page->vq->codebook8[codebook];
-		}
+		if (likely(poly->bpp != TEXTURE_16BPP))
+			poly->codebook = find_texture_codebook(page, poly->clut);
 	}
 
 	if (likely(!(poly->flags & POLY_IGN_MASK))) {
