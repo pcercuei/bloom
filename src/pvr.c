@@ -1525,7 +1525,7 @@ static void poly_draw_check_mask(pvr_poly_hdr_t *hdr,
 	/* Create a mask of the source texture into the second accumulator.
 	 * Opaque pixels are 0xffffffff, transparent pixels are 0x00ffffff. */
 	hdr->m2.shading = PVR_TXRENV_REPLACE;
-	hdr->m2.blend_src = PVR_BLEND_ONE;
+	hdr->m2.blend_src = PVR_BLEND_SRCALPHA;
 	hdr->m2.blend_dst = PVR_BLEND_ZERO;
 	hdr->m0.txr_en = hdr->m1.txr_en = true;
 	hdr->m2.blend_dst_acc2 = true;
@@ -1725,10 +1725,27 @@ static void poly_draw_now(const struct poly *poly)
 		/* The source alpha is set for opaque pixels.
 		 * The destination alpha is set for transparent or
 		 * semi-transparent pixels. */
-		if (unlikely(check_mask))
+
+		if (unlikely(check_mask)) {
+			if (textured && (poly->clut & CLUT_IS_MASK)) {
+				/* If we need to check the mask we can't use
+				 * PVR_BLEND_SRCALPHA for the source, as we have
+				 * to use PVR_BLEND_DESTALPHA. In that case, do
+				 * a temporary blend to the second accumulation
+				 * buffer to clear the source texture's semi
+				 * pixels. */
+				hdr.m2.blend_dst_acc2 = true;
+				hdr.m2.blend_dst = PVR_BLEND_ZERO;
+
+				draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
+
+				hdr.m2.blend_dst_acc2 = false;
+				hdr.m2.blend_src_acc2 = true;
+			}
+
 			hdr.m2.blend_src = PVR_BLEND_DESTALPHA;
-		else
-			hdr.m2.blend_src = PVR_BLEND_ONE;
+		}
+
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 		flags &= ~POLY_BRIGHT;
 
