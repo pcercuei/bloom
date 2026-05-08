@@ -108,7 +108,7 @@ struct texture_settings {
 
 struct texture_page {
 	struct texture_settings settings;
-	uint16_t inval_counter;
+	uint16_t inval_counter :14;
 	union {
 		pvr_ptr_t tex;
 		struct texture_vq *vq;
@@ -126,7 +126,7 @@ struct texture_page_16bpp {
 
 struct texture_clut {
 	uint16_t clut;
-	uint16_t inval_counter;
+	uint16_t inval_counter :14;
 };
 
 struct texture_page_8bpp {
@@ -229,8 +229,8 @@ struct pvr_renderer {
 	uint32_t page_y :1;
 	enum blending_mode blending_mode :3;
 
-	uint16_t inval_counter;
-	uint16_t inval_counter_at_start;
+	uint16_t inval_counter :14;
+	uint16_t inval_counter_at_start :14;
 
 	struct texture_settings settings;
 
