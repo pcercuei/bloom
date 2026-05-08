@@ -249,6 +249,7 @@ struct pvr_renderer {
 	unsigned int reap_bank, to_reap[2];
 
 	unsigned int polybuf_cnt_start;
+	unsigned int polybuf_cnt_end;
 
 	unsigned int nb_clips;
 	struct clip_area clips[64];
@@ -1943,6 +1944,14 @@ static void pvr_set_list(pvr_list_t list)
 		poly_textured.m0.list_type = list;
 		poly_nontextured.m0.list_type = list;
 		poly_dummy.m0.list_type = list;
+
+		if (list == PVR_LIST_OP_POLY) {
+			poly_textured.m2.blend_dst = PVR_BLEND_ZERO;
+			poly_textured.m2.blend_src = PVR_BLEND_ONE;
+		} else {
+			poly_textured.m2.blend_dst = PVR_BLEND_INVSRCALPHA;
+			poly_textured.m2.blend_src = PVR_BLEND_SRCALPHA;
+		}
 	}
 
 	if (list == PVR_LIST_PT_POLY) {
@@ -1966,6 +1975,12 @@ static void pvr_set_list(pvr_list_t list)
 	}
 }
 
+static void pvr_reset_tile_clip(void)
+{
+	if (WITH_CLIPPING)
+		pvr_tile_clip(0.0f, 0.0f, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT);
+}
+
 __noinline
 static void pvr_start_scene(pvr_list_t list)
 {
@@ -1979,9 +1994,7 @@ static void pvr_start_scene(pvr_list_t list)
 
 	if (WITH_CLIPPING) {
 		pvr_add_clip(3);
-
-		/* Reset tile clip */
-		pvr_tile_clip(0.0f, 0.0f, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT);
+		pvr_reset_tile_clip();
 	}
 }
 
@@ -1993,8 +2006,10 @@ static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 			pvr_start_scene(list);
 
 		poly_draw_now(poly);
-	} else if (unlikely(pvr.polybuf_cnt_start == __array_size(polybuf))) {
+	} else if (unlikely(pvr.polybuf_cnt_start == pvr.polybuf_cnt_end)) {
 		printf("Poly buffer overflow\n");
+	} else if (list == PVR_LIST_OP_POLY) {
+		poly_copy(&polybuf[--pvr.polybuf_cnt_end], poly);
 	} else {
 		poly_copy(&polybuf[pvr.polybuf_cnt_start++], poly);
 	}
@@ -2014,6 +2029,22 @@ static void polybuf_render_from_start(void)
 	}
 
 	pvr.polybuf_cnt_start = 0;
+}
+
+static void polybuf_render_from_end(void)
+{
+	unsigned int i;
+
+	poly_prefetch(&polybuf[__array_size(polybuf) - 1]);
+
+	for (i = __array_size(polybuf); i > pvr.polybuf_cnt_end; i--) {
+		poly_prefetch(&polybuf[i - 2]);
+
+		poly_draw_now(&polybuf[i - 1]);
+		poly_discard(&polybuf[i - 1]);
+	}
+
+	pvr.polybuf_cnt_end = __array_size(polybuf);
 }
 
 static inline struct vertex_coords
@@ -3022,6 +3053,7 @@ void hw_render_start(void)
 	pvr.cmdbuf_offt = 0;
 	pvr.old_blending_is_none = false;
 	pvr.polybuf_cnt_start = 0;
+	pvr.polybuf_cnt_end = __array_size(polybuf);
 	pvr.nb_clips = 0;
 
 	reset_texture_pages();
@@ -3044,8 +3076,6 @@ static void pvr_render_outlines(void)
 	float z = get_zvalue(pvr.zoffset++);
 	pvr_poly_hdr_t *sq_hdr;
 
-	pvr_list_begin(PVR_LIST_OP_POLY);
-
 	sq_hdr = pvr_dr_target();
 	copy32(sq_hdr, &op_black_header);
 	pvr_dr_commit(sq_hdr);
@@ -3061,8 +3091,6 @@ static void pvr_render_outlines(void)
 		pvr_render_black_square(0, gpu.screen.hres,
 					gpu.screen.y + gpu.screen.h,
 					gpu.screen.vres, z);
-
-	pvr_list_finish();
 }
 
 static void render_mod_strip(const struct cube_vertex *vertices,
@@ -3285,7 +3313,14 @@ void hw_render_stop(void)
 	if (pvr.has_bg)
 		pvr_load_bg();
 
+	pvr_set_list(PVR_LIST_OP_POLY);
+	pvr_reset_tile_clip();
+
+	if (WITH_HYBRID_RENDERING && likely(pvr.polybuf_cnt_end < __array_size(polybuf)))
+		polybuf_render_from_end();
 	pvr_render_outlines();
+
+	pvr_list_finish();
 
 	if (WITH_CLIPPING && pvr.nb_clips)
 		pvr_render_tr_modifier_volumes();
