@@ -2236,12 +2236,23 @@ static inline bool poly_should_clip(const struct poly *poly)
 	return false;
 }
 
+static inline bool poly_is_opaque(struct texture_page *page, const struct poly *poly)
+{
+	if (!(poly->flags & POLY_TEXTURED))
+		return true;
+
+	if (poly->bpp == TEXTURE_16BPP)
+		return false;
+
+	return !(to_texture_page_4bpp(page)->clut[poly->codebook].flags & (CLUT_HAS_TR | CLUT_HAS_SEMI));
+}
+
 __pvr __attribute__((optimize(2)))
 static void process_poly(struct poly *poly, bool scissor)
 {
 	bool check_mask, set_mask, textured, noclip;
+	struct texture_page *page = NULL;
 	uint16_t umin, umax, flags;
-	struct texture_page *page;
 	unsigned int i, offt;
 	pvr_list_t list;
 
@@ -2298,15 +2309,18 @@ static void process_poly(struct poly *poly, bool scissor)
 		flags = poly->flags;
 
 		if (!WITH_BILINEAR && WITH_HYBRID_RENDERING && noclip && !check_mask) {
-			list = PVR_LIST_PT_POLY;
+			if (likely(poly_is_opaque(page, poly) && !(flags & POLY_BRIGHT)))
+				list = PVR_LIST_OP_POLY;
+			else
+				list = PVR_LIST_PT_POLY;
 		} else {
 			list = PVR_LIST_TR_POLY;
 			poly->flags &= ~POLY_BRIGHT;
+		}
 
-			if (unlikely(check_mask)) {
-				pvr.zoffset += 5;
-				poly->flags |= POLY_CHECK_MASK;
-			}
+		if (unlikely(check_mask)) {
+			pvr.zoffset += 5;
+			poly->flags |= POLY_CHECK_MASK;
 		}
 
 		poly_enqueue(list, poly);
@@ -2319,7 +2333,8 @@ static void process_poly(struct poly *poly, bool scissor)
 			poly_enqueue(PVR_LIST_TR_POLY, poly);
 		}
 
-		if (WITH_BILINEAR && WITH_HYBRID_RENDERING && noclip) {
+		if (WITH_BILINEAR && WITH_HYBRID_RENDERING
+		    && unlikely(noclip && !poly_is_opaque(page, poly))) {
 			poly->blending_mode = BLENDING_MODE_NONE;
 			poly->zoffset = pvr.zoffset++;
 			poly->flags = flags;
