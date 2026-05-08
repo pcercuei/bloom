@@ -47,7 +47,12 @@
 
 #define FILTER_MODE (WITH_BILINEAR ? PVR_FILTER_BILINEAR : PVR_FILTER_NONE)
 
-#define CLUT_IS_MASK BIT(15)
+/* Flag OR'd with a 16-bit CLUT when we want the mask CLUT */
+#define CLUT_IS_MASK	BIT(15)
+
+/* Flags for texture_clut.flags */
+#define CLUT_HAS_SEMI	BIT(0)
+#define CLUT_HAS_TR	BIT(1)
 
 /* These reduce the visible gaps in the seams between polys.
  * They probably correspond to something but I don't know what. */
@@ -127,6 +132,7 @@ struct texture_page_16bpp {
 struct texture_clut {
 	uint16_t clut;
 	uint16_t inval_counter :14;
+	uint16_t flags :2;
 };
 
 struct texture_page_8bpp {
@@ -525,13 +531,13 @@ static inline uint16_t *clut_get_ptr(uint16_t clut)
 }
 
 __noinline
-static void load_palette(struct texture_page *page, unsigned int offset,
-			 uint16_t clut, bool bpp4)
+static uint16_t load_palette(struct texture_page *page, unsigned int offset,
+			     uint16_t clut, bool bpp4)
 {
 	pvr_ptr_t palette_addr;
 	unsigned int i, nb;
 	uint16_t *palette;
-	uint16_t pixel;
+	uint16_t pixel, flags = 0;
 	uint64_t color;
 	uint64_t *sq;
 
@@ -556,6 +562,9 @@ static void load_palette(struct texture_page *page, unsigned int offset,
 		 * pixels, while the regular texture will contain opaque pixels,
 		 * semi-transparent or not. */
 		if (pixel != 0x0000) {
+			if (pixel & 0x8000)
+				flags |= CLUT_HAS_SEMI;
+
 			color = bgr_to_rgb(pixel);
 
 			if (likely(!(clut & CLUT_IS_MASK)) || !(color & 0x8000))
@@ -568,6 +577,7 @@ static void load_palette(struct texture_page *page, unsigned int offset,
 
 			sq[i] = color;
 		} else {
+			flags |= CLUT_HAS_TR;
 			sq[i] = 0;
 		}
 
@@ -576,6 +586,8 @@ static void load_palette(struct texture_page *page, unsigned int offset,
 	}
 
 	sq_unlock();
+
+	return flags;
 }
 
 static inline bool counter_is_older(uint16_t current, uint16_t other)
@@ -682,7 +694,7 @@ find_texture_codebook(struct texture_page *page, uint16_t clut)
 
 	pvr_printf("Load CLUT 0x%04hx at offset %u\n", clut, i);
 
-	load_palette(page, i, clut, bpp4);
+	page4->clut[i].flags = load_palette(page, i, clut, bpp4);
 
 	return i;
 }
