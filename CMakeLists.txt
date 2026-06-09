@@ -406,6 +406,8 @@ if (LOG_LEVEL STREQUAL "Debug")
 		${IBERTY_LIBRARIES}
 		zlib
 	)
+
+	set(WITH_CACHED_STDIO ON)
 endif()
 
 # This custom code will copy the romdisk to the build folder, then

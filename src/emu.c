@@ -156,6 +156,9 @@ int main(int argc, char **argv)
 
 	init_config();
 
+	if (WITH_CACHED_STDIO)
+		setvbuf(stdout, NULL, _IOFBF, 0);
+
 	if (EmuInit() == -1) {
 		fprintf(stderr, "Could not initialize PCSX core\n");
 		return 1;
