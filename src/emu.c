@@ -268,11 +268,7 @@ int chmod(const char *pathname, mode_t mode)
 
 void lightrec_code_inv(void *ptr, uint32_t len)
 {
-	void dcache_flush_range(uintptr_t start, size_t count);
-	void icache_flush_range(uintptr_t start, size_t count);
-
-	dcache_flush_range((uint32_t)ptr, len);
-	icache_flush_range((uint32_t)ptr, len);
+	icache_sync_range((uintptr_t)ptr, len);
 }
 
 static void copy_bios(void)

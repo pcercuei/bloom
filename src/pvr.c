@@ -886,20 +886,20 @@ static uint64_t poly_get_block_mask(const struct poly *poly)
 
 static inline void poly_alloc_cache(struct poly *poly)
 {
-	dcache_alloc_block(poly, 0);
-	dcache_alloc_block((char *)poly + 32, 0);
+	dcache_alloc_line(poly);
+	dcache_alloc_line((char *)poly + 32);
 }
 
 static inline void poly_prefetch(const struct poly *poly)
 {
-	__builtin_prefetch(poly);
-	__builtin_prefetch((char *)poly + 32);
+	dcache_pref_line(poly);
+	dcache_pref_line((char *)poly + 32);
 }
 
 static inline void poly_discard(struct poly *poly)
 {
-	asm inline("ocbi @%1\n"
-		   "ocbi @%2\n" : "=m"(*poly) : "r"(poly), "r"((char *)poly + 32));
+	dcache_inval_line(poly);
+	dcache_inval_line((char *)poly + 32);
 }
 
 static inline void poly_copy(struct poly *dst, const struct poly *src)
@@ -2402,7 +2402,7 @@ static void clear_framebuffer(uint16_t x0, uint16_t y0,
 
 	for (i = 0; i < h0; i++) {
 		for (j = 0; j < w0 / 16; j++) {
-			dcache_alloc_block(px32++, color);
+			dcache_alloc_line_with_value(px32++, color);
 
 			for (k = 1; k < 8; k++)
 				*px32++ = color;
@@ -2504,7 +2504,7 @@ static void process_gpu_commands(void)
 			}
 		}
 
-		dcache_pref_block(&cmdbuf[cmd_offt + 1 + len]);
+		dcache_pref_line(&cmdbuf[cmd_offt + 1 + len]);
 
 		blending_mode = semi_trans ? pvr.blending_mode : BLENDING_MODE_NONE;
 
