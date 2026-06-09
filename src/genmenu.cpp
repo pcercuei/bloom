@@ -328,7 +328,7 @@ void MyMenu::preparePopulate(fs::path path, bool back, bool dft)
 
 	if (back || fs::is_directory(path) || path == fs::path(TOP_PATH)) {
 		auto anim = std::make_shared<AnimFadeAway>(false, dx,
-							   800.0f * dx, [=] {
+							   800.0f * dx, [=, this] {
 			if (dft)
 				populate_dft();
 			else
@@ -344,7 +344,7 @@ void MyMenu::preparePopulate(fs::path path, bool back, bool dft)
 void MyMenu::prepareCredits(fs::path path)
 {
 	auto anim = std::make_shared<AnimFadeAway>(false, -1.0f,
-						   -800.0f, [=] {
+						   -800.0f, [=, this] {
 		populateCredits(path);
 	});
 
