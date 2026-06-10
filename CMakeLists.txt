@@ -368,6 +368,22 @@ if (WITH_CHD)
 	target_link_libraries(libpcsxcore PUBLIC libchdr)
 endif(WITH_CHD)
 
+option(WITH_SH4ZAM_MEMCPY "Use libsh4zam's memcpy implementation" OFF)
+if(WITH_SH4ZAM_MEMCPY)
+	find_library(SH4ZAM_LIBRARIES sh4zam REQUIRED)
+	add_library(sh4zam STATIC IMPORTED)
+	find_path(SH4ZAM_INCLUDE_DIR shz_sh4zam.h REQUIRED
+		HINTS ${KOS_PORTS}/include/sh4zam
+	)
+	set_target_properties(sh4zam PROPERTIES
+		IMPORTED_LOCATION ${SH4ZAM_LIBRARIES}
+		INCLUDE_DIRECTORIES ${SH4ZAM_INCLUDE_DIR}
+	)
+
+	target_sources(bloom PRIVATE src/memcpy.c)
+	target_link_libraries(bloom PRIVATE sh4zam)
+endif()
+
 set(WITH_EMBEDDED_BIOS_PATH
 	"${CMAKE_SOURCE_DIR}/openbios/openbios.bin"
 	CACHE PATH "Path to an optional BIOS file to pack"
