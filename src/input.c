@@ -35,7 +35,7 @@ int in_type[8] = {
    PSE_PAD_TYPE_NONE, PSE_PAD_TYPE_NONE
 };
 
-static void emu_attach_cont_cb(maple_device_t *dev)
+static void emu_attach_cont_cb(maple_device_t *dev, void *)
 {
 	if (cont_has_capabilities(dev, 0xffff3f00)) {
 		printf("Plugged a BlueRetro / usb4maple controller in port %u\n",
@@ -54,7 +54,7 @@ static void emu_attach_cont_cb(maple_device_t *dev)
 	}
 }
 
-static void emu_detach_cb(maple_device_t *dev)
+static void emu_detach_cb(maple_device_t *dev, void *)
 {
 	printf("Unplugged input device from port %u\n", dev->port);
 	in_type[dev->port] = PSE_PAD_TYPE_NONE;
@@ -70,7 +70,7 @@ static void emu_detach_cb(maple_device_t *dev)
 	}
 }
 
-static void emu_attach_mouse_cb(maple_device_t *dev)
+static void emu_attach_mouse_cb(maple_device_t *dev, void *)
 {
 	printf("Plugged a mouse in port %u\n", dev->port);
 	in_type[dev->port] = PSE_PAD_TYPE_MOUSE;
@@ -80,28 +80,28 @@ void input_init(void) {
         maple_device_t *dev;
 	unsigned int i;
 
-	maple_attach_callback(MAPLE_FUNC_CONTROLLER, emu_attach_cont_cb);
-	maple_attach_callback(MAPLE_FUNC_MOUSE, emu_attach_mouse_cb);
+	maple_attach_callback(MAPLE_FUNC_CONTROLLER, emu_attach_cont_cb, NULL);
+	maple_attach_callback(MAPLE_FUNC_MOUSE, emu_attach_mouse_cb, NULL);
 
-	maple_detach_callback(MAPLE_FUNC_CONTROLLER, emu_detach_cb);
-	maple_detach_callback(MAPLE_FUNC_MOUSE, emu_detach_cb);
+	maple_detach_callback(MAPLE_FUNC_CONTROLLER, emu_detach_cb, NULL);
+	maple_detach_callback(MAPLE_FUNC_MOUSE, emu_detach_cb, NULL);
 
 	for (i = 0; i < 4; i++) {
 		dev = maple_enum_type(i, MAPLE_FUNC_CONTROLLER);
 		if (dev)
-			emu_attach_cont_cb(dev);
+			emu_attach_cont_cb(dev, NULL);
 
 		dev = maple_enum_type(i, MAPLE_FUNC_MOUSE);
 		if (dev)
-			emu_attach_mouse_cb(dev);
+			emu_attach_mouse_cb(dev, NULL);
 	}
 }
 
 void input_shutdown(void) {
-	maple_attach_callback(MAPLE_FUNC_CONTROLLER, NULL);
-	maple_detach_callback(MAPLE_FUNC_CONTROLLER, NULL);
-	maple_attach_callback(MAPLE_FUNC_MOUSE, NULL);
-	maple_detach_callback(MAPLE_FUNC_MOUSE, NULL);
+	maple_attach_callback(MAPLE_FUNC_CONTROLLER, NULL, NULL);
+	maple_detach_callback(MAPLE_FUNC_CONTROLLER, NULL, NULL);
+	maple_attach_callback(MAPLE_FUNC_MOUSE, NULL, NULL);
+	maple_detach_callback(MAPLE_FUNC_MOUSE, NULL, NULL);
 }
 
 long PAD__open(void)

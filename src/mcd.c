@@ -383,7 +383,7 @@ static void mcd_fs_hotplug_vmu(void *d)
 		printf("Unexpected MCD header in VMU file\n");
 }
 
-static void mcd_hotplug_vmu_cb(maple_device_t *dev)
+static void mcd_hotplug_vmu_cb(maple_device_t *dev, void *)
 {
 	if (dev->port < 2 && dev->unit == 1) {
 		oneshot_timer_setup(vmu_hotplug_timer,
@@ -413,8 +413,8 @@ void mcd_fs_init(void)
 	if (!McdDisable[1])
 		LoadMcd(2, Config.Mcd2);
 
-	maple_attach_callback(MAPLE_FUNC_MEMCARD, mcd_hotplug_vmu_cb);
-	maple_detach_callback(MAPLE_FUNC_MEMCARD, mcd_hotplug_vmu_cb);
+	maple_attach_callback(MAPLE_FUNC_MEMCARD, mcd_hotplug_vmu_cb, NULL);
+	maple_detach_callback(MAPLE_FUNC_MEMCARD, mcd_hotplug_vmu_cb, NULL);
 
 	/* Enumerate currently plugged VMUs */
 	for (i = 0; i < 4; i++) {
@@ -426,8 +426,8 @@ void mcd_fs_init(void)
 
 void mcd_fs_shutdown(void)
 {
-	maple_attach_callback(MAPLE_FUNC_MEMCARD, NULL);
-	maple_detach_callback(MAPLE_FUNC_MEMCARD, NULL);
+	maple_attach_callback(MAPLE_FUNC_MEMCARD, NULL, NULL);
+	maple_detach_callback(MAPLE_FUNC_MEMCARD, NULL, NULL);
 
 	oneshot_timer_destroy(timer);
 	oneshot_timer_destroy(vmu_hotplug_timer);
