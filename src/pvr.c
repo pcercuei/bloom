@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <kos/regfield.h>
 #include <kos/string.h>
 
 #include "bloom-config.h"
@@ -50,8 +51,6 @@
 
 #define sizeof_field(type, member) \
 	sizeof(((type *)0)->member)
-
-#define BITLL(x)	(1ull << (x))
 
 #define ARRAY_SIZE(x)	(sizeof(x) / sizeof((x)[0]))
 
