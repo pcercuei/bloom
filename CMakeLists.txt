@@ -120,7 +120,7 @@ if (NOT CODEBUF_SIZE)
 	message(SEND_ERROR "Invalid buffer size.")
 endif()
 
-set(WITH_GPUSTATUS_POLLING_THRESHOLD 0 CACHE STRING
+set(WITH_GPUSTATUS_POLLING_THRESHOLD 350 CACHE STRING
 	"Threshold in CPU cycles for GPU status register polling detection (0 = disabled)"
 )
 
