@@ -32,4 +32,6 @@
 #cmakedefine01 WITH_CLIPPING
 #cmakedefine01 WITH_EMBEDDED_BIOS_PATH
 
+#cmakedefine01 OPT_SH4_USE_MATRIX
+
 #endif /* BLOOM_CONFIG_H */

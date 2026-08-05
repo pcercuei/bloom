@@ -85,6 +85,18 @@ static void dc_vout_close(void)
 		pvr_mem_free(pvram);
 }
 
+void mat_load_default(void)
+{
+	alignas(32) matrix_t matrix = {
+		{ screen_fw, 0.0f, 0.0f, 0.0f },
+		{ 0.0f, screen_fh, 0.0f, 0.0f },
+		{ 0.0f, 0.0f, 1.0f / 256.0f, 0.0f },
+		{ 0.0f, 0.0f, 0.0f, 1.0f / 1024.0f },
+	};
+
+	mat_load(&matrix);
+}
+
 static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 {
 	if (!started)
@@ -98,16 +110,8 @@ static void dc_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 	screen_fw = (float)SCREEN_WIDTH / (float)raw_w;
 	screen_fh = (float)SCREEN_HEIGHT / (float)raw_h;
 
-	if (HARDWARE_ACCELERATED) {
-		matrix_t matrix = {
-			{ screen_fw, 0.0f, 0.0f, 0.0f },
-			{ 0.0f, screen_fh, 0.0f, 0.0f },
-			{ 0.0f, 0.0f, 1.0f / 256.0f, 0.0f },
-			{ 0.0f, 0.0f, 0.0f, 1.0f / 1024.0f },
-		};
-
-		mat_load(&matrix);
-	}
+	if (HARDWARE_ACCELERATED && !OPT_SH4_USE_MATRIX)
+		mat_load_default();
 }
 
 static inline void copy15(const uint16_t *vram, int w, int h)

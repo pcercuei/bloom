@@ -48,5 +48,7 @@ _Bool load_bios(int fd);
 /* Copy 32 bytes from src to dst. Both must be aligned to 32 bytes. */
 void copy32(void *dst, const void *src);
 
+void mat_load_default(void);
+
 __END_DECLS
 #endif /* __BLOOM_EMU_H */

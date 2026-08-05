@@ -6,6 +6,7 @@
  */
 
 #include <arch/cache.h>
+#include <dc/matrix.h>
 #include <dc/pvr.h>
 #include <dc/video.h>
 #include <gpulib/gpu.h>
@@ -274,6 +275,8 @@ static void process_poly(struct poly *poly, bool scissor);
 static void poly_enqueue(pvr_list_t list, const struct poly *poly);
 
 static struct pvr_renderer pvr;
+
+alignas(32) static matrix_t matrix_bak;
 
 static struct poly polybuf[POLY_BUFFER_SIZE / sizeof(struct poly)];
 
@@ -2864,7 +2867,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 		if (unlikely(pvr.cmdbuf_offt + len >= __array_size(cmdbuf))) {
 			/* No more space in command buffer?
 			 * Flush what we queued so far. */
-			process_gpu_commands();
+			renderer_flush_queues();
 		}
 
 		memcpy(&cmdbuf[pvr.cmdbuf_offt], list, (len + 1) * 4);
@@ -2891,7 +2894,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 				 * that were already used for the current frame;
 				 * so we need to render everything we queued
 				 * until now. */
-				process_gpu_commands();
+				renderer_flush_queues();
 				break;
 			}
 			break;
@@ -3150,9 +3153,25 @@ static void pvr_render_modifier_volumes(void)
 	pvr_list_finish();
 }
 
+static void matrix_save(void)
+{
+	if (OPT_SH4_USE_MATRIX) {
+		mat_store(&matrix_bak);
+		mat_load_default();
+	}
+}
+
+static void matrix_restore(void)
+{
+	if (OPT_SH4_USE_MATRIX)
+		mat_load(&matrix_bak);
+}
+
 void hw_render_stop(void)
 {
 	bool overpaint;
+
+	matrix_save();
 
 	process_gpu_commands();
 
@@ -3210,9 +3229,15 @@ void hw_render_stop(void)
 	pvr.start_y = pvr.view_y;
 	pvr.draw_offt_x = pvr.draw_dx - pvr.start_x + gpu.screen.x;
 	pvr.draw_offt_y = pvr.draw_dy - pvr.start_y + gpu.screen.y;
+
+	matrix_restore();
 }
 
 void renderer_flush_queues(void)
 {
+	matrix_save();
+
 	process_gpu_commands();
+
+	matrix_restore();
 }
