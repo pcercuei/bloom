@@ -312,14 +312,17 @@ u32 lightrec_rw(struct lightrec_state *state, union code op, u32 base,
 		ops = map->ops;
 	}
 
-	if (!was_tagged) {
+	if (!was_tagged && likely(!block_has_flag(block, BLOCK_NEVER_COMPILE))) {
 		old_flags = block_set_flags(block, BLOCK_SHOULD_RECOMPILE);
 
 		if (!(old_flags & BLOCK_SHOULD_RECOMPILE)) {
 			pr_debug("Opcode of block at "PC_FMT" has been tagged"
 				 " - flag for recompilation\n", block->pc);
 
-			lut_write(state, lut_offset(block->pc), NULL);
+			if (ENABLE_THREADED_COMPILER)
+				lightrec_recompiler_add(state->rec, block);
+			else
+				lut_write(state, lut_offset(block->pc), NULL);
 		}
 	}
 
