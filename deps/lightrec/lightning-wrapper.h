@@ -33,4 +33,6 @@
 #define jit_add_state(u,v)	jit_addr(u,v,LIGHTREC_REG_STATE)
 #endif
 
+#define sh4_freg(x) (_F0 + (x))
+
 #endif /* __LIGHTNING_WRAPPER_H__ */

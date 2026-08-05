@@ -399,8 +399,22 @@ static void lightrec_rw_helper(struct lightrec_state *state,
 	}
 }
 
+#if defined(__sh__) && OPT_SH4_USE_MATRIX
+static inline void __sh4_frchg_cleanup(int *) {
+	__asm__ __inline__ ("frchg" ::: "memory");
+}
+
+#define sh4_frchg_scoped(l) \
+	int __frchg_scoped_##l __attribute__((cleanup(__sh4_frchg_cleanup))) \
+		= ({ __asm__ __inline__("frchg" ::: "memory"); 0; })
+#else
+#define sh4_frchg_scoped()
+#endif
+
 static void lightrec_rw_cb(struct lightrec_state *state, u32 arg)
 {
+	sh4_frchg_scoped();
+
 	lightrec_rw_helper(state, (union code) arg, NULL, NULL, 0);
 }
 
@@ -409,6 +423,8 @@ static void lightrec_rw_generic_cb(struct lightrec_state *state, u32 arg)
 	struct block *block;
 	struct opcode *op;
 	u16 offset = (u16)arg;
+
+	sh4_frchg_scoped();
 
 	block = lightrec_find_block_from_lut(state->block_cache,
 					     arg >> 16, state->curr_pc);
@@ -511,7 +527,11 @@ u32 lightrec_mfc(struct lightrec_state *state, union code op)
 
 static void lightrec_mfc_cb(struct lightrec_state *state, union code op)
 {
-	u32 rt = lightrec_mfc(state, op);
+	u32 rt;
+
+	sh4_frchg_scoped();
+
+	rt = lightrec_mfc(state, op);
 
 	if (op.i.op == OP_SWC2)
 		state->temp_reg = rt;
@@ -603,10 +623,63 @@ static void lightrec_mtc2(struct lightrec_state *state, u8 reg, u32 data)
 	}
 }
 
+#if defined(__sh__) && OPT_SH4_USE_MATRIX
+#define sh4_load_to_register(data, freg) \
+	__asm__ inline("lds %0,FPUL\nfloat FPUL, " freg "\n" :: "r"((s16)(data)) : "fpul", freg)
+#else
+#define sh4_load_to_register(data, freg)
+#endif
+
 static void lightrec_ctc2(struct lightrec_state *state, u8 reg, u32 data)
 {
 	switch (reg) {
+	case 0:
+		state->regs.cp2c[reg] = data;
+
+		sh4_load_to_register((s16)data, "fr0");
+		sh4_load_to_register((s16)(data >> 16), "fr4");
+		break;
+
+	case 1:
+		state->regs.cp2c[reg] = data;
+
+		sh4_load_to_register((s16)data, "fr8");
+		sh4_load_to_register((s16)(data >> 16), "fr1");
+		break;
+
+	case 2:
+		state->regs.cp2c[reg] = data;
+
+		sh4_load_to_register((s16)data, "fr5");
+		sh4_load_to_register((s16)(data >> 16), "fr9");
+		break;
+
+	case 3:
+		state->regs.cp2c[reg] = data;
+
+		sh4_load_to_register((s16)data, "fr2");
+		sh4_load_to_register((s16)(data >> 16), "fr6");
+		break;
+
 	case 4:
+		sh4_load_to_register((s16)data, "fr10");
+		store_u16(&state->regs.cp2c[reg], data);
+		break;
+
+	case 5:
+		sh4_load_to_register((s32)data, "fr12");
+		state->regs.cp2c[reg] = data;
+		break;
+
+	case 6:
+		sh4_load_to_register((s32)data, "fr13");
+		state->regs.cp2c[reg] = data;
+		break;
+
+	case 7:
+		sh4_load_to_register((s32)data, "fr14");
+		state->regs.cp2c[reg] = data;
+		break;
 	case 12:
 	case 20:
 	case 26:
@@ -645,6 +718,8 @@ static void lightrec_mtc_cb(struct lightrec_state *state, u32 arg)
 	u32 data;
 	u8 reg;
 
+	sh4_frchg_scoped();
+
 	if (op.i.op == OP_LWC2) {
 		data = state->temp_reg;
 		reg = op.i.rt;
@@ -682,6 +757,8 @@ void lightrec_cp(struct lightrec_state *state, union code op)
 
 static void lightrec_cp_cb(struct lightrec_state *state, u32 arg)
 {
+	sh4_frchg_scoped();
+
 	lightrec_cp(state, (union code) arg);
 }
 
@@ -1814,6 +1891,8 @@ u32 lightrec_execute(struct lightrec_state *state, u32 pc, u32 target_cycle)
 
 	state->target_cycle = target_cycle;
 	state->curr_pc = pc;
+
+	sh4_frchg_scoped();
 
 	block_trace = get_next_block_func(state, pc);
 	if (block_trace) {

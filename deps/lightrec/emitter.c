@@ -9,6 +9,7 @@
 #include "disassembler.h"
 #include "emitter.h"
 #include "lightning-wrapper.h"
+#include "lightrec-config.h"
 #include "optimizer.h"
 #include "regcache.h"
 
@@ -2528,13 +2529,39 @@ static void rec_cp2_basic_MTC2(struct lightrec_cstate *state,
 	rec_cp2_do_mtc2(state, block, offset, c.r.rd, c.r.rt);
 }
 
+static const u8 sh4_rmatrix_regs[][2] = {
+	/* gteR11, gteR12 */
+	{ sh4_freg(0), sh4_freg(4), },
+
+	/* gteR13, gteR21 */
+	{ sh4_freg(8), sh4_freg(1), },
+
+	/* gteR22, gteR23 */
+	{ sh4_freg(5), sh4_freg(9), },
+
+	/* gteR31, gteR32 */
+	{ sh4_freg(2), sh4_freg(6), },
+
+	/* gteR33 */
+	{ sh4_freg(10), 0 },
+
+	/* gteTRX */
+	{ sh4_freg(12), 0 },
+
+	/* gteTRY */
+	{ sh4_freg(13), 0 },
+
+	/* gteTRY */
+	{ sh4_freg(14), 0 },
+};
+
 static void rec_cp2_basic_CTC2(struct lightrec_cstate *state,
 			       const struct block *block, u16 offset)
 {
 	struct regcache *reg_cache = state->reg_cache;
 	const union code c = block->opcode_list[offset].c;
 	jit_state_t *_jit = block->_jit;
-	u8 rt, tmp, tmp2;
+	u8 rt, tmp, tmp2, flags = 0;
 
 	_jit_name(block->_jit, __func__);
 
@@ -2544,10 +2571,12 @@ static void rec_cp2_basic_CTC2(struct lightrec_cstate *state,
 		return;
 	}
 
-	rt = lightrec_alloc_reg_in(reg_cache, _jit, c.r.rt, 0);
+	if (OPT_SH4_USE_MATRIX && c.r.rd < 4)
+		flags = REG_EXT;
+
+	rt = lightrec_alloc_reg_in(reg_cache, _jit, c.r.rt, flags);
 
 	switch (c.r.rd) {
-	case 4:
 	case 12:
 	case 20:
 	case 26:
@@ -2571,6 +2600,47 @@ static void rec_cp2_basic_CTC2(struct lightrec_cstate *state,
 
 		lightrec_free_reg(reg_cache, tmp);
 		lightrec_free_reg(reg_cache, tmp2);
+		break;
+
+	case 0:
+	case 1:
+	case 2:
+	case 3:
+		jit_stxi_i(cp2c_i_offset(c.r.rd), LIGHTREC_REG_STATE, rt);
+
+		if (OPT_SH4_USE_MATRIX) {
+			tmp = lightrec_alloc_reg_temp(reg_cache, _jit);
+
+			jit_extr_s(tmp, rt);
+			jit_extr_f(sh4_rmatrix_regs[c.r.rd][0], tmp);
+
+			jit_rshi(tmp, rt, 16);
+			jit_extr_f(sh4_rmatrix_regs[c.r.rd][1], tmp);
+
+			lightrec_free_reg(reg_cache, tmp);
+		}
+		break;
+
+	case 4:
+		jit_stxi_s(cp2c_s_offset(c.r.rd), LIGHTREC_REG_STATE, rt);
+
+		if (OPT_SH4_USE_MATRIX) {
+			tmp = lightrec_alloc_reg_temp(reg_cache, _jit);
+
+			jit_extr_s(tmp, rt);
+			jit_extr_f(sh4_rmatrix_regs[c.r.rd][0], tmp);
+
+			lightrec_free_reg(reg_cache, tmp);
+		}
+		break;
+
+	case 5:
+	case 6:
+	case 7:
+		jit_stxi_i(cp2c_i_offset(c.r.rd), LIGHTREC_REG_STATE, rt);
+
+		if (OPT_SH4_USE_MATRIX)
+			jit_extr_f(sh4_rmatrix_regs[c.r.rd][0], rt);
 		break;
 
 	default:

@@ -26,6 +26,7 @@
 #cmakedefine01 OPT_PRELOAD_PC
 
 #cmakedefine01 OPT_SH4_USE_GBR
+#cmakedefine01 OPT_SH4_USE_MATRIX
 
 #endif /* __LIGHTREC_CONFIG_H__ */
 

@@ -87,6 +87,7 @@ option(OPT_PRELOAD_PC "(optimization) Preload PC value into register" ON)
 
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "SH4|sh4")
 	option(OPT_SH4_USE_GBR "(SH4 optimization) Use GBR register for the state pointer" OFF)
+	option(OPT_SH4_USE_MATRIX "(SH4 optimization) Use internal matrix for GTE emulation" OFF)
 endif()
 
 target_include_directories(lightrec PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
