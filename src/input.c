@@ -198,7 +198,8 @@ long PAD1_readPort(PadDataS *pad) {
 	} else if (old_start_mask & BIT(idx)) {
 		/* START button released one frame ago - keep START pressed for
 		 * just one frame more */
-		buttons |= BIT(DKEY_START);
+		if (!(combo_mask & BIT(idx)))
+			buttons |= BIT(DKEY_START);
 
 		old_start_mask &= ~BIT(idx);
 	} else if (start_mask & BIT(idx)) {
