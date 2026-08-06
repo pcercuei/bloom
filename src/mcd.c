@@ -431,6 +431,7 @@ void mcd_fs_shutdown(void)
 
 	oneshot_timer_destroy(timer);
 	oneshot_timer_destroy(vmu_hotplug_timer);
+	mcd_flush(mcd_data);
 
 	nmmgr_handler_remove(&mcd1.nmmgr);
 	nmmgr_handler_remove(&mcd0.nmmgr);
