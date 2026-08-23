@@ -101,6 +101,22 @@ static void emu_exit(uint8_t, uint32_t)
 	psxRegs.stop = 1;
 }
 
+static int load_boot_sstate(const char *path)
+{
+	s8 *mapped_psxR = psxR;
+	int ret;
+
+	/* LoadState writes the BIOS area, so we can't use the read-only virtual
+	 * mapping - temporarily switch to the backing area */
+	psxR = (s8 *)(_arch_mem_top + 0x10000);
+
+	ret = LoadState(path);
+
+	psxR = mapped_psxR;
+
+	return ret;
+}
+
 bool emu_check_cd(const char *path)
 {
 	SetIsoFile(path);
@@ -226,6 +242,9 @@ int main(int argc, char **argv)
 			LoadCdrom();
 
 		mcd_fs_init();
+
+		if (WITH_BOOT_SSTATE[0] && load_boot_sstate(WITH_BOOT_SSTATE) == 0)
+			printf("Loaded savestate %s\n", WITH_BOOT_SSTATE);
 
 		psxRegs.stop = 0;
 
