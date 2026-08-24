@@ -221,6 +221,8 @@ static void _fallback_unsti_x(jit_state_t*,jit_word_t,jit_int32_t,jit_word_t);
 #    define fallback_flush()		sync()
 #  elif defined(__mips__)
 #    define fallback_flush()		flush()
+#  elif defined(__sh__)
+#    define fallback_flush()		flush(1)
 #  else
 #    define fallback_flush()		/**/
 #  endif

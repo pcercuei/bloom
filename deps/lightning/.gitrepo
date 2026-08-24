@@ -4,9 +4,9 @@
 ; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
 ;
 [subrepo]
-	remote = https://github.com/pcercuei/gnu_lightning
-	branch = sh4
-	commit = 62d6565638cd339f699bbefa911615f7feffddac
-	parent = 905fa62ccd7035049bee40a33156c07ccd4e4bec
+	remote = /home/paul/dev/lightning
+	branch = sh4-opt
+	commit = fc31ba978d8f56c2e59e5530cf7b6ab5956052f3
+	parent = b7d7b2efc047959f5e3fad424103a8c83c728df1
 	method = merge
-	cmdver = 0.4.6
+	cmdver = 0.4.9

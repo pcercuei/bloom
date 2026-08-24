@@ -2184,8 +2184,7 @@ _emit_code(jit_state_t *_jit)
 	    case jit_code_movi_w_d:
 		movi_w_d(rn(node->u.w), node->v.w);
 		break;
-#endif
-#if __WORDSIZE == 32
+#else
 	    case jit_code_movr_ww_d:
 		movr_ww_d(rn(node->u.w), rn(node->v.w), rn(node->w.w));
 		break;

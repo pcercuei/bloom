@@ -374,7 +374,7 @@ jit_get_cpu(void)
 void
 _jit_init(jit_state_t *_jit)
 {
-	_jitc->reglen = jit_size(_rvs) - 1;
+    _jitc->reglen = jit_size(_rvs) - 1;
 }
 
 void
@@ -583,6 +583,11 @@ _emit_code(jit_state_t *_jit)
     _jitc->no_flag = 0;
     _jitc->mode_d = SH_DEFAULT_FPU_MODE;
     _jitc->uses_fpu = 0;
+    _jitc->ioff = 0;
+    _jitc->idirect = 0;
+    _jitc->reg_mask[0] = 0;
+    _jitc->reg_mask[1] = 0;
+    _jitc->reg_mask[2] = 0;
 
     jit_reglive_setup();
 
@@ -757,20 +762,31 @@ _emit_code(jit_state_t *_jit)
 	    case jit_code_align:
 		/* Must align to a power of two */
 		assert(!(node->u.w & (node->u.w - 1)));
+
+		_jitc->idirect++;
+		flush(1);
+
 		if ((word = _jit->pc.w & (node->u.w - 1)))
 		    nop(node->u.w - word);
+
+		_jitc->idirect--;
 		break;
 	    case jit_code_skip:
+		_jitc->idirect++;
+		flush(1);
 		nop((node->u.w + 3) & ~3);
+		_jitc->idirect--;
 		break;
 	    case jit_code_note:		case jit_code_name:
-		node->u.w = _jit->pc.w;
+		node->u.w = _jit->pc.w + _jitc->ioff * 2;
 		break;
 	    case jit_code_label:
 		/* remember label is defined */
 		node->flag |= jit_flag_patch;
 		/* Reset FPU mode */
 		set_fmode_no_r0(_jit, SH_DEFAULT_FPU_MODE);
+		/* Flush instruction buffer */
+		flush(1);
 		node->u.w = _jit->pc.w;
 		break;
 		case_rrr(add,);
@@ -1283,6 +1299,7 @@ _emit_code(jit_state_t *_jit)
 		}
 		/* remember label is defined */
 		node->flag |= jit_flag_patch;
+		flush(1);
 		node->u.w = _jit->pc.w;
 		epilog(node);
 		_jitc->function = NULL;
@@ -1432,6 +1449,7 @@ _emit_code(jit_state_t *_jit)
 		printf("ABORT MISSION (%i)\n", node->code);
 		abort();
 	}
+
 	jit_regarg_clr(node, value);
 	assert(_jitc->regarg == 0);
 	assert(_jitc->synth == 0);
@@ -1441,7 +1459,8 @@ _emit_code(jit_state_t *_jit)
         _jitc->no_flag = !(node->flag & jit_flag_patch);
 
 	if (_jitc->consts.length &&
-		(jit_uword_t)_jit->pc.uc - (jit_uword_t)_jitc->consts.patches[0] >= 900) {
+		(jit_uword_t)_jit->pc.uc + _jitc->ioff * 2
+		- (jit_uword_t)_jitc->consts.patches[0] >= 900) {
 		/* Maximum displacement for mov.l is +1020 bytes. If we're already +900 bytes
 		 * since the first mov.l, force a flush. */
 
@@ -1449,12 +1468,17 @@ _emit_code(jit_state_t *_jit)
 			node->next->code != jit_code_jmpi &&
 			node->next->code != jit_code_jmpr &&
 			node->next->code != jit_code_epilog) {
+			_jitc->idirect++;
+			flush(1);
+
 			/* insert a jump, flush constants and continue */
 			word = _jit->pc.w;
 			BRA(0);
 			NOP();
 			flush_consts(1);
 			patch_at(word, _jit->pc.w);
+
+			_jitc->idirect--;
 		}
 	}
     }
@@ -1467,6 +1491,7 @@ _emit_code(jit_state_t *_jit)
 #undef case_rw
 #undef case_rr
 
+    flush(1);
     flush_consts(1);
 
     for (offset = 0; offset < _jitc->patches.offset; offset++) {
@@ -1536,7 +1561,7 @@ _load_const(jit_state_t *_jit, jit_bool_t uniq, jit_int32_t r0, jit_word_t i0)
     jit_int32_t		 size;
     jit_int32_t		 offset;
 
-    _jitc->consts.patches[_jitc->consts.offset++] = _jit->pc.w;
+    _jitc->consts.patches[_jitc->consts.offset++] = _jit->pc.w + _jitc->ioff * 2;
     /* positive forward offset */
     LDPL(r0, 0);
 
@@ -1575,9 +1600,14 @@ _load_const_f(jit_state_t *_jit, jit_bool_t uniq, jit_int32_t r0, jit_float32_t 
     };
     jit_uint32_t i0 = ((union fl32)f0).i;
 
+    _jitc->idirect++;
+    flush(1);
+
     _jitc->consts.patches[_jitc->consts.offset++] = _jit->pc.w;
     /* positive forward offset */
     MOVA(0);
+    _jitc->idirect--;
+
     LDF(r0, _R0);
 
     if (!uniq) {
@@ -1610,14 +1640,16 @@ _flush_consts(jit_state_t *_jit, jit_bool_t force)
     if (!_jitc->consts.length)
 	return;
 
-    word = _jit->code.length - (_jit->pc.uc - _jit->code.ptr)
+    word = _jit->code.length - (_jit->pc.uc + _jitc->ioff * 2 - _jit->code.ptr)
 	    - (_jitc->consts.length << 1);
     if (!force && word < 1024)
 	return;
 
+    flush(1);
+
     /* Align to 32 bits */
     if (_jit->pc.w & 0x3)
-	    NOP();
+	    *_jit->pc.us++ = OP_NOP;
 
     word = _jit->pc.w;
     _jitc->consts.data = _jit->pc.uc;
@@ -1643,8 +1675,8 @@ _flush_consts(jit_state_t *_jit, jit_bool_t force)
 #endif
 
     for (offset = 0; offset < _jitc->consts.offset; offset += 2)
-	patch_at(_jitc->consts.patches[offset],
-		 word + (_jitc->consts.patches[offset + 1] << 2));
+	patch_const(_jitc->consts.patches[offset],
+		    word + (_jitc->consts.patches[offset + 1] << 2));
     _jitc->consts.length = _jitc->consts.offset = 0;
 }
 
