@@ -8,6 +8,7 @@
 
 #include "lightning-wrapper.h"
 #include "lightrec-config.h"
+#include "constprop.h"
 #include "disassembler.h"
 #include "lightrec.h"
 #include "regcache.h"
@@ -152,7 +153,7 @@ enum c_wrappers {
 
 struct lightrec_cstate {
 	struct lightrec_state *state;
-
+	struct constprop_data v[32];
 	struct lightrec_branch local_branches[512];
 	struct lightrec_branch_target targets[512];
 	u16 movi_temp[32];
@@ -190,6 +191,7 @@ struct lightrec_state {
 	void (*ds_check_func)(void);
 	void (*memset_func)(void);
 	void (*get_next_block)(void);
+	void (*fast_eob)(void);
 	struct lightrec_ops ops;
 	unsigned int nb_precompile;
 	unsigned int nb_compile;

@@ -34,6 +34,7 @@ struct native_register {
 struct regcache {
 	struct lightrec_state *state;
 	struct native_register lightrec_regs[NUM_REGS + NUM_TEMPS];
+	uint32_t temps;
 };
 
 static const char * mips_regs[] = {
@@ -251,7 +252,7 @@ u8 lightrec_alloc_reg(struct regcache *cache, jit_state_t *_jit, u8 jit_reg)
 	return jit_reg;
 }
 
-u8 lightrec_alloc_reg_temp(struct regcache *cache, jit_state_t *_jit)
+static u8 lightrec_alloc_real_temp(struct regcache *cache, jit_state_t *_jit)
 {
 	u8 jit_reg;
 	struct native_register *nreg = alloc_temp(cache);
@@ -267,6 +268,28 @@ u8 lightrec_alloc_reg_temp(struct regcache *cache, jit_state_t *_jit)
 	nreg->prio = REG_IS_TEMP;
 	nreg->used = true;
 	return jit_reg;
+}
+
+u8 lightrec_alloc_reg_temp(struct regcache *cache, jit_state_t *_jit)
+{
+	if (!(cache->temps & BIT(0))) {
+		cache->temps |= BIT(0);
+		return _R4;
+	}
+	if (!(cache->temps & BIT(1))) {
+		cache->temps |= BIT(1);
+		return _R5;
+	}
+	if (!(cache->temps & BIT(2))) {
+		cache->temps |= BIT(2);
+		return _R6;
+	}
+	if (!(cache->temps & BIT(3))) {
+		cache->temps |= BIT(3);
+		return _R7;
+	}
+
+	return lightrec_alloc_real_temp(cache, _jit);
 }
 
 s8 lightrec_get_reg_with_value(struct regcache *cache, intptr_t value)
@@ -303,7 +326,7 @@ u8 lightrec_alloc_reg_temp_with_value(struct regcache *cache,
 
 	reg = lightrec_get_reg_with_value(cache, value);
 	if (reg < 0) {
-		reg = lightrec_alloc_reg_temp(cache, _jit);
+		reg = lightrec_alloc_real_temp(cache, _jit);
 		jit_movi((u8)reg, value);
 		lightrec_temp_set_value(cache, (u8)reg, value);
 	}
@@ -555,7 +578,15 @@ static void free_reg(struct native_register *nreg)
 
 void lightrec_free_reg(struct regcache *cache, u8 jit_reg)
 {
-	if (!lightrec_reg_is_zero(jit_reg))
+	if (jit_reg == _R4)
+		cache->temps &= ~BIT(0);
+	else if (jit_reg == _R5)
+		cache->temps &= ~BIT(1);
+	else if (jit_reg == _R6)
+		cache->temps &= ~BIT(2);
+	else if (jit_reg == _R7)
+		cache->temps &= ~BIT(3);
+	else if (!lightrec_reg_is_zero(jit_reg))
 		free_reg(lightning_reg_to_lightrec(cache, jit_reg));
 }
 
@@ -565,6 +596,8 @@ void lightrec_free_regs(struct regcache *cache)
 
 	for (i = 0; i < ARRAY_SIZE(cache->lightrec_regs); i++)
 		free_reg(&cache->lightrec_regs[i]);
+
+	cache->temps = 0;
 }
 
 static void clean_reg(jit_state_t *_jit,

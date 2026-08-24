@@ -4,9 +4,9 @@
 ; git-subrepo command. See https://github.com/ingydotnet/git-subrepo#readme
 ;
 [subrepo]
-	remote = https://github.com/pcercuei/lightrec.git
+	remote = /home/paul/dev/lightrec
 	branch = master
-	commit = c4f7b9887208688ff81988c2fbc24b3b75cb77ae
-	parent = 7725c57f123c3bc07ab212b391e3d450b290f621
+	commit = 265a407d7186a7144af9a792ad9f1578265fe1ae
+	parent = 53a1e7098200cf2b9b8c64100a4c06f933357be5
 	method = merge
 	cmdver = 0.4.9

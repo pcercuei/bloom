@@ -5,6 +5,7 @@
 
 #include "arch.h"
 #include "blockcache.h"
+#include "constprop.h"
 #include "debug.h"
 #include "disassembler.h"
 #include "emitter.h"
@@ -1103,10 +1104,9 @@ static struct block * generate_dispatcher(struct lightrec_state *state)
 {
 	struct block *block;
 	jit_state_t *_jit;
-	jit_node_t *to_end, *loop, *loop2,
-		   *addr, *addr2, *addr3, *addr4, *addr5;
+	jit_node_t *to_end, *to_loop, *to_slow_path, *loop, *loop2,
+		   *addr, *addr2, *addr3, *addr4, *addr5, *addr6;
 	unsigned int i;
-	u32 offset;
 
 	block = lightrec_malloc(state, MEM_FOR_IR, sizeof(*block));
 	if (!block)
@@ -1131,13 +1131,7 @@ static struct block * generate_dispatcher(struct lightrec_state *state)
 	for (i = 0; i < NUM_REGS; i++)
 		jit_movr(JIT_V(i + FIRST_REG), JIT_V(i + FIRST_REG));
 
-	loop = jit_label();
-
-	if (!arch_has_fast_mask())
-		jit_movi(JIT_R1, 0x1fffffff);
-
-	/* Call the block's code */
-	jit_jmpr(JIT_V1);
+	to_loop = jit_jmpi();
 
 	/* The block will jump here, with the number of cycles remaining in
 	 * LIGHTREC_REG_CYCLE */
@@ -1146,9 +1140,6 @@ static struct block * generate_dispatcher(struct lightrec_state *state)
 	sync_next_pc(_jit);
 
 	loop2 = jit_label();
-
-	/* Jump to end if state->target_cycle < state->current_cycle */
-	to_end = jit_blei(LIGHTREC_REG_CYCLE, 0);
 
 	/* Convert next PC to KUNSEG and avoid mirrors */
 	jit_andi(JIT_V1, JIT_V0, RAM_SIZE - 1);
@@ -1161,18 +1152,35 @@ static struct block * generate_dispatcher(struct lightrec_state *state)
 	if (!lut_is_32bit(state))
 		jit_lshi(JIT_V1, JIT_V1, 1);
 	jit_add_state(JIT_V1, JIT_V1);
+	jit_addi(JIT_V1, JIT_V1, lightrec_offset(code_lut));
 
-	offset = lightrec_offset(code_lut);
+	/* The block will jump here if it already knows the code LUT entry */
+	addr6 = jit_indirect();
+
 	if (lut_is_32bit(state))
-		jit_ldxi_ui(JIT_V1, JIT_V1, offset);
+		jit_ldr_ui(JIT_V1, JIT_V1);
 	else
-		jit_ldxi(JIT_V1, JIT_V1, offset);
+		jit_ldr(JIT_V1, JIT_V1);
+
+	/* Jump to end if state->target_cycle < state->current_cycle */
+	to_end = jit_blei(LIGHTREC_REG_CYCLE, 0);
 
 	/* Store back the current PC to the lightrec_state structure */
 	jit_stxi_i(lightrec_offset(curr_pc), LIGHTREC_REG_STATE, JIT_V0);
 
-	/* If we get non-NULL, loop */
-	jit_patch_at(jit_bnei(JIT_V1, 0), loop);
+	/* If we get NULL, jump to the slow path */
+	to_slow_path = jit_beqi(JIT_V1, 0);
+
+	jit_patch(to_loop);
+	loop = jit_label();
+
+	if (!arch_has_fast_mask())
+		jit_movi(JIT_R1, 0x1fffffff);
+
+	/* Call the block's code */
+	jit_jmpr(JIT_V1);
+
+	jit_patch(to_slow_path);
 
 	/* The code LUT will be set to this address when the block at the target
 	 * PC has been preprocessed but not yet compiled by the threaded
@@ -1309,6 +1317,7 @@ static struct block * generate_dispatcher(struct lightrec_state *state)
 		state->ds_check_func = jit_address(addr5);
 	if (OPT_REPLACE_MEMSET)
 		state->memset_func = jit_address(addr3);
+	state->fast_eob = jit_address(addr6);
 	state->get_next_block = jit_address(addr);
 
 	if (ENABLE_DISASSEMBLER) {
@@ -1591,6 +1600,9 @@ int lightrec_compile_block(struct lightrec_cstate *cstate,
 	cstate->nb_targets = 0;
 	cstate->no_load_delay = false;
 
+	for (i = 0; i < 32; i++)
+		cstate->v[i] = (struct constprop_data){ 0, 0xffffffff, 0 };
+
 	jit_prolog();
 	jit_tramp(256);
 
@@ -1598,6 +1610,8 @@ int lightrec_compile_block(struct lightrec_cstate *cstate,
 
 	for (i = 0; i < block->nb_ops; i++) {
 		elm = &block->opcode_list[i];
+
+		lightrec_consts_propagate(block, i, cstate->v);
 
 		if (skip_next) {
 			skip_next = false;
