@@ -1,12 +1,4 @@
 /////////////////////////////////////////////////////////
-
-#define PSE_LT_SPU                  4
-#define PSE_SPU_ERR_SUCCESS         0
-#define PSE_SPU_ERR                 -60
-#define PSE_SPU_ERR_NOTCONFIGURED   PSE_SPU_ERR -1
-#define PSE_SPU_ERR_INIT            PSE_SPU_ERR -2
-
-/////////////////////////////////////////////////////////
 // main emu calls:
 // 0. Get type/name/version
 // 1. Init
@@ -21,8 +13,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "xa.h"
 #include "register.h"
+#include "../../include/psemu_plugin_defs.h"
 // some ms windows compatibility define
 #undef CALLBACK
 #define CALLBACK
@@ -339,6 +331,10 @@ long CALLBACK SPUshutdown(void)
  return 0;
 }
 
+void CALLBACK SPUconfigure(void)
+{
+}
+
 ////////////////////////////////////////////////////////////////////////
 // MISC STUFF
 ////////////////////////////////////////////////////////////////////////
@@ -402,26 +398,19 @@ char * SPUgetLibInfos(void)
 
 typedef struct
 {
- char          szSPUName[8];
- unsigned long ulFreezeVersion;
- unsigned long ulFreezeSize;
- unsigned char cSPUPort[0x200];
- unsigned char cSPURam[0x80000];
- xa_decode_t   xaS;     
-} SPUFreeze_t;
-
-typedef struct
-{
  unsigned long Future[256];
 
 } SPUNULLFreeze_t;
 
 ////////////////////////////////////////////////////////////////////////
 
-long CALLBACK SPUfreeze(unsigned long ulFreezeMode,SPUFreeze_t * pF,unsigned int cycles)
+long DoFreeze(int ulFreezeMode, SPUFreeze_t * pF, unsigned short **ram,
+ void * pF2, unsigned int cycles)
 {
  int i;
 
+ if (ram)
+  *ram = spuMem;
  if(!pF) return 0;
 
  if(ulFreezeMode)
@@ -429,23 +418,19 @@ long CALLBACK SPUfreeze(unsigned long ulFreezeMode,SPUFreeze_t * pF,unsigned int
    if(ulFreezeMode==1)
     memset(pF,0,sizeof(SPUFreeze_t)+sizeof(SPUNULLFreeze_t));
 
-   strcpy(pF->szSPUName,"PBNUL");
-   pF->ulFreezeVersion=1;
-   pF->ulFreezeSize=sizeof(SPUFreeze_t)+sizeof(SPUNULLFreeze_t);
+   strcpy(pF->PluginName, "PBNUL");
+   pF->PluginVersion = 1;
+   pF->Size = sizeof(SPUFreeze_t)+sizeof(SPUNULLFreeze_t);
 
    if(ulFreezeMode==2) return 1;
 
-   memcpy(pF->cSPURam,spuMem,0x80000);
-   memcpy(pF->cSPUPort,regArea,0x200);
-   // dummy:
-   memset(&pF->xaS,0,sizeof(xa_decode_t));
+   memcpy(pF->SPUPorts, regArea, 0x200);
    return 1;
   }
 
  if(ulFreezeMode!=0) return 0;
 
- memcpy(spuMem,pF->cSPURam,0x80000);
- memcpy(regArea,pF->cSPUPort,0x200);
+ memcpy(regArea, pF->SPUPorts, 0x200);
 
  for(i=0;i<0x100;i++)
   {
@@ -457,91 +442,6 @@ long CALLBACK SPUfreeze(unsigned long ulFreezeMode,SPUFreeze_t * pF,unsigned int
 
  return 1;
 }
-
-
-//////////////////////////////////////////////////////////////////////// 
-//////////////////////////////////////////////////////////////////////// 
-//////////////////////////////////////////////////////////////////////// 
-// UNUSED WINDOWS FUNCS... YOU SHOULDN'T USE THEM IN LINUX
-
-long CALLBACK SPUconfigure(void)
-{
- return 0;
-}
-
-void CALLBACK SPUabout(void)
-{
-}
-
-//////////////////////////////////////////////////////////////////////// 
-//////////////////////////////////////////////////////////////////////// 
-//////////////////////////////////////////////////////////////////////// 
-// OLD PSEMU 1 FUNCS... YOU SHOULDN'T USE THEM
-
-unsigned short CALLBACK SPUgetOne(unsigned long val) 
-{ 
- if(spuAddr!=0xffffffff) 
-  { 
-   return SPUreadDMA(); 
-  } 
- if(val>=512*1024) val=512*1024-1; 
- return spuMem[val>>1]; 
-} 
- 
-void CALLBACK SPUputOne(unsigned long val,unsigned short data) 
-{ 
- if(spuAddr!=0xffffffff) 
-  { 
-   SPUwriteDMA(data); 
-   return; 
-  } 
- if(val>=512*1024) val=512*1024-1; 
- spuMem[val>>1] = data; 
-} 
- 
-void CALLBACK SPUplaySample(unsigned char ch) 
-{ 
-} 
- 
-void CALLBACK SPUsetAddr(unsigned char ch, unsigned short waddr) 
-{ 
- //s_chan[ch].pStart=spuMemC+((unsigned long) waddr<<3); 
-} 
- 
-void CALLBACK SPUsetPitch(unsigned char ch, unsigned short pitch) 
-{ 
- //SetPitch(ch,pitch); 
-} 
- 
-void CALLBACK SPUsetVolumeL(unsigned char ch, short vol) 
-{ 
- //SetVolumeL(ch,vol); 
-} 
- 
-void CALLBACK SPUsetVolumeR(unsigned char ch, short vol) 
-{ 
- //SetVolumeR(ch,vol); 
-}                
- 
-void CALLBACK SPUstartChannels1(unsigned short channels) 
-{ 
- //SoundOn(0,16,channels); 
-} 
- 
-void CALLBACK SPUstartChannels2(unsigned short channels) 
-{ 
- //SoundOn(16,24,channels); 
-} 
- 
-void CALLBACK SPUstopChannels1(unsigned short channels) 
-{ 
- //SoundOff(0,16,channels); 
-} 
- 
-void CALLBACK SPUstopChannels2(unsigned short channels) 
-{ 
- //SoundOff(16,24,channels); 
-} 
 
 void CALLBACK SPUregisterScheduleCb(void (CALLBACK *callback)(unsigned int))
 {

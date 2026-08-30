@@ -48,7 +48,8 @@
 #else
 #define CDR_LOG_IO(...)
 #endif
-//#define CDR_LOG_CMD_IRQ
+//#define CDR_LOG_CMD
+//#define CDR_LOG_CMD_ACK
 
 static struct {
 	// unused members maintain savesate compatibility
@@ -172,7 +173,7 @@ struct SubQ {
 #define CdlGetQ        29
 #define CdlReadToc     30
 
-#ifdef CDR_LOG_CMD_IRQ
+#ifdef CDR_LOG_CMD
 static const char * const CmdName[0x100] = {
     "CdlSync",     "CdlNop",       "CdlSetloc",  "CdlPlay",
     "CdlForward",  "CdlBackward",  "CdlReadN",   "CdlStandby",
@@ -203,8 +204,9 @@ unsigned char Test23[] = { 0x43, 0x58, 0x44, 0x32, 0x39 ,0x34, 0x30, 0x51 };
 #define MODE_SPEED       (1<<7) // 0x80
 #define MODE_STRSND      (1<<6) // 0x40 ADPCM on/off
 #define MODE_SIZE_2340   (1<<5) // 0x20
-#define MODE_SIZE_2328   (1<<4) // 0x10
+#define MODE_SIZE_2328   (1<<4) // 0x10 (likely wrong)
 #define MODE_SIZE_2048   (0<<4) // 0x00
+#define MODE_BIT4        (1<<4) // 0x10
 #define MODE_SF          (1<<3) // 0x08 channel on/off
 #define MODE_REPORT      (1<<2) // 0x04
 #define MODE_AUTOPAUSE   (1<<1) // 0x02
@@ -301,7 +303,7 @@ static void setIrq(u8 irq, int log_cmd)
 	if ((old ^ new_) & new_)
 		psxHu32ref(0x1070) |= SWAP32((u32)0x4);
 
-#ifdef CDR_LOG_CMD_IRQ
+#ifdef CDR_LOG_CMD
 	if (cdr.IrqStat)
 	{
 		int i;
@@ -424,10 +426,13 @@ static void Find_CurTrack(const u8 *time)
 static void generate_subq(const u8 *time)
 {
 	unsigned char start[3], next[3];
-	unsigned int this_s, start_s, next_s, pregap;
+	int this_s, start_s, next_s, pregap;
 	int relative_s;
 
-	cdra_getTD(cdr.CurTrack, start);
+	if (cdr.CurTrack <= cdr.ResultTN[1])
+		cdra_getTD(cdr.CurTrack, start);
+	else
+		memcpy(start, cdr.SetSectorEnd, 3);
 	if (cdr.CurTrack + 1 <= cdr.ResultTN[1]) {
 		pregap = 150;
 		cdra_getTD(cdr.CurTrack + 1, next);
@@ -444,7 +449,7 @@ static void generate_subq(const u8 *time)
 
 	cdr.TrackChanged = FALSE;
 
-	if (next_s - this_s < pregap) {
+	if (next_s - this_s < pregap && cdr.CurTrack <= cdr.ResultTN[1]) {
 		cdr.TrackChanged = TRUE;
 		cdr.CurTrack++;
 		start_s = next_s;
@@ -461,6 +466,8 @@ static void generate_subq(const u8 *time)
 		&cdr.subq.Relative[1], &cdr.subq.Relative[2]);
 
 	cdr.subq.Track = itob(cdr.CurTrack);
+	if (cdr.CurTrack > cdr.ResultTN[1]) // lead-out
+		cdr.subq.Track = 0xaa;
 	cdr.subq.Relative[0] = itob(cdr.subq.Relative[0]);
 	cdr.subq.Relative[1] = itob(cdr.subq.Relative[1]);
 	cdr.subq.Relative[2] = itob(cdr.subq.Relative[2]);
@@ -473,7 +480,7 @@ static int ReadTrack(const u8 *time)
 {
 	int ret;
 
-	CDR_LOG("ReadTrack *** %02d:%02d:%02d\n", tmp[0], tmp[1], tmp[2]);
+	CDR_LOG("ReadTrack *** %02d:%02d:%02d\n", time[0], time[1], time[2]);
 
 	if (memcmp(cdr.Prev, time, 3) == 0)
 		return 1;
@@ -481,6 +488,9 @@ static int ReadTrack(const u8 *time)
 	ret = cdra_readTrack(time);
 	if (ret == 0)
 		memcpy(cdr.Prev, time, 3);
+	else
+		log_unhandled("ReadTrack %02d:%02d:%02d ret %d\n",
+			time[0], time[1], time[2], ret);
 	return ret == 0;
 }
 
@@ -714,7 +724,7 @@ void cdrPlayReadInterrupt(void)
 	}
 
 	msfiAdd(cdr.SetSectorPlay, 1);
-	cdra_prefetch(cdr.SetSectorPlay[0], cdr.SetSectorPlay[1], cdr.SetSectorPlay[2]);
+	cdra_prefetch(cdr.SetSectorPlay[0], cdr.SetSectorPlay[1], cdr.SetSectorPlay[2], 1);
 
 	// update for CdlGetlocP/autopause
 	generate_subq(cdr.SetSectorPlay);
@@ -855,7 +865,6 @@ void cdrInterrupt(void) {
 			}
 			break;
 
-		do_CdlPlay:
 		case CdlPlay:
 			StopCdda();
 			StopReading();
@@ -1058,7 +1067,8 @@ void cdrInterrupt(void) {
 
 		case CdlSetmode:
 		case CdlSetmode + CMD_WHILE_NOT_READY:
-			CDR_LOG("cdrWrite1() Log: Setmode %x\n", cdr.Param[0]);
+			if ((cdr.Mode ^ cdr.Param[0]) & MODE_BIT4)
+				log_unhandled("cdrom: mode4 changed: %02x\n", cdr.Param[0]);
 			cdr.Mode = cdr.Param[0];
 			break;
 
@@ -1129,7 +1139,7 @@ void cdrInterrupt(void) {
 			memcpy(cdr.SetSectorPlay, cdr.SetSector, 4);
 			cdr.DriveState = DRIVESTATE_SEEK;
 			cdra_prefetch(cdr.SetSectorPlay[0], cdr.SetSectorPlay[1],
-					cdr.SetSectorPlay[2]);
+					cdr.SetSectorPlay[2], 0);
 			/*
 			Crusaders of Might and Magic = 0.5x-4x
 			- fix cutscene speech start
@@ -1165,7 +1175,9 @@ void cdrInterrupt(void) {
 
 		case CdlTest:
 		case CdlTest + CMD_WHILE_NOT_READY:
+			CDR_LOG_I("CdlTest %02x\n", cdr.Param[0]);
 			switch (cdr.Param[0]) {
+				u16 addr;
 				case 0x20: // System Controller ROM Version
 					SetResultSize_(4);
 					memcpy(cdr.Result, Test20, 4);
@@ -1177,6 +1189,17 @@ void cdrInterrupt(void) {
 				case 0x23: case 0x24:
 					SetResultSize_(8);
 					memcpy(cdr.Result, Test23, 4);
+					break;
+				case 0x60:
+					addr = ((u16)cdr.Param[2] << 8) | cdr.Param[1];
+					SetResultSize_(1);
+					cdr.Result[0] = 0;
+					if (addr == 0x050) { // subq ADR/Control
+						cdr.Result[0] = 1;
+						if (cdr_stat.Type == CDRT_DATA)
+							cdr.Result[0] |= 0x40;
+					}
+					CDR_LOG_I("ram read: %04x %02x\n", addr, cdr.Result[0]);
 					break;
 			}
 			break;
@@ -1192,23 +1215,41 @@ void cdrInterrupt(void) {
 			cdr.Result[2] = 0;
 			cdr.Result[3] = 0;
 
-			// 0x10 - audio | 0x40 - disk missing | 0x80 - unlicensed
-			if (cdra_getStatus(&cdr_stat) != 0 || cdr_stat.Type == 0 || cdr_stat.Type == 0xff) {
-				cdr.Result[1] = 0xc0;
+			// [1]: 0x10 - audio | 0x40 - disk missing | 0x80 - unlicensed
+			// [2]: TOC Disk Type Byte (00=CD-DA or CD-ROM, 20=CD-ROM-XA)
+			memset(&cdr_stat, 0, sizeof(cdr_stat));
+			if (cdra_getStatus(&cdr_stat) != 0 ||
+			    cdr_stat.Type == CDRT_UNKNOWN || cdr_stat.Type == 0xff) {
+				cdr.Result[0] = 0x08;
+				cdr.Result[1] = cdr_stat.nodisk ? 0x40 : 0x80;
 			}
 			else {
-				if (cdr_stat.Type == 2)
+				if (cdr_stat.Type == CDRT_CDDA)
 					cdr.Result[1] |= 0x10;
 				if (CdromId[0] == '\0')
 					cdr.Result[1] |= 0x80;
+				else if (!cdr_stat.mode1)
+					cdr.Result[2] = 0x20;
 			}
 			cdr.Result[0] |= (cdr.Result[1] >> 4) & 0x08;
 			CDR_LOG_I("CdlID: %02x %02x %02x %02x\n", cdr.Result[0],
 				cdr.Result[1], cdr.Result[2], cdr.Result[3]);
 
-			/* This adds the string "PCSX" in Playstation bios boot screen */
-			memcpy((char *)&cdr.Result[4], "PCSX", 4);
-			IrqStat = Complete;
+			/* 4-char string in Playstation bios boot screen */
+			if (Config.SlowBoot == 1)
+				memcpy(&cdr.Result[4], "PCSX", 4);
+			else {
+				cdr.Result[4] = 'S';
+				cdr.Result[5] = 'C';
+				cdr.Result[6] = 'E';
+				if (Config.PsxType == PSX_TYPE_PAL)
+					cdr.Result[7] = 'E';
+				else if (CdromId[2] == 'P' || CdromId[2] == 'p')
+					cdr.Result[7] = 'I';
+				else
+					cdr.Result[7] = 'A';
+			}
+			IrqStat = (cdr.Result[0] & 8) ? DiskError : Complete;
 			break;
 
 		case CdlInit:
@@ -1231,6 +1272,13 @@ void cdrInterrupt(void) {
 		case CdlReadToc + CMD_WHILE_NOT_READY:
 			cdr.LocL[0] = LOCL_INVALID;
 			second_resp_time = cdReadTime * 180 / 4;
+			if (!Config.HLE && Config.SlowBoot) {
+				// hack: compensate cdrom being emulated too fast
+				// and bios finishing before the reverb decays
+				second_resp_time += cdReadTime * 75*2;
+				if ((psxRegs.pc >> 28) == 0x0b)
+					second_resp_time += cdReadTime * 75*3;
+			}
 			start_rotating = 1;
 			break;
 
@@ -1246,9 +1294,10 @@ void cdrInterrupt(void) {
 
 			Find_CurTrack(cdr.SetlocPending ? cdr.SetSector : cdr.SetSectorPlay);
 
-			if ((cdr.Mode & MODE_CDDA) && cdr.CurTrack > 1)
-				// Read* acts as play for cdda tracks in cdda mode
-				goto do_CdlPlay;
+			if (cdr_stat.Type != CDRT_DATA && !(cdr.Mode & MODE_CDDA)) {
+				error = ERROR_INVALIDCMD;
+				goto set_error;
+			}
 
 			StopCdda();
 			if (cdr.SetlocPending) {
@@ -1269,7 +1318,7 @@ void cdrInterrupt(void) {
 			cdr.DriveState = DRIVESTATE_SEEK;
 			cdr.PhysCdPropagations = 0;
 			cdra_prefetch(cdr.SetSectorPlay[0], cdr.SetSectorPlay[1],
-					cdr.SetSectorPlay[2]);
+					cdr.SetSectorPlay[2], 0);
 
 			cycles = (cdr.Mode & MODE_SPEED) ? cdReadTime : cdReadTime * 2;
 			cycles += seekTime;
@@ -1432,9 +1481,10 @@ static void cdrReadInterrupt(void)
 
 	if ((cdr.Mode & MODE_SF) && (subhdr->mode & 0x44) == 0x44) // according to nocash
 		deliver_data = 0;
-	if (buf[3] != 1 && buf[3] != 2) { // according to duckstation
-		deliver_data = 0;
-		CDR_LOG_I("%x:%02x:%02x mode %02x ignored\n",
+	if (!(cdr.Mode & MODE_SIZE_2340) && buf[3] != 1 && buf[3] != 2) {
+		deliver_data = 0; // according to duckstation
+		CDR_LOG_I("%d:%02d:%02d msf %x:%02x:%02x mode %02x ignored\n",
+			cdr.SetSectorPlay[0], cdr.SetSectorPlay[1], cdr.SetSectorPlay[2],
 			buf[0], buf[1], buf[2], buf[3]);
 	}
 
@@ -1448,7 +1498,7 @@ static void cdrReadInterrupt(void)
 		cdrReadInterruptSetResult(cdr.StatP);
 
 	msfiAdd(cdr.SetSectorPlay, 1);
-	cdra_prefetch(cdr.SetSectorPlay[0], cdr.SetSectorPlay[1], cdr.SetSectorPlay[2]);
+	cdra_prefetch(cdr.SetSectorPlay[0], cdr.SetSectorPlay[1], cdr.SetSectorPlay[2], 0);
 
 	CDRPLAYREAD_INT((cdr.Mode & MODE_SPEED) ? (cdReadTime / 2) : cdReadTime, 0);
 }
@@ -1511,7 +1561,7 @@ void cdrWrite1(unsigned char rt) {
 		return;
 	}
 
-#ifdef CDR_LOG_CMD_IRQ
+#ifdef CDR_LOG_CMD
 	CDR_LOG_I("CD1 write: %x (%s)", rt, CmdName[rt]);
 	if (cdr.ParamC) {
 		int i;
@@ -1599,7 +1649,7 @@ void cdrWrite3(unsigned char rt) {
 			u32 nextCycle = psxRegs.intCycle[PSXINT_CDR].sCycle
 				+ psxRegs.intCycle[PSXINT_CDR].cycle;
 			int pending = psxRegs.interrupt & (1 << PSXINT_CDR);
-#ifdef CDR_LOG_CMD_IRQ
+#ifdef CDR_LOG_CMD_ACK
 			CDR_LOG_I("ack %02x (w=%02x p=%d,%x,%x,%d)\n",
 				cdr.IrqStat & rt, rt, !!pending, cdr.CmdInProgress,
 				cdr.Irq1Pending, nextCycle - psxRegs.cycle);
@@ -1750,6 +1800,7 @@ static void getCdInfo(void)
 {
 	cdra_getTN(cdr.ResultTN);
 	cdra_getTD(0, cdr.SetSectorEnd);
+	cdra_getStatus(&cdr_stat);
 }
 
 void cdrReset() {

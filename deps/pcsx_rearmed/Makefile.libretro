@@ -1,11 +1,13 @@
 # Makefile for PCSX ReARMed (libretro)
 
 DEBUG ?= 0
-WANT_ZLIB ?= 1
+USE_MINIZ ?= 1
 HAVE_CHD ?= 1
 HAVE_PHYSICAL_CDROM ?= 1
 USE_ASYNC_CDROM ?= 1
-USE_LIBRETRO_VFS ?= 0
+USE_ASYNC_GPU ?= 1
+USE_ASYNC_SPU ?= 1
+USE_LIBRETRO_VFS ?= 1
 NDRC_THREAD ?= 1
 GNU_LINKER ?= 1
 
@@ -114,12 +116,12 @@ DUMMY := $(shell git config --global --add safe.directory /builds/libretro/pcsx_
 endif
 
 TARGET_NAME := pcsx_rearmed
-ARCH_DETECTED := $(shell $(CC) $(CFLAGS) -dumpmachine | awk -F- '{print $$1}')
+ARCH_DETECTED := $(shell $(firstword $(CC)) -dumpmachine $(CFLAGS) | awk -F- '{print $$1}')
 GIT_VERSION := " $(shell git rev-parse --short HEAD || echo unknown)"
 ifneq ($(GIT_VERSION)," unknown")
 	CFLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
 endif
-ifneq ($(WANT_ZLIB),1)
+ifneq ($(USE_MINIZ),1)
 LIBZ := -lz
 endif
 LIBPTHREAD := -lpthread
@@ -155,7 +157,6 @@ endif
 ifeq ($(platform), unix)
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
-	THREAD_RENDERING = 1
 ifeq ($(shell uname),Linux)
 	LIGHTREC_CUSTOM_MAP := 1
 endif
@@ -166,7 +167,6 @@ else ifneq (,$(findstring CortexA73_G12B,$(platform)))
 	fpic := -fPIC
 	ARCH = arm64
 	BUILTIN_GPU = neon
-	HAVE_NEON = 1
 	DYNAREC = ari64
 	CFLAGS += -fomit-frame-pointer -ffast-math -DARM
 	CFLAGS += -march=armv8-a+crc -mcpu=cortex-a73 -mtune=cortex-a73.cortex-a53
@@ -177,7 +177,6 @@ else ifneq (,$(findstring h5,$(platform)))
 	fpic := -fPIC
 	ARCH = arm64
 	BUILTIN_GPU = neon
-	HAVE_NEON = 1
 	DYNAREC = ari64
 	CFLAGS += -fomit-frame-pointer -ffast-math -DARM
 	CFLAGS += -march=armv8-a+crc -mcpu=cortex-a53 -mtune=cortex-a53
@@ -229,18 +228,16 @@ endif
 ifeq ($(platform),ios-arm64)
 	ARCH := arm64
 	BUILTIN_GPU = neon
-	HAVE_NEON = 1
 	DYNAREC = 0
 else
 	ARCH := arm
-	HAVE_NEON = 1
 	HAVE_NEON_ASM = 1
 	BUILTIN_GPU = neon
 	CFLAGS += -marm -mcpu=cortex-a8 -mtune=cortex-a8 -mfpu=neon
 	ASFLAGS += -marm -mcpu=cortex-a8 -mtune=cortex-a8 -mfpu=neon
+	CC_AS = perl ./tools/gas-preprocessor.pl $(CC)
 endif
 	HAVE_PHYSICAL_CDROM = 0
-	CC_AS = perl ./tools/gas-preprocessor.pl $(CC)
 ifeq ($(platform),$(filter $(platform),ios9 ios-arm64))
 	MINVERSION = -miphoneos-version-min=8.0
 else
@@ -266,10 +263,8 @@ endif
 	CFLAGS += -DIOS -DTVOS
 	ARCH := arm64
 	BUILTIN_GPU = neon
-	HAVE_NEON = 1
 	DYNAREC = 0
 	HAVE_PHYSICAL_CDROM = 0
-	CC_AS = perl ./tools/gas-preprocessor.pl $(CC)
 	MINVERSION = -mappletvos-version-min=11.0
 	CFLAGS += $(MINVERSION)
 	FSECTIONS_LDFLAGS = -Wl,-dead_strip
@@ -287,13 +282,10 @@ else ifeq ($(platform), libnx)
    CFLAGS += -ftree-vectorize
    CFLAGS += -Ifrontend/switch
    NO_POSIX_MEMALIGN := 1
-   NO_PTHREAD=1
    NO_MMAP := 1 # for psxmem
    LIBPTHREAD :=
-   WANT_ZLIB = 0
    PARTIAL_LINKING = 1
    BUILTIN_GPU = neon
-   HAVE_NEON = 1
    DYNAREC = ari64
    HAVE_PHYSICAL_CDROM = 0
 
@@ -302,7 +294,6 @@ else ifeq ($(platform), arm64)
    TARGET := $(TARGET_NAME)_libretro.so
    ARCH := arm64
    BUILTIN_GPU = neon
-   HAVE_NEON = 1
    DYNAREC = ari64
    HAVE_PHYSICAL_CDROM = 0
    fpic := -fPIC
@@ -317,18 +308,21 @@ else ifeq ($(platform), psl1ght)
 	NO_UNDEF_CHECK := 1
 	STATIC_LINKING := 1
 	NO_MMAP := 1
-	NO_PTHREAD := 1
 	LIBPTHREAD :=
 	LIBDL :=
 	NEED_SYSCONF := 1
 	HAVE_PHYSICAL_CDROM = 0
 	USE_ASYNC_CDROM = 0
+	USE_ASYNC_GPU = 0
+	USE_ASYNC_SPU = 0
+	USE_LIBRETRO_VFS = 0
 
 # PSP
 else ifeq ($(platform), psp1)
 	TARGET := $(TARGET_NAME)_libretro_psp1.a
 	CFLAGS += -DPSP -G0
 	HAVE_PHYSICAL_CDROM = 0
+	USE_LIBRETRO_VFS = 0
 
 # Vita
 else ifeq ($(platform), vita)
@@ -341,10 +335,8 @@ else ifeq ($(platform), vita)
 	CFLAGS += -fno-optimize-sibling-calls # broken arm->thumb tailcalls?
 	CFLAGS += -I$(VITASDK)/include -Ifrontend/vita
 	CFLAGS += -DNO_DYLIB
-	CFLAGS_LAST += -O3
 	ASFLAGS += -mcpu=cortex-a9 -mtune=cortex-a9 -mfpu=neon
 
-	HAVE_NEON = 1
 	HAVE_NEON_ASM = 1
 	BUILTIN_GPU = neon
 
@@ -368,7 +360,6 @@ else ifeq ($(platform), ctr)
 	CFLAGS += -march=armv6k -mtune=mpcore -mfloat-abi=hard -marm -mfpu=vfp -mtp=soft
 	CFLAGS += -mword-relocations
 	CFLAGS += -fomit-frame-pointer
-	CFLAGS_LAST += -O3
 	# CFLAGS += -funroll-loops # ~500K of bloat
 	CFLAGS += -Ifrontend/3ds -I$(CTRULIB)/include
 	CFLAGS += -Werror=implicit-function-declaration
@@ -383,12 +374,9 @@ else ifeq ($(platform), ctr)
 	OBJS += frontend/3ds/utils.o
 
 	BUILTIN_GPU = unai
-	THREAD_RENDERING = 1
 	DYNAREC = ari64
 	ARCH = arm
-	HAVE_NEON = 0
 	PARTIAL_LINKING = 1
-	WANT_ZLIB = 0
 	NO_POSIX_MEMALIGN := 1
 	NO_MMAP := 1 # for psxmem
 	HAVE_PHYSICAL_CDROM = 0
@@ -424,8 +412,6 @@ else ifneq (,$(filter $(platform),ngc wii wiiu))
 	CFLAGS += -DGEKKO -mcpu=750 -meabi -mhard-float
 	CFLAGS += -DNO_DYLIB
 	STATIC_LINKING := 1
-	THREAD_RENDERING := 0
-	NO_PTHREAD := 1
 	NO_MMAP := 1
 	NO_POSIX_MEMALIGN := 1
 	LIBDL :=
@@ -433,12 +419,14 @@ else ifneq (,$(filter $(platform),ngc wii wiiu))
 	LIBRT :=
 	HAVE_PHYSICAL_CDROM = 0
 	USE_ASYNC_CDROM = 0
+	USE_ASYNC_GPU = 0
+	USE_ASYNC_SPU = 0
+	USE_LIBRETRO_VFS = 0
 
 # QNX
 else ifeq ($(platform), qnx)
 	TARGET := $(TARGET_NAME)_libretro_qnx.so
 	fpic := -fPIC
-	HAVE_NEON = 1
 	HAVE_NEON_ASM = 1
 	DYNAREC = ari64
 	BUILTIN_GPU = neon
@@ -450,6 +438,7 @@ else ifeq ($(platform), qnx)
 	LIBDL :=
 	LIBM :=
 	HAVE_PHYSICAL_CDROM = 0
+	USE_LIBRETRO_VFS = 0
 
 #Raspberry Pi 1
 else ifeq ($(platform), rpi1)
@@ -457,7 +446,6 @@ else ifeq ($(platform), rpi1)
 	fpic := -fPIC
 	CFLAGS += -marm -mcpu=arm1176jzf-s -mfpu=vfp -mfloat-abi=hard
 	ASFLAGS += -mcpu=arm1176jzf-s -mfpu=vfp -mfloat-abi=hard
-	HAVE_NEON = 0
 	ARCH = arm
 	BUILTIN_GPU = unai
 	DYNAREC = ari64
@@ -468,7 +456,6 @@ else ifeq ($(platform), rpi2)
 	fpic := -fPIC
 	CFLAGS += -marm -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
 	ASFLAGS += -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
-	HAVE_NEON = 1
 	HAVE_NEON_ASM = 1
 	ARCH = arm
 	BUILTIN_GPU = neon
@@ -480,7 +467,6 @@ else ifeq ($(platform), rpi3)
 	fpic := -fPIC
 	CFLAGS += -marm -mcpu=cortex-a53 -mfpu=neon-fp-armv8 -mfloat-abi=hard
 	ASFLAGS += -mcpu=cortex-a53 -mfpu=neon-fp-armv8 -mfloat-abi=hard
-	HAVE_NEON = 1
 	HAVE_NEON_ASM = 1
 	ARCH = arm
 	BUILTIN_GPU = neon
@@ -491,7 +477,6 @@ else ifeq ($(platform), rpi3_64)
 	TARGET := $(TARGET_NAME)_libretro.so
 	ARCH := arm64
 	BUILTIN_GPU = neon
-	HAVE_NEON = 1
 	DYNAREC = ari64
 	fpic := -fPIC
 	CFLAGS += -march=armv8-a+crc+simd -mtune=cortex-a53 -ftree-vectorize
@@ -502,7 +487,6 @@ else ifeq ($(platform), rpi4)
 	fpic := -fPIC
 	CFLAGS += -marm -mcpu=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard
 	ASFLAGS += -mcpu=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard
-	HAVE_NEON = 1
 	HAVE_NEON_ASM = 1
 	ARCH = arm
 	BUILTIN_GPU = neon
@@ -513,7 +497,6 @@ else ifeq ($(platform), rpi4_64)
         TARGET := $(TARGET_NAME)_libretro.so
         ARCH := arm64
         BUILTIN_GPU = neon
-        HAVE_NEON = 1
         DYNAREC = ari64
         fpic := -fPIC
         CFLAGS += -march=armv8-a+crc+simd -mtune=cortex-a72 -ftree-vectorize
@@ -537,7 +520,6 @@ else ifeq ($(platform), classic_armv7_a7)
 	CXXFLAGS += $(CFLAGS)
 	CPPFLAGS += $(CFLAGS)
 	ASFLAGS += $(CFLAGS)
-	HAVE_NEON = 1
 	HAVE_NEON_ASM = 1
 	ARCH = arm
 	BUILTIN_GPU = neon
@@ -551,6 +533,7 @@ else ifeq ($(platform), classic_armv7_a7)
 			LDFLAGS += -static-libgcc -static-libstdc++
 		endif
 	endif
+	USE_LIBRETRO_VFS = 0
 
 # (armv8 a35, hard point, neon based) ###
 # PlayStation Classic
@@ -561,12 +544,12 @@ else ifeq ($(platform), classic_armv8_a35)
 	-fmerge-all-constants -fno-math-errno \
 	-fno-stack-protector -fomit-frame-pointer \
 	-marm -mcpu=cortex-a35 -mtune=cortex-a35 -mfpu=neon-fp-armv8 -mfloat-abi=hard
-	HAVE_NEON = 1
 	HAVE_NEON_ASM = 1
 	ARCH = arm
 	BUILTIN_GPU = neon
 	DYNAREC = ari64
 	LDFLAGS += -static-libgcc -static-libstdc++ -fPIC
+	USE_LIBRETRO_VFS = 0
 
 #######################################
 
@@ -574,7 +557,6 @@ else ifeq ($(platform), classic_armv8_a35)
 else ifneq (,$(findstring armv,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
-	HAVE_NEON = 0
 	BUILTIN_GPU = peops
 	ifneq (,$(findstring cortexa8,$(platform)))
 		CFLAGS += -mcpu=cortex-a8
@@ -591,7 +573,6 @@ else ifneq (,$(findstring armv,$(platform)))
 	ifneq (,$(findstring neon,$(platform)))
 		CFLAGS += -mfpu=neon
 		ASFLAGS += -mfpu=neon
-		HAVE_NEON = 1
 		HAVE_NEON_ASM = 1
 		BUILTIN_GPU = neon
 	endif
@@ -613,37 +594,31 @@ else ifeq ($(platform), miyoo)
 	ARCH = arm
 	BUILTIN_GPU = unai
 	DYNAREC = ari64
-	HAVE_NEON = 0
 
 # Emscripten
 else ifeq ($(platform), emscripten)
    TARGET  := $(TARGET_NAME)_libretro_$(platform).bc
-   pthread ?= 0
    fpic    := -fPIC
    NO_MMAP = 1
-   # we can use -lz for emscripten's built-in zlib port
-   WANT_ZLIB=0
+   # use emscripten's built-in zlib port instead of miniz, it has to be requested
+   # explicitly with -sUSE_ZLIB=1 (just like RetroArch's Makefile.emscripten does)
+   USE_MINIZ = 0
+   CFLAGS += -sUSE_ZLIB=1
+   EXTRA_LDFLAGS += -sUSE_ZLIB=1
+   CFLAGS_OPT = -O2
    CFLAGS += -DNO_DYLIB -DNO_SOCKET
    CFLAGS += -msimd128 -ftree-vectorize
-   # when compiling with pthreads...
-   ifneq ($(pthread), 0)
-      # use -lpthread
-      LIBPTHREAD := -lpthread
-      NO_PTHREAD=0
-      # but we don't want to include libretro-common's rthread object files here
-      USE_RTHREADS=0
-      USE_ASYNC_CDROM=0
-      # so we disable some uses of threads within pcsx_rearmed.
-      # is this a good solution? I don't know!
-   else
-      LIBPTHREAD :=
-      USE_RTHREADS=0
-      USE_ASYNC_CDROM=0
-      NO_PTHREAD=1
-   endif
+   LIBPTHREAD :=
+   BUILTIN_GPU = neon
+   USE_RTHREADS=0
+   USE_ASYNC_CDROM=0
+   USE_ASYNC_GPU=0
+   USE_ASYNC_SPU=0
    DYNAREC =
    STATIC_LINKING = 1
    HAVE_PHYSICAL_CDROM = 0
+   USE_LIBRETRO_VFS = 0
+   plugins/gpu_neon/psx_gpu/psx_gpu_simd.o: CFLAGS += -msse4.2
 
 # Windows
 else
@@ -655,12 +630,12 @@ ifneq ($(DEBUG),1)
 endif
 	CFLAGS += -D__WIN32__ -DNO_DYLIB
 	MMAP_WIN32=1
-	NO_PTHREAD=1
 	MAIN_LDLIBS += -lws2_32
 	LIBPTHREAD :=
 	LIBDL :=
 	LIBM :=
 	USE_LIBRETRO_VFS = 1
+	USE_ASYNC_SPU = 0 # uses posix semaphore.h
 endif
 
 CFLAGS += $(fpic)
@@ -711,6 +686,9 @@ $(info platform:    $(platform))
 $(info ARCH:        $(ARCH))
 $(info DYNAREC:     $(DYNAREC))
 $(info BUILTIN_GPU: $(BUILTIN_GPU))
+ifeq ($(ARCH),arm)
+$(info NEON_ASM:    $(if $(HAVE_NEON_ASM),$(HAVE_NEON_ASM),no))
+endif
 $(info CC:          $(CC) : $(shell $(CC) --version | head -1))
 $(info CFLAGS:      $(CFLAGS))
 $(info MAIN_LDLIBS: $(MAIN_LDLIBS))

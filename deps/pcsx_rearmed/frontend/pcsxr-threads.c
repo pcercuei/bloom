@@ -6,22 +6,25 @@
 #include <3ds/os.h>
 #include <3ds/services/apt.h>
 #include <sys/time.h>
+#include "../libpcsxcore/new_dynarec/new_dynarec.h"
+static bool is_new_3ds;
 #endif
+#include "pcsxr-threads.h"
 
-#include "../deps/libretro-common/rthreads/rthreads.c"
-#include "features/features_cpu.h"
-#include "libretro-rthreads.h"
+int pcsxr_sthread_core_count;
 
 // pcsxr "extensions"
 extern void SysPrintf(const char *fmt, ...);
 
-#ifdef _3DS
-static bool is_new_3ds;
-#endif
+#ifndef USE_C11_THREADS
 
-void pcsxr_sthread_init(void)
+#include "../deps/libretro-common/rthreads/rthreads.c"
+#include "features/features_cpu.h"
+
+#define CORE_COUNT() cpu_features_get_core_amount()
+
+static void pcsxr_sthread_lib_init(void)
 {
-	SysPrintf("%d cpu core(s) detected\n", cpu_features_get_core_amount());
 #ifdef _3DS
 	int64_t version = 0;
 	int fpscr = -1;
@@ -45,6 +48,7 @@ sthread_t *pcsxr_sthread_create(void (*thread_func)(void *),
 {
 	sthread_t *h = NULL;
 #ifdef _3DS
+	size_t stack_size = 64*1024;
 	Thread ctr_thread;
 	int core_id = 0;
 	s32 prio = 0x30;
@@ -61,6 +65,8 @@ sthread_t *pcsxr_sthread_create(void (*thread_func)(void *),
 		core_id = 1;
 		break;
 	case PCSXRT_DRC:
+		stack_size = new_dynarec_estimate_stack_size();
+		// fallthrough
 	case PCSXRT_GPU:
 		core_id = is_new_3ds ? 2 : 1;
 		break;
@@ -68,18 +74,19 @@ sthread_t *pcsxr_sthread_create(void (*thread_func)(void *),
 		break;
 	}
 
-	ctr_thread = threadCreate(thread_func, NULL, STACKSIZE, prio, core_id, false);
+	ctr_thread = threadCreate(thread_func, NULL, stack_size, prio, core_id, false);
 	if (!ctr_thread) {
 		if (core_id == 1) {
 			SysPrintf("threadCreate pcsxt %d core %d failed\n",
 				type, core_id);
 			core_id = is_new_3ds ? 2 : -1;
-			ctr_thread = threadCreate(thread_func, NULL, STACKSIZE,
+			ctr_thread = threadCreate(thread_func, NULL, stack_size,
 				prio, core_id, false);
 		}
 	}
+	SysPrintf("threadCreate: pcsxt %d core %d stack %zd: %p\n",
+		type, core_id, stack_size, ctr_thread);
 	if (!ctr_thread) {
-		SysPrintf("threadCreate pcsxt %d core %d failed\n", type, core_id);
 		free(h);
 		return NULL;
 	}
@@ -98,4 +105,22 @@ sthread_t *pcsxr_sthread_create(void (*thread_func)(void *),
  #endif
 #endif
 	return h;
+}
+
+#else // USE_C11_THREADS
+
+#include <unistd.h>
+#define CORE_COUNT() sysconf(_SC_NPROCESSORS_ONLN)
+#define pcsxr_sthread_lib_init()
+
+#endif
+
+void pcsxr_sthread_init(void)
+{
+	pcsxr_sthread_core_count = CORE_COUNT();
+	if (pcsxr_sthread_core_count < 1)
+		pcsxr_sthread_core_count = 1;
+	SysPrintf("%d cpu core(s) detected\n", pcsxr_sthread_core_count);
+
+	pcsxr_sthread_lib_init();
 }

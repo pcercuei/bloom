@@ -17,6 +17,7 @@
 #include <dc/video.h>
 #include <dc/vmu_fb.h>
 
+#include <assert.h>
 #include <stdint.h>
 #include <sys/time.h>
 

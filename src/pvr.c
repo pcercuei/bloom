@@ -23,22 +23,6 @@
 #include "emu.h"
 #include "pvr.h"
 
-#if ENABLE_THREADED_RENDERER
-#include "../deps/pcsx_rearmed/plugins/gpulib/gpulib_thread_if.h"
-#define do_cmd_list real_do_cmd_list
-#define renderer_init real_renderer_init
-#define renderer_finish real_renderer_finish
-#define renderer_sync_ecmds real_renderer_sync_ecmds
-#define renderer_update_caches real_renderer_update_caches
-#define renderer_flush_queues real_renderer_flush_queues
-#define renderer_set_interlace real_renderer_set_interlace
-#define renderer_set_config real_renderer_set_config
-#define renderer_notify_res_change real_renderer_notify_res_change
-#define renderer_notify_update_lace real_renderer_notify_update_lace
-#define renderer_sync real_renderer_sync
-#define ex_regs scratch_ex_regs
-#endif
-
 #define FRAME_WIDTH 1024
 #define FRAME_HEIGHT 512
 
@@ -446,7 +430,7 @@ int renderer_init(void)
 void renderer_sync_ecmds(uint32_t *ecmds)
 {
 	int dummy;
-	do_cmd_list(&ecmds[1], 6, &dummy, &dummy, &dummy);
+	renderer_do_cmd_list(&ecmds[1], 6, ecmds, &dummy, &dummy, &dummy);
 }
 
 static inline struct texture_page_4bpp *
@@ -1050,22 +1034,15 @@ void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 	pvr_update_caches(x, y, w, h, false);
 }
 
-void renderer_sync(void)
+void renderer_notify_screen_change(const struct psx_gpu_screen *screen)
 {
+	pvr.view_x = screen->src_x;
+	pvr.view_y = screen->src_y;
 }
 
-void renderer_notify_res_change(void)
+void renderer_set_interlace(int enable, int is_odd)
 {
-}
-
-void renderer_notify_scanout_change(int x, int y)
-{
-	pvr.view_x = x;
-	pvr.view_y = y;
-}
-
-void renderer_notify_update_lace(int updated)
-{
+	renderer_notify_screen_change(&gpu.screen);
 }
 
 void renderer_set_config(const struct rearmed_cbs *cbs)
@@ -2825,8 +2802,8 @@ static void process_gpu_commands(void)
 	pvr.cmdbuf_offt = 0;
 }
 
-int do_cmd_list(uint32_t *list, int list_len,
-		int *cycles_sum_out, int *cycles_last, int *last_cmd)
+int renderer_do_cmd_list(uint32_t *list, int list_len, uint32_t *ex_regs,
+			 int *cycles_sum_out, int *cycles_last, int *last_cmd)
 {
 	bool multicolor, multiple, textured;
 	int cpu_cycles_sum = 0, cpu_cycles = *cycles_last;
@@ -2899,7 +2876,7 @@ int do_cmd_list(uint32_t *list, int list_len,
 		case 0x7:
 			if (cmd == 0xe1)
 				pvr.new_gp1 = (pvr.new_gp1 & ~0x7ff) | (pbuffer->U4[0] & 0x7ff);
-			gpu.ex_regs[cmd & 0x7] = *(unsigned int *)pbuffer;
+			ex_regs[cmd & 0x7] = *(unsigned int *)pbuffer;
 			break;
 
 		case 4:
@@ -2955,8 +2932,8 @@ int do_cmd_list(uint32_t *list, int list_len,
 	}
 
 out:
-	gpu.ex_regs[1] &= ~0x1ff;
-	gpu.ex_regs[1] |= pvr.new_gp1 & 0x1ff;
+	ex_regs[1] &= ~0x1ff;
+	ex_regs[1] |= pvr.new_gp1 & 0x1ff;
 
 	*cycles_sum_out += cpu_cycles_sum;
 	*cycles_last = cpu_cycles;

@@ -11,6 +11,8 @@
 
 #include <psemu_plugin_defs.h>
 
+struct GPUFreeze;
+
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 struct sym {
@@ -39,10 +41,10 @@ unsigned long GPUreadStatus(void);
 unsigned long GPUreadData(void);
 void GPUreadDataMem(unsigned long *, int);
 long GPUdmaChain(uint32_t *,uint32_t, uint32_t *, int32_t *);
-void GPUupdateLace(void);
 void GPUdisplayText(char *);
-long GPUfreeze(unsigned long,void *);
+long GPUfreeze(uint32_t type, struct GPUFreeze *freeze, uint16_t **vram_ptr);
 void GPUrearmedCallbacks(const void **cbs);
+void GPUvBlank(int is_vblank, int lcf);
 
 
 /* DFSound Plugin */
@@ -61,7 +63,6 @@ unsigned short CALLBACK SPUreadRegister(unsigned long reg, unsigned int cycles);
 void CALLBACK SPUwriteRegister(unsigned long reg, unsigned short val, unsigned int cycles);
 long CALLBACK SPUopen(void);
 long CALLBACK SPUclose(void);
-long CALLBACK SPUfreeze(uint32_t ulFreezeMode, void * pF, uint32_t cycles);
 void CALLBACK SPUsetCDvol(unsigned char ll, unsigned char lr,
 			  unsigned char rl, unsigned char rr, unsigned int cycle);
 
@@ -75,7 +76,6 @@ static const struct sym spu_syms[] = {
 	BIND_SYM(SPUwriteDMAMem),
 	BIND_SYM(SPUreadDMAMem),
 	BIND_SYM(SPUplayADPCMchannel),
-	BIND_SYM(SPUfreeze),
 	BIND_SYM(SPUsetCDvol),
 	BIND_SYM(SPUregisterCallback),
 	BIND_SYM(SPUregisterCDDAVolume),
@@ -97,8 +97,8 @@ static const struct sym gpu_syms[] = {
 	BIND_SYM(GPUreadDataMem),
 	BIND_SYM(GPUdmaChain),
 	BIND_SYM(GPUfreeze),
-	BIND_SYM(GPUupdateLace),
 	BIND_SYM(GPUrearmedCallbacks),
+	BIND_SYM(GPUvBlank),
 };
 
 static const struct sym_table plugin_table[] = {

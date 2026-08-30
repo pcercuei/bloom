@@ -11,11 +11,24 @@ HAVE_CHD ?= 1
 ifneq ($(DEBUG)$(DEBUG_SYMS), 00)
 CFLAGS += -ggdb
 endif
+ifeq ($(CFLAGS_OPT),)
+ifneq ($(shell $(CC) -E -dD $(CFLAGS) include/arm_features.h | grep -q '__clang__' && echo 1),)
+CFLAGS_OPT ?= -O3
+else
+CFLAGS_OPT ?= -Ofast
+endif
+endif
 ifneq ($(DEBUG), 1)
-CFLAGS += -O3
+CFLAGS += $(CFLAGS_OPT)
 ifneq ($(ASSERTS), 1)
 CFLAGS += -DNDEBUG
 endif
+endif
+ifeq ($(LOG_UNHANDLED), 1)
+CFLAGS += -DLOG_UNHANDLED
+endif
+ifndef NO_AUTODEPS
+AUTODEPFLAGS += -MMD -MP
 endif
 ifeq ($(DEBUG_ASAN), 1)
 CFLAGS += -fsanitize=address
@@ -68,7 +81,6 @@ LDFLAGS += $(FSECTIONS_LDFLAGS)
 endif
 endif # NO_FSECTIONS
 CFLAGS += -DP_HAVE_MMAP=$(if $(NO_MMAP),0,1) \
-	  -DP_HAVE_PTHREAD=$(if $(NO_PTHREAD),0,1) \
 	  -DP_HAVE_POSIX_MEMALIGN=$(if $(NO_POSIX_MEMALIGN),0,1) \
 	  -DDISABLE_MEM_LUTS=0
 CXXFLAGS += $(CFLAGS)
@@ -81,36 +93,21 @@ OBJS += libpcsxcore/cdriso.o libpcsxcore/cdrom.o libpcsxcore/cdrom-async.o \
 	libpcsxcore/psxcommon.o libpcsxcore/psxcounters.o libpcsxcore/psxdma.o \
 	libpcsxcore/psxhw.o libpcsxcore/psxinterpreter.o libpcsxcore/psxmem.o \
 	libpcsxcore/psxevents.o libpcsxcore/r3000a.o \
-	libpcsxcore/sio.o libpcsxcore/spu.o libpcsxcore/gpu.o
+	libpcsxcore/sio.o libpcsxcore/spu.o libpcsxcore/gpu.o \
+	libpcsxcore/pad.o
 OBJS += libpcsxcore/gte.o libpcsxcore/gte_nf.o libpcsxcore/gte_divider.o
 #OBJS += libpcsxcore/debug.o libpcsxcore/socket.o libpcsxcore/disr3000a.o
 
-ifeq ($(WANT_ZLIB),1)
-ZLIB_DIR = deps/libchdr/deps/zlib-1.3.1
-CFLAGS += -I$(ZLIB_DIR)
-OBJS += $(ZLIB_DIR)/adler32.o \
-        $(ZLIB_DIR)/compress.o \
-        $(ZLIB_DIR)/crc32.o \
-        $(ZLIB_DIR)/deflate.o \
-        $(ZLIB_DIR)/gzclose.o \
-        $(ZLIB_DIR)/gzlib.o \
-        $(ZLIB_DIR)/gzread.o \
-        $(ZLIB_DIR)/gzwrite.o \
-        $(ZLIB_DIR)/infback.o \
-        $(ZLIB_DIR)/inffast.o \
-        $(ZLIB_DIR)/inflate.o \
-        $(ZLIB_DIR)/inftrees.o \
-        $(ZLIB_DIR)/trees.o \
-        $(ZLIB_DIR)/uncompr.o \
-        $(ZLIB_DIR)/zutil.o
-$(ZLIB_DIR)/%.o: CFLAGS += -DHAVE_UNISTD_H
-endif
-
 ifeq "$(ARCH)" "arm"
 OBJS += libpcsxcore/gte_arm.o
+OBJS += libpcsxcore/gte_nf_arm.o
+else ifneq (,$(filter $(ARCH),aarch64 arm64))
+OBJS += libpcsxcore/gte_arm64.o
+OBJS += libpcsxcore/gte_nf_arm64.o
 endif
 ifeq "$(HAVE_NEON_ASM)" "1"
 OBJS += libpcsxcore/gte_neon.o
+OBJS += libpcsxcore/gte_nf_neon.o
 endif
 libpcsxcore/psxbios.o: CFLAGS += -Wno-nonnull
 
@@ -122,6 +119,16 @@ ifeq "$(USE_ASYNC_CDROM)" "1"
 libpcsxcore/cdrom-async.o: CFLAGS += -DUSE_ASYNC_CDROM
 frontend/libretro.o: CFLAGS += -DUSE_ASYNC_CDROM
 frontend/menu.o: CFLAGS += -DUSE_ASYNC_CDROM
+USE_RTHREADS := 1
+endif
+ifeq "$(USE_ASYNC_GPU)" "1"
+frontend/libretro.o: CFLAGS += -DUSE_ASYNC_GPU
+frontend/menu.o: CFLAGS += -DUSE_ASYNC_GPU
+USE_RTHREADS := 1
+endif
+ifeq "$(USE_ASYNC_SPU)" "1"
+frontend/libretro.o: CFLAGS += -DUSE_ASYNC_SPU
+frontend/menu.o: CFLAGS += -DUSE_ASYNC_SPU
 USE_RTHREADS := 1
 endif
 
@@ -184,14 +191,15 @@ deps/lightning/lib/lightning.o: CFLAGS += -Dmprotect=_mprotect # deps/mman
 deps/lightning/lib/jit_print.o: CFLAGS += -w
 endif
 else ifeq "$(DYNAREC)" "ari64"
-OBJS += libpcsxcore/new_dynarec/new_dynarec.o
-OBJS += libpcsxcore/new_dynarec/pcsxmem.o
+ OBJS += libpcsxcore/new_dynarec/new_dynarec.o
+ OBJS += libpcsxcore/new_dynarec/pcsxmem.o
+ ifneq ($(DEBUG), 1)
+ libpcsxcore/new_dynarec/new_dynarec.o: CFLAGS += -O2 # less bloat
+ endif
  ifeq "$(ARCH)" "arm"
  OBJS += libpcsxcore/new_dynarec/linkage_arm.o
- libpcsxcore/new_dynarec/new_dynarec.o: libpcsxcore/new_dynarec/assem_arm.c
- else ifneq (,$(findstring $(ARCH),aarch64 arm64))
+ else ifneq (,$(filter $(ARCH),aarch64 arm64))
  OBJS += libpcsxcore/new_dynarec/linkage_arm64.o
- libpcsxcore/new_dynarec/new_dynarec.o: libpcsxcore/new_dynarec/assem_arm64.c
  else
  $(error no dynarec support for architecture $(ARCH))
  endif
@@ -205,7 +213,6 @@ else
 CFLAGS += -DDRC_DISABLE
 endif
 OBJS += libpcsxcore/new_dynarec/emu_if.o
-libpcsxcore/new_dynarec/new_dynarec.o: libpcsxcore/new_dynarec/pcsxmem_inline.c
 ifdef DRC_DBG
 libpcsxcore/new_dynarec/emu_if.o: CFLAGS += -D_FILE_OFFSET_BITS=64
 CFLAGS += -DDRC_DBG
@@ -218,15 +225,15 @@ endif
 OBJS += plugins/dfsound/dma.o plugins/dfsound/freeze.o \
 	plugins/dfsound/registers.o plugins/dfsound/spu.o \
 	plugins/dfsound/out.o plugins/dfsound/nullsnd.o
-plugins/dfsound/spu.o: plugins/dfsound/adsr.c plugins/dfsound/reverb.c \
-	plugins/dfsound/xa.c
 ifeq "$(ARCH)" "arm"
 OBJS += plugins/dfsound/arm_utils.o
 endif
 ifeq "$(HAVE_C64_TOOLS)" "1"
 plugins/dfsound/%.o: CFLAGS += -DC64X_DSP -DWANT_THREAD_CODE
-plugins/dfsound/spu.o: plugins/dfsound/spu_c64x.c
 frontend/menu.o: CFLAGS += -DC64X_DSP
+endif
+ifeq "$(USE_ASYNC_SPU)" "1"
+plugins/dfsound/%.o: CFLAGS += -DUSE_ASYNC_SPU
 endif
 ifneq ($(findstring oss,$(SOUND_DRIVERS)),)
 plugins/dfsound/out.o: CFLAGS += -DHAVE_OSS
@@ -259,11 +266,14 @@ endif
 
 # builtin gpu
 OBJS += plugins/gpulib/gpu.o plugins/gpulib/vout_pl.o plugins/gpulib/prim.o
+ifeq "$(USE_ASYNC_GPU)" "1"
+OBJS += plugins/gpulib/gpu_async.o
+plugins/gpulib/%.o: CFLAGS += -DUSE_ASYNC_GPU
+endif
 ifeq "$(BUILTIN_GPU)" "neon"
 CFLAGS += -DGPU_NEON
 OBJS += plugins/gpu_neon/psx_gpu_if.o
 plugins/gpu_neon/psx_gpu_if.o: CFLAGS += -DNEON_BUILD -DTEXTURE_CACHE_4BPP -DTEXTURE_CACHE_8BPP
-plugins/gpu_neon/psx_gpu_if.o: plugins/gpu_neon/psx_gpu/*.c
 frontend/menu.o frontend/plugin_lib.o: CFLAGS += -DBUILTIN_GPU_NEON
  ifeq "$(HAVE_NEON_ASM)" "1"
  OBJS += plugins/gpu_neon/psx_gpu/psx_gpu_arm_neon.o
@@ -277,13 +287,8 @@ ifeq "$(BUILTIN_GPU)" "peops"
 CFLAGS += -DGPU_PEOPS
 # note: code is not safe for strict-aliasing? (Castlevania problems)
 plugins/dfxvideo/gpulib_if.o: CFLAGS += -fno-strict-aliasing
-plugins/dfxvideo/gpulib_if.o: plugins/dfxvideo/prim.c plugins/dfxvideo/soft.c
 frontend/menu.o frontend/plugin_lib.o: CFLAGS += -DBUILTIN_GPU_PEOPS
 OBJS += plugins/dfxvideo/gpulib_if.o
-ifeq "$(THREAD_RENDERING)" "1"
-CFLAGS += -DTHREAD_RENDERING
-OBJS += plugins/gpulib/gpulib_thread_if.o
-endif
 endif
 
 ifeq "$(BUILTIN_GPU)" "unai"
@@ -292,10 +297,6 @@ CFLAGS += -DUSE_GPULIB=1
 OBJS += plugins/gpu_unai/gpulib_if.o
 ifeq "$(ARCH)" "arm"
 OBJS += plugins/gpu_unai/gpu_arm.o
-endif
-ifeq "$(THREAD_RENDERING)" "1"
-CFLAGS += -DTHREAD_RENDERING
-OBJS += plugins/gpulib/gpulib_thread_if.o
 endif
 ifneq "$(GPU_UNAI_NO_OLD)" "1"
 OBJS += plugins/gpu_unai/old/if.o
@@ -315,39 +316,43 @@ endif
 # libchdr
 ifeq "$(HAVE_CHD)" "1"
 LCHDR = deps/libchdr
-LCHDR_LZMA = $(LCHDR)/deps/lzma-24.05
-LCHDR_ZSTD = $(LCHDR)/deps/zstd-1.5.6/lib
+LCHDR_LZMA = $(LCHDR)/deps/lzma-26.02
+LCHDR_ZSTD = $(LCHDR)/deps/zstd-1.5.7
 OBJS += $(LCHDR)/src/libchdr_bitstream.o
 OBJS += $(LCHDR)/src/libchdr_cdrom.o
 OBJS += $(LCHDR)/src/libchdr_chd.o
+OBJS += $(LCHDR)/src/libchdr_codec_cdfl.o
+OBJS += $(LCHDR)/src/libchdr_codec_cdlz.o
+OBJS += $(LCHDR)/src/libchdr_codec_cdzl.o
+OBJS += $(LCHDR)/src/libchdr_codec_cdzs.o
+OBJS += $(LCHDR)/src/libchdr_codec_flac.o
+OBJS += $(LCHDR)/src/libchdr_codec_huff.o
+OBJS += $(LCHDR)/src/libchdr_codec_lzma.o
+OBJS += $(LCHDR)/src/libchdr_codec_zlib.o
+OBJS += $(LCHDR)/src/libchdr_codec_zstd.o
 OBJS += $(LCHDR)/src/libchdr_flac.o
 OBJS += $(LCHDR)/src/libchdr_huffman.o
-$(LCHDR)/src/%.o: CFLAGS += -Wno-unused -Wno-maybe-uninitialized -std=gnu11
-OBJS += $(LCHDR_LZMA)/src/Alloc.o
-OBJS += $(LCHDR_LZMA)/src/CpuArch.o
-OBJS += $(LCHDR_LZMA)/src/Delta.o
-OBJS += $(LCHDR_LZMA)/src/LzFind.o
+ifneq ($(USE_MINIZ),1)
+$(LCHDR)/src/%.o: CFLAGS += -DCHDR_SYSTEM_ZLIB
+endif
 OBJS += $(LCHDR_LZMA)/src/LzmaDec.o
-OBJS += $(LCHDR_LZMA)/src/LzmaEnc.o
-OBJS += $(LCHDR_LZMA)/src/Sort.o
-$(LCHDR_LZMA)/src/%.o: CFLAGS += -Wno-unused -DZ7_ST -I$(LCHDR_LZMA)/include
+ifneq (,$(filter $(ARCH),aarch64 arm64))
+OBJS += $(LCHDR_LZMA)/Asm/arm64/LzmaDecOpt.o
+$(LCHDR_LZMA)/src/%.o: CFLAGS += -DZ7_LZMA_DEC_OPT
+endif
 $(LCHDR)/src/%.o: CFLAGS += -I$(LCHDR_LZMA)/include
-OBJS += $(LCHDR_ZSTD)/common/entropy_common.o
-OBJS += $(LCHDR_ZSTD)/common/error_private.o
-OBJS += $(LCHDR_ZSTD)/common/fse_decompress.o
-OBJS += $(LCHDR_ZSTD)/common/xxhash.o
-OBJS += $(LCHDR_ZSTD)/common/zstd_common.o
-OBJS += $(LCHDR_ZSTD)/decompress/huf_decompress.o
-OBJS += $(LCHDR_ZSTD)/decompress/huf_decompress_amd64.o
-OBJS += $(LCHDR_ZSTD)/decompress/zstd_ddict.o
-OBJS += $(LCHDR_ZSTD)/decompress/zstd_decompress_block.o
-OBJS += $(LCHDR_ZSTD)/decompress/zstd_decompress.o
-$(LCHDR_ZSTD)/common/%.o \
-$(LCHDR_ZSTD)/decompress/%.o: CFLAGS += -I$(LCHDR_ZSTD)
-$(LCHDR)/src/%.o: CFLAGS += -I$(LCHDR_ZSTD)
+OBJS += $(LCHDR_ZSTD)/zstddeclib.o
 libpcsxcore/cdriso.o: CFLAGS += -Wno-unused-function
 CFLAGS += -DHAVE_CHD -I$(LCHDR)/include
 endif
+
+# zlib/miniz
+ifeq ($(USE_MINIZ),1)
+MINIZ_DIR = deps/libchdr/deps/miniz-3.1.2
+CFLAGS += -I$(MINIZ_DIR) -DUSE_MINIZ
+OBJS += $(MINIZ_DIR)/miniz.o
+$(MINIZ_DIR)/miniz.o: CFLAGS += -DMINIZ_NO_STDIO -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ARCHIVE_APIS
+endif # else we use system zlib
 
 # frontend/gui
 OBJS += frontend/cspace.o
@@ -416,7 +421,6 @@ USE_FRONTEND = 1
 endif
 ifeq "$(PLATFORM)" "maemo"
 OBJS += maemo/hildon.o maemo/main.o maemo/maemo_xkb.o frontend/pl_gun_ts.o
-maemo/%.o: maemo/%.c
 USE_PLUGIN_LIB = 1
 LDFLAGS += $(shell pkg-config --libs hildon-1 libpulse)
 CFLAGS += $(shell pkg-config --cflags hildon-1) -DHAVE_TSLIB
@@ -427,6 +431,7 @@ ifeq "$(PLATFORM)" "libretro"
 ifneq "$(HAVE_PHYSICAL_CDROM)$(USE_LIBRETRO_VFS)" "00"
 OBJS += deps/libretro-common/compat/compat_strl.o
 OBJS += deps/libretro-common/file/file_path.o
+OBJS += deps/libretro-common/file/file_path_io.o
 OBJS += deps/libretro-common/string/stdstring.o
 OBJS += deps/libretro-common/vfs/vfs_implementation.o
 endif
@@ -441,6 +446,7 @@ ifeq "$(USE_LIBRETRO_VFS)" "1"
 OBJS += deps/libretro-common/compat/compat_posix_string.o
 OBJS += deps/libretro-common/compat/fopen_utf8.o
 OBJS += deps/libretro-common/encodings/encoding_utf.o
+OBJS += deps/libretro-common/file/retro_dirent.o
 OBJS += deps/libretro-common/streams/file_stream.o
 OBJS += deps/libretro-common/streams/file_stream_transforms.o
 OBJS += deps/libretro-common/time/rtime.o
@@ -453,7 +459,7 @@ INC_LIBRETRO_COMMON := 1
 endif # $(PLATFORM) == "libretro"
 
 ifeq "$(USE_RTHREADS)" "1"
-OBJS += frontend/libretro-rthreads.o
+OBJS += frontend/pcsxr-threads.o
 OBJS += deps/libretro-common/features/features_cpu.o
 frontend/main.o: CFLAGS += -DHAVE_RTHREADS
 INC_LIBRETRO_COMMON := 1
@@ -478,7 +484,6 @@ ifeq "$(USE_FRONTEND)" "1"
 OBJS += frontend/menu.o
 OBJS += frontend/libpicofe/input.o
 frontend/libpicofe/input.o: CFLAGS += -Wno-array-bounds
-frontend/menu.o: frontend/libpicofe/menu.c
 ifeq "$(HAVE_TSLIB)" "1"
 frontend/%.o: CFLAGS += -DHAVE_TSLIB
 OBJS += frontend/pl_gun_ts.o
@@ -502,16 +507,19 @@ frontend/libpicofe/%.c:
 	@echo "git submodule init && git submodule update"
 	@exit 1
 
-libpcsxcore/gte_nf.o: libpcsxcore/gte.c
-	$(CC) -c -o $@ $^ $(CFLAGS) -DFLAGLESS
-
 include/revision.h: FORCE
 	@(git describe --always || echo) | sed -e 's/.*/#define REV "\0"/' > $@_
 	@diff -q $@_ $@ > /dev/null 2>&1 || cp $@_ $@
 	@rm $@_
 
+%.o: %.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(AUTODEPFLAGS) -c $< -o $@
+
+%.o: %.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(AUTODEPFLAGS) -c $< -o $@
+
 %.o: %.S
-	$(CC_AS) $(CFLAGS) -c $^ -o $@
+	$(CC_AS) $(CPPFLAGS) $(CFLAGS) $(AUTODEPFLAGS) -c $< -o $@
 
 
 target_: $(TARGET)
@@ -528,7 +536,12 @@ else
 endif
 
 clean: $(PLAT_CLEAN) clean_plugins
-	$(RM) $(TARGET) *.o $(OBJS) $(TARGET).map include/revision.h
+	$(RM) $(TARGET) *.o $(OBJS) $(OBJS:.o=.d) $(TARGET).map include/revision.h
+
+ifeq ($(STATIC_LINKING), 1)
+link_test: frontend/libretro-link-test.o $(TARGET)
+	$(CC_LINK) $(CFLAGS) $^ $(EXTRA_LDFLAGS)
+endif
 
 ifneq ($(PLUGINS),)
 plugins_: $(PLUGINS)
@@ -548,7 +561,12 @@ plugins_:
 clean_plugins:
 endif
 
-.PHONY: all clean target_ plugins_ clean_plugins FORCE
+ifndef NO_AUTODEPS
+$(OBJS:.o=.d): ;
+-include $(OBJS:.o=.d)
+endif
+
+.PHONY: all clean target_ plugins_ clean_plugins link_test FORCE
 
 ifneq "$(PLATFORM)" "pandora"
 ifdef CPATH

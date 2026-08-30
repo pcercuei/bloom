@@ -137,6 +137,7 @@ add_library(libpcsxcore STATIC
 	${PCSX_REAL_DIR}/libpcsxcore/gte_divider.c
 	${PCSX_REAL_DIR}/libpcsxcore/mdec.c
 	${PCSX_REAL_DIR}/libpcsxcore/misc.c
+	${PCSX_REAL_DIR}/libpcsxcore/pad.c
 	${PCSX_REAL_DIR}/libpcsxcore/plugins.c
 	${PCSX_REAL_DIR}/libpcsxcore/ppf.c
 	${PCSX_REAL_DIR}/libpcsxcore/psxbios.c

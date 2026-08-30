@@ -29,6 +29,7 @@
 #include "psxbios.h"
 #include "psxevents.h"
 #include "../include/compiler_features.h"
+#include <stddef.h>
 #include <assert.h>
 
 #ifndef ARRAY_SIZE
@@ -53,8 +54,6 @@ int psxInit() {
 	psxCpu = &psxInt;
 #endif
 
-	Log = 0;
-
 	if (psxMemInit() == -1) return -1;
 
 	return psxCpu->Init();
@@ -66,7 +65,7 @@ void psxReset() {
 
 	psxMemReset();
 
-	memset(&psxRegs, 0, sizeof(psxRegs));
+	memset(&psxRegs, 0, offsetof(psxRegisters, ptrs));
 
 	psxRegs.pc = 0xbfc00000; // Start in bootstrap
 
@@ -85,6 +84,7 @@ void psxReset() {
 	psxCpu->ApplyConfig();
 	psxCpu->Reset();
 
+	padReset();
 	psxHwReset();
 	psxBiosInit();
 
@@ -96,11 +96,6 @@ void psxReset() {
 	}
 	if (Config.HLE || introBypassed)
 		psxBiosSetupBootState();
-
-#ifdef EMU_LOG
-	EMU_LOG("*BIOS END*\n");
-#endif
-	Log = 0;
 }
 
 void psxShutdown() {
@@ -121,8 +116,8 @@ void psxException(u32 cause, enum R3000Abdt bdt, psxCP0Regs *cp0) {
 		// (just skips it, supposedly because it's scheduled already)
 		// so we execute it here
 		psxCP2Regs *cp2 = (psxCP2Regs *)(cp0 + 1);
-		psxRegs.code = opcode;
-		psxCP2[opcode & 0x3f](cp2);
+		//psxRegs.code = opcode;
+		gteDispatch(cp2, opcode);
 	}
 
 	// Set the Cause
@@ -140,13 +135,13 @@ void psxException(u32 cause, enum R3000Abdt bdt, psxCP0Regs *cp0) {
 	cp0->n.SR = (cp0->n.SR & ~0x3f) | ((cp0->n.SR & 0x0f) << 2);
 }
 
-void psxBranchTest() {
-	if ((psxRegs.cycle - psxRegs.psxNextsCounter) >= psxRegs.psxNextCounter)
+void psxBranchTest(psxRegisters *regs) {
+	if ((regs->cycle - regs->psxNextsCounter) >= regs->psxNextCounter)
 		psxRcntUpdate();
 
-	irq_test(&psxRegs.CP0);
+	irq_test(&regs->CP0);
 
-	if (unlikely(psxRegs.pc == psxRegs.biosBranchCheck))
+	if (unlikely(regs->pc == regs->biosBranchCheck))
 		psxBiosCheckBranch();
 }
 
