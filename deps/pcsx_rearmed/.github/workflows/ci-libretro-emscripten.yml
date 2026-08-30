@@ -1,0 +1,19 @@
+name: CI (libretro-emscripten)
+on: [push, pull_request]
+jobs:
+  build-libretro-emscripten:
+    runs-on: "ubuntu-latest"
+    container:
+      image: emscripten/emsdk
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 2
+      - name: Build
+        env:
+          MAKEFLAGS: -j$(nproc)
+          CFLAGS: -sUSE_ZLIB=1 -pthread
+        run: |
+          make -f Makefile.libretro platform=emscripten TARGET=pcsx_rearmed_libretro_emscripten.a CC=emcc AR=emar link_test
+

@@ -36,11 +36,6 @@
 #define DO_EXCEPTION_RESERVEDI
 #define HANDLE_LOAD_DELAY
 
-#ifdef __i386__
-#define INT_ATTR __attribute__((regparm(2)))
-#else
-#define INT_ATTR
-#endif
 #ifndef INVALID_PTR
 #define INVALID_PTR NULL
 #endif
@@ -107,9 +102,9 @@ static void dloadClear(psxRegisters *regs)
 
 static void intException(psxRegisters *regs, u32 pc, u32 cause)
 {
-	if (cause != 0x20) {
+	if (cause != (R3000E_Syscall << 2)) {
 		//FILE *f = fopen("/tmp/psx_ram.bin", "wb");
-		//fwrite(psxM, 1, 0x200000, f); fclose(f);
+		//fwrite(psxRegs.ptrs.psxM, 1, 0x200000, f); fclose(f);
 		log_unhandled("exception %08x @%08x ra=%08x\n",
 			cause, pc, regs->GPR.n.ra);
 	}
@@ -117,6 +112,7 @@ static void intException(psxRegisters *regs, u32 pc, u32 cause)
 	regs->pc = pc;
 	psxException(cause, regs->branching, &regs->CP0);
 	regs->branching = R3000A_BRANCH_NONE_OR_EXCEPTION;
+	psxBranchTest(regs);
 }
 
 // exception caused by current instruction (excluding unkasking)
@@ -174,17 +170,17 @@ static int execBreakCheck(psxRegisters *regs, u32 pc)
 // get an opcode without triggering exceptions or affecting cache
 u32 intFakeFetch(u32 pc)
 {
-	u32 *code = (u32 *)psxm(pc & ~0x3, 0);
-	if (unlikely(code == INVALID_PTR))
+	const u32 *code;
+	if (!psxm_lut((u8 **)&code, &psxRegs, pc & ~0x3, 0, psxRegs.ptrs.memRLUT))
 		return 0; // nop
 	return SWAP32(*code);
 
 }
 
-static u32 INT_ATTR fetchNoCache(psxRegisters *regs, u8 **memRLUT, u32 pc)
+static u32 INT_ATTR fetchNoCache(psxRegisters *regs, const uintptr_t *memRLUT, u32 pc)
 {
-	u32 *code = (u32 *)psxm_lut(pc & ~0x3, 0, memRLUT);
-	if (unlikely(code == INVALID_PTR)) {
+	const u32 *code;
+	if (!psxm_lut((u8 **)&code, regs, pc & ~0x3, 0, memRLUT)) {
 		SysPrintf("game crash @%08x, ra=%08x\n", pc, regs->GPR.n.ra);
 		intException(regs, pc, R3000E_IBE << 2);
 		return 0; // execute as nop
@@ -201,7 +197,7 @@ static struct cache_entry {
 	u32 data[4];
 } ICache[256];
 
-static u32 INT_ATTR fetchICache(psxRegisters *regs, u8 **memRLUT, u32 pc)
+static u32 INT_ATTR fetchICache(psxRegisters *regs, const uintptr_t *memRLUT, u32 pc)
 {
 	// cached?
 	if (pc < 0xa0000000)
@@ -211,8 +207,8 @@ static u32 INT_ATTR fetchICache(psxRegisters *regs, u8 **memRLUT, u32 pc)
 
 		if (((entry->tag ^ pc) & 0xfffffff0) != 0 || pc < entry->tag)
 		{
-			const u32 *code = (u32 *)psxm_lut(pc & ~0xf, 0, memRLUT);
-			if (unlikely(code == INVALID_PTR)) {
+			const u32 *code;
+			if (!psxm_lut((u8 **)&code, regs, pc & ~0x0f, 0, memRLUT)) {
 				SysPrintf("game crash @%08x, ra=%08x\n", pc, regs->GPR.n.ra);
 				intException(regs, pc, R3000E_IBE << 2);
 				return 0; // execute as nop
@@ -233,8 +229,6 @@ static u32 INT_ATTR fetchICache(psxRegisters *regs, u8 **memRLUT, u32 pc)
 
 	return fetchNoCache(regs, memRLUT, pc);
 }
-
-static u32 (INT_ATTR *fetch)(psxRegisters *regs_, u8 **memRLUT, u32 pc) = fetchNoCache;
 
 // Make the timing events trigger faster as we are currently assuming everything
 // takes one cycle, which is not the case on real hardware.
@@ -390,7 +384,8 @@ static void psxDoDelayBranch(psxRegisters *regs, u32 tar1, u32 code1) {
 	 *   has no normal delay slot, instruction at tar1 was fetched instead)
 	 */
 	for (lim = 0; lim < 8; lim++) {
-		regs->code = code = fetch(regs, psxMemRLUT, tar1);
+		code = regs->ptrs.intFetch(regs, regs->ptrs.memRLUT, tar1);
+		regs->code = code;
 		addCycle(regs);
 		if (likely(!isBranch(code))) {
 			dloadStep(regs);
@@ -416,7 +411,7 @@ static void doBranch(psxRegisters *regs, u32 tar, enum R3000Abdt taken) {
 	// fetch the delay slot
 	pc = regs->pc;
 	regs->pc = pc + 4;
-	regs->code = code = fetch(regs, psxMemRLUT, pc);
+	regs->code = code = regs->ptrs.intFetch(regs, regs->ptrs.memRLUT, pc);
 
 	addCycle(regs);
 
@@ -427,7 +422,7 @@ static void doBranch(psxRegisters *regs, u32 tar, enum R3000Abdt taken) {
 			psxDoDelayBranch(regs, tar, code);
 		log_unhandled("branch in DS: %08x->%08x\n", pc, regs->pc);
 		regs->branching = 0;
-		psxBranchTest();
+		psxBranchTest(regs);
 		return;
 	}
 
@@ -440,7 +435,7 @@ static void doBranch(psxRegisters *regs, u32 tar, enum R3000Abdt taken) {
 		regs->CP0.n.Target = pc_final;
 	regs->branching = 0;
 
-	psxBranchTest();
+	psxBranchTest(regs);
 }
 
 static void doBranchReg(psxRegisters *regs, u32 tar) {
@@ -664,15 +659,17 @@ OP(psxSYSCALL) {
 	intExceptionInsn(regs_, R3000E_Syscall << 2);
 }
 
-static inline void execI_(u8 **memRLUT, psxRegisters *regs_);
+static inline void execI_(
+	u32 (INT_ATTR *fetch)(struct psxRegisters *r, const uintptr_t *luts, u32 pc),
+	const uintptr_t *memRLUT, psxRegisters *regs);
 
-static inline void psxTestSWInts(psxRegisters *regs_, int step) {
-	if ((regs_->CP0.n.Cause & regs_->CP0.n.SR & 0x0300) &&
-	    (regs_->CP0.n.SR & 0x1)) {
+static inline void psxTestSWInts(psxRegisters *regs, int step) {
+	if ((regs->CP0.n.Cause & regs->CP0.n.SR & 0x0300) &&
+	    (regs->CP0.n.SR & 0x1)) {
 		if (step)
-			execI_(psxMemRLUT, regs_);
-		regs_->CP0.n.Cause &= ~0x7c;
-		intException(regs_, regs_->pc, regs_->CP0.n.Cause);
+			execI_(regs->ptrs.intFetch, regs->ptrs.memRLUT, regs);
+		regs->CP0.n.Cause &= ~0x7c;
+		intException(regs, regs->pc, regs->CP0.n.Cause);
 	}
 }
 
@@ -801,17 +798,17 @@ static inline int checkST(psxRegisters *regs, u32 addr, u32 m) {
 
 #define _oB_ (regs_->GPR.r[_Rs_] + _Imm_)
 
-OP(psxLB)  { doLoad(regs_, _Rt_,  (s8)psxMemRead8(_oB_)); }
-OP(psxLBU) { doLoad(regs_, _Rt_,      psxMemRead8(_oB_)); }
-OP(psxLH)  { doLoad(regs_, _Rt_, (s16)psxMemRead16(_oB_ & ~1)); }
-OP(psxLHU) { doLoad(regs_, _Rt_,      psxMemRead16(_oB_ & ~1)); }
-OP(psxLW)  { doLoad(regs_, _Rt_,      psxMemRead32(_oB_ & ~3)); }
+OP(psxLB)  { doLoad(regs_, _Rt_,  (s8)psxMemRead8(regs_, _oB_)); }
+OP(psxLBU) { doLoad(regs_, _Rt_,      psxMemRead8(regs_, _oB_)); }
+OP(psxLH)  { doLoad(regs_, _Rt_, (s16)psxMemRead16(regs_, _oB_ & ~1)); }
+OP(psxLHU) { doLoad(regs_, _Rt_,      psxMemRead16(regs_, _oB_ & ~1)); }
+OP(psxLW)  { doLoad(regs_, _Rt_,      psxMemRead32(regs_, _oB_ & ~3)); }
 
-OP(psxLBe)  { if (checkLD(regs_, _oB_, 0)) doLoad(regs_, _Rt_,  (s8)psxMemRead8(_oB_)); }
-OP(psxLBUe) { if (checkLD(regs_, _oB_, 0)) doLoad(regs_, _Rt_,      psxMemRead8(_oB_)); }
-OP(psxLHe)  { if (checkLD(regs_, _oB_, 1)) doLoad(regs_, _Rt_, (s16)psxMemRead16(_oB_)); }
-OP(psxLHUe) { if (checkLD(regs_, _oB_, 1)) doLoad(regs_, _Rt_,      psxMemRead16(_oB_)); }
-OP(psxLWe)  { if (checkLD(regs_, _oB_, 3)) doLoad(regs_, _Rt_,      psxMemRead32(_oB_)); }
+OP(psxLBe)  { if (checkLD(regs_, _oB_, 0)) doLoad(regs_, _Rt_,  (s8)psxMemRead8(regs_, _oB_)); }
+OP(psxLBUe) { if (checkLD(regs_, _oB_, 0)) doLoad(regs_, _Rt_,      psxMemRead8(regs_, _oB_)); }
+OP(psxLHe)  { if (checkLD(regs_, _oB_, 1)) doLoad(regs_, _Rt_, (s16)psxMemRead16(regs_, _oB_)); }
+OP(psxLHUe) { if (checkLD(regs_, _oB_, 1)) doLoad(regs_, _Rt_,      psxMemRead16(regs_, _oB_)); }
+OP(psxLWe)  { if (checkLD(regs_, _oB_, 3)) doLoad(regs_, _Rt_,      psxMemRead32(regs_, _oB_)); }
 
 static void doLWL(psxRegisters *regs, u32 rt, u32 addr) {
 	static const u32 LWL_MASK[4] = { 0xffffff, 0xffff, 0xff, 0 };
@@ -825,7 +822,7 @@ static void doLWL(psxRegisters *regs, u32 rt, u32 addr) {
 	if (regs->dloadReg[sel] == rt)
 		oldval = regs->dloadVal[sel];
 #endif
-	mem = psxMemRead32(addr & ~3);
+	mem = psxMemRead32(regs, addr & ~3);
 	val = (oldval & LWL_MASK[shift]) | (mem << LWL_SHIFT[shift]);
 	doLoad(regs, rt, val);
 
@@ -851,7 +848,7 @@ static void doLWR(psxRegisters *regs, u32 rt, u32 addr) {
 	if (regs->dloadReg[sel] == rt)
 		oldval = regs->dloadVal[sel];
 #endif
-	mem = psxMemRead32(addr & ~3);
+	mem = psxMemRead32(regs, addr & ~3);
 	val = (oldval & LWR_MASK[shift]) | (mem >> LWR_SHIFT[shift]);
 	doLoad(regs, rt, val);
 
@@ -871,23 +868,23 @@ OP(psxLWR) { doLWR(regs_, _Rt_, _oB_); }
 OP(psxLWLe) { if (checkLD(regs_, _oB_ & ~3, 0)) doLWL(regs_, _Rt_, _oB_); }
 OP(psxLWRe) { if (checkLD(regs_, _oB_     , 0)) doLWR(regs_, _Rt_, _oB_); }
 
-OP(psxSB) { psxMemWrite8 (_oB_, _rRt_); }
-OP(psxSH) { psxMemWrite16(_oB_, _rRt_); }
-OP(psxSW) { psxMemWrite32(_oB_, _rRt_); }
+OP(psxSB) { psxMemWrite8 (regs_, _oB_, _rRt_); }
+OP(psxSH) { psxMemWrite16(regs_, _oB_, _rRt_); }
+OP(psxSW) { psxMemWrite32(regs_, _oB_, _rRt_); }
 
-OP(psxSBe) { if (checkST(regs_, _oB_, 0)) psxMemWrite8 (_oB_, _rRt_); }
-OP(psxSHe) { if (checkST(regs_, _oB_, 1)) psxMemWrite16(_oB_, _rRt_); }
-OP(psxSWe) { if (checkST(regs_, _oB_, 3)) psxMemWrite32(_oB_, _rRt_); }
+OP(psxSBe) { if (checkST(regs_, _oB_, 0)) psxMemWrite8 (regs_, _oB_, _rRt_); }
+OP(psxSHe) { if (checkST(regs_, _oB_, 1)) psxMemWrite16(regs_, _oB_, _rRt_); }
+OP(psxSWe) { if (checkST(regs_, _oB_, 3)) psxMemWrite32(regs_, _oB_, _rRt_); }
 
 static void doSWL(psxRegisters *regs, u32 rt, u32 addr) {
 	u32 val = regs->GPR.r[rt];
 	switch (addr & 3) {
-		case 0: psxMemWrite8( addr     , val >> 24); break;
-		case 1: psxMemWrite16(addr & ~3, val >> 16); break;
+		case 0: psxMemWrite8( regs, addr     , val >> 24); break;
+		case 1: psxMemWrite16(regs, addr & ~3, val >> 16); break;
 		case 2: // revisit: should be a single 24bit write
-			psxMemWrite16(addr & ~3, (val >> 8) & 0xffff);
-		        psxMemWrite8( addr     , val >> 24); break;
-		case 3: psxMemWrite32(addr & ~3, val);       break;
+			psxMemWrite16(regs, addr & ~3, (val >> 8) & 0xffff);
+		        psxMemWrite8( regs, addr     , val >> 24); break;
+		case 3: psxMemWrite32(regs, addr & ~3, val);       break;
 	}
 	/*
 	Mem = 1234.  Reg = abcd
@@ -902,12 +899,12 @@ static void doSWL(psxRegisters *regs, u32 rt, u32 addr) {
 static void doSWR(psxRegisters *regs, u32 rt, u32 addr) {
 	u32 val = regs->GPR.r[rt];
 	switch (addr & 3) {
-		case 0: psxMemWrite32(addr    , val); break;
+		case 0: psxMemWrite32(regs, addr    , val); break;
 		case 1: // revisit: should be a single 24bit write
-		        psxMemWrite8 (addr    , val & 0xff);
-		        psxMemWrite16(addr + 1, (val >> 8) & 0xffff); break;
-		case 2: psxMemWrite16(addr    , val & 0xffff); break;
-		case 3: psxMemWrite8 (addr    , val & 0xff); break;
+		        psxMemWrite8 (regs, addr    , val & 0xff);
+		        psxMemWrite16(regs, addr + 1, (val >> 8) & 0xffff); break;
+		case 2: psxMemWrite16(regs, addr    , val & 0xffff); break;
+		case 3: psxMemWrite8 (regs, addr    , val & 0xff); break;
 	}
 
 	/*
@@ -990,11 +987,6 @@ OP(psxNULL) {
 	intExceptionReservedInsn(regs_);
 }
 
-void gteNULL(struct psxCP2Regs *regs) {
-	psxRegisters *regs_ = (psxRegisters *)((u8 *)regs - offsetof(psxRegisters, CP2));
-	psxNULLne(regs_);
-}
-
 OP(psxSPECIAL) {
 	psxSPC[_Funct_](regs_, code);
 }
@@ -1032,7 +1024,7 @@ OP(psxCOP1) {
 OP(psxCOP2) {
 	u32 rt = _Rt_, rd = _Rd_, rs = _Rs_;
 	if (rs & 0x10) {
-		psxCP2[_Funct_](&regs_->CP2);
+		gteDispatch(&regs_->CP2, code);
 		return;
 	}
 	switch (rs) {
@@ -1053,7 +1045,7 @@ OP(psxCOP2_stall) {
 }
 
 OP(gteLWC2) {
-	MTC2(&regs_->CP2, psxMemRead32(_oB_), _Rt_);
+	MTC2(&regs_->CP2, psxMemRead32(regs_, _oB_), _Rt_);
 }
 
 OP(gteLWC2_stall) {
@@ -1064,11 +1056,11 @@ OP(gteLWC2_stall) {
 OP(gteLWC2e_stall) {
 	gteCheckStall(0);
 	if (checkLD(regs_, _oB_, 3))
-		MTC2(&regs_->CP2, psxMemRead32(_oB_), _Rt_);
+		MTC2(&regs_->CP2, psxMemRead32(regs_, _oB_), _Rt_);
 }
 
 OP(gteSWC2) {
-	psxMemWrite32(_oB_, MFC2(&regs_->CP2, _Rt_));
+	psxMemWrite32(regs_, _oB_, MFC2(&regs_->CP2, _Rt_));
 }
 
 OP(gteSWC2_stall) {
@@ -1131,7 +1123,7 @@ OP(psxHLE) {
 	}
 	dloadFlush(regs_);
 	psxHLEt[hleCode]();
-	regs_->branchSeen = 1;
+	regs_->branchSeen = R3000A_BRANCH_HLE_RETURN;
 }
 
 static void (INT_ATTR *psxBSC[64])(psxRegisters *regs_, u32 code) = {
@@ -1156,17 +1148,6 @@ static void (INT_ATTR *psxSPC[64])(psxRegisters *regs_, u32 code) = {
 	psxNULL, psxNULL , psxNULL, psxNULL, psxNULL   , psxNULL , psxNULL, psxNULL
 };
 
-void (*psxCP2[64])(struct psxCP2Regs *regs) = {
-	gteNULL , gteRTPS , gteNULL , gteNULL, gteNULL, gteNULL , gteNCLIP, gteNULL, // 00
-	gteNULL , gteNULL , gteNULL , gteNULL, gteOP  , gteNULL , gteNULL , gteNULL, // 08
-	gteDPCS , gteINTPL, gteMVMVA, gteNCDS, gteCDP , gteNULL , gteNCDT , gteNULL, // 10
-	gteNULL , gteNULL , gteNULL , gteNCCS, gteCC  , gteNULL , gteNCS  , gteNULL, // 18
-	gteNCT  , gteNULL , gteNULL , gteNULL, gteNULL, gteNULL , gteNULL , gteNULL, // 20
-	gteSQR  , gteDCPL , gteDPCT , gteNULL, gteNULL, gteAVSZ3, gteAVSZ4, gteNULL, // 28
-	gteRTPT , gteNULL , gteNULL , gteNULL, gteNULL, gteNULL , gteNULL , gteNULL, // 30
-	gteNULL , gteNULL , gteNULL , gteNULL, gteNULL, gteGPF  , gteGPL  , gteNCCT  // 38
-};
-
 ///////////////////////////////////////////
 
 static int intInit() {
@@ -1179,7 +1160,10 @@ static void intReset() {
 	psxRegs.subCycle = 0;
 }
 
-static inline void execI_(u8 **memRLUT, psxRegisters *regs) {
+static inline void execI_(
+	u32 (INT_ATTR *fetch)(struct psxRegisters *r, const uintptr_t *luts, u32 pc),
+	const uintptr_t *memRLUT, psxRegisters *regs)
+{
 	u32 pc = regs->pc;
 
 	addCycle(regs);
@@ -1190,7 +1174,10 @@ static inline void execI_(u8 **memRLUT, psxRegisters *regs) {
 	psxBSC[regs->code >> 26](regs, regs->code);
 }
 
-static inline void execIbp(u8 **memRLUT, psxRegisters *regs) {
+static inline void execIbp(
+	u32 (INT_ATTR *fetch)(struct psxRegisters *r, const uintptr_t *luts, u32 pc),
+	const uintptr_t *memRLUT, psxRegisters *regs)
+{
 	u32 pc = regs->pc;
 
 	addCycle(regs);
@@ -1205,33 +1192,41 @@ static inline void execIbp(u8 **memRLUT, psxRegisters *regs) {
 }
 
 static void intExecute(psxRegisters *regs) {
-	u8 **memRLUT = psxMemRLUT;
+	u32 (INT_ATTR *fetch)(struct psxRegisters *r, const uintptr_t *luts, u32 pc) =
+		regs->ptrs.intFetch;
+	const uintptr_t *memRLUT = regs->ptrs.memRLUT;
 
 	while (!regs->stop)
-		execI_(memRLUT, regs);
+		execI_(fetch, memRLUT, regs);
 }
 
 static void intExecuteBp(psxRegisters *regs) {
-	u8 **memRLUT = psxMemRLUT;
+	u32 (INT_ATTR *fetch)(struct psxRegisters *r, const uintptr_t *luts, u32 pc) =
+		regs->ptrs.intFetch;
+	const uintptr_t *memRLUT = regs->ptrs.memRLUT;
 
 	while (!regs->stop)
-		execIbp(memRLUT, regs);
+		execIbp(fetch, memRLUT, regs);
 }
 
 static void intExecuteBlock(psxRegisters *regs, enum blockExecCaller caller) {
-	u8 **memRLUT = psxMemRLUT;
+	u32 (INT_ATTR *fetch)(struct psxRegisters *r, const uintptr_t *luts, u32 pc) =
+		regs->ptrs.intFetch;
+	const uintptr_t *memRLUT = regs->ptrs.memRLUT;
 
 	regs->branchSeen = 0;
 	while (!regs->branchSeen)
-		execI_(memRLUT, regs);
+		execI_(fetch, memRLUT, regs);
 }
 
 static void intExecuteBlockBp(psxRegisters *regs, enum blockExecCaller caller) {
-	u8 **memRLUT = psxMemRLUT;
+	u32 (INT_ATTR *fetch)(struct psxRegisters *r, const uintptr_t *luts, u32 pc) =
+		regs->ptrs.intFetch;
+	const uintptr_t *memRLUT = regs->ptrs.memRLUT;
 
 	regs->branchSeen = 0;
 	while (!regs->branchSeen)
-		execIbp(memRLUT, regs);
+		execIbp(fetch, memRLUT, regs);
 }
 
 static void intClear(u32 Addr, u32 Size) {
@@ -1240,15 +1235,30 @@ static void intClear(u32 Addr, u32 Size) {
 static void intNotify(enum R3000Anote note, void *data) {
 	switch (note) {
 	case R3000ACPU_NOTIFY_BEFORE_SAVE:
+#ifdef HANDLE_LOAD_DELAY
+		// the load may happen on a different core, so avoid
+		// any possibility of a situation with delay load effects
+		if (psxRegs.dloadReg[0] || psxRegs.dloadReg[1]) {
+			u32 i, code = intFakeFetch(psxRegs.pc);
+			for (i = 0; i < 2; i++) {
+				u32 r = psxRegs.dloadReg[i];
+				if (r && (r == _Rt_ || r == _Rs_))
+					break;
+			}
+			if (unlikely(i != 2))
+				execI(&psxRegs);
+		}
+#endif
 		dloadFlush(&psxRegs);
 		break;
 	case R3000ACPU_NOTIFY_AFTER_LOAD:
+	case R3000ACPU_NOTIFY_AFTER_LOAD_STATE:
 		dloadClear(&psxRegs);
 		psxRegs.subCycle = 0;
 		setupCop(psxRegs.CP0.n.SR);
 		// fallthrough
 	case R3000ACPU_NOTIFY_CACHE_ISOLATED: // Armored Core?
-		if (fetch == fetchICache)
+		if (psxRegs.ptrs.intFetch == fetchICache)
 			memset(&ICache, 0xff, sizeof(ICache));
 		break;
 	case R3000ACPU_NOTIFY_CACHE_UNISOLATED:
@@ -1347,11 +1357,11 @@ void intApplyConfig() {
 	// the dynarec may occasionally call the interpreter, in such a case the
 	// cache won't work (cache only works right if all fetches go through it)
 	if (!Config.icache_emulation || psxCpu != &psxInt) {
-		fetch = fetchNoCache;
+		psxRegs.ptrs.intFetch = fetchNoCache;
 		memset(&ICache, 0xff, sizeof(ICache));
 	}
 	else
-		fetch = fetchICache;
+		psxRegs.ptrs.intFetch = fetchICache;
 
 	cycle_mult = Config.cycle_multiplier_override && Config.cycle_multiplier == CYCLE_MULT_DEFAULT
 		? Config.cycle_multiplier_override : Config.cycle_multiplier;
@@ -1365,9 +1375,17 @@ static void intShutdown() {
 // single step (may do several ops in case of a branch or load delay)
 // called by asm/dynarec
 void execI(psxRegisters *regs) {
+	u32 (INT_ATTR *fetch)(struct psxRegisters *r, const uintptr_t *luts, u32 pc) =
+		regs->ptrs.intFetch;
+	const uintptr_t *memRLUT = regs->ptrs.memRLUT;
+	int loop = 0;
+
 	do {
-		execIbp(psxMemRLUT, regs);
-	} while (regs->dloadReg[0] || regs->dloadReg[1]);
+		execIbp(fetch, memRLUT, regs);
+#ifdef HANDLE_LOAD_DELAY
+		loop = regs->dloadReg[0] | regs->dloadReg[1];
+#endif
+	} while (loop);
 }
 
 R3000Acpu psxInt = {

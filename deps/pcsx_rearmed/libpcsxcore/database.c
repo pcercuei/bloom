@@ -28,6 +28,8 @@ static const char * const cdr_read_hack_db[] =
 
 static const char * const gpu_slow_llist_db[] =
 {
+	/* Alice in Cyberland */
+	"SLPS00636",
 	/* Bomberman Fantasy Race */
 	"SLES01712", "SLPS01525", "SLPS91138", "SLPM87102", "SLUS00823",
 	/* Crash Bash */
@@ -36,6 +38,8 @@ static const char * const gpu_slow_llist_db[] =
 	"SLUS01120", "SLES02722", "SLES02723", "SLES02724", "SLPS02758", "SLPM80564",
 	/* Final Fantasy IV */
 	"SCES03840", "SLPM86028", "SLUS01360",
+	/* NHL Face Off '97/98 */
+	"SCUS94550", "SCES00392", "SCUS94174", "SCES01022",
 	/* Point Blank - calibration cursor */
 	"SCED00287", "SCES00886", "SLUS00481",
 	/* Simple 1500 Series Vol. 57: The Meiro */
@@ -94,6 +98,29 @@ static const char * const f1_hack_db[] =
 	"SCES03404", "SCES03423", "SCES03424", "SCES03524",
 };
 
+static const char * const alt_flip_db[] =
+{
+	/* Darius Gaiden (Japan) */
+	"SLPS00574", "SLPM80054",
+	/* NFS3 */
+	"SLUS00620",
+};
+
+/* slight timing jitter when switching betweed drc/interpreter
+ * triggers unfortunate timing conditions */
+static const char * const drc_no_thread_db[] =
+{
+	/* Hellboy - Asylum Seeker (USA) */
+	"SLUS01414",
+};
+
+static const char * const needs_interlace_db[] =
+{
+	/* Worms Pinball */
+	"SLES00483",
+	/* Pro Pinball series games have a different hack... */
+};
+
 #define HACK_ENTRY(var, list) \
 	{ #var, &Config.hacks.var, list, ARRAY_SIZE(list) }
 
@@ -112,6 +139,9 @@ hack_db[] =
 	HACK_ENTRY(dualshock_init_analog, dualshock_init_analog_hack_db),
 	HACK_ENTRY(fractional_Framerate, fractional_Framerate_hack_db),
 	HACK_ENTRY(f1, f1_hack_db),
+	HACK_ENTRY(alt_flip, alt_flip_db),
+	HACK_ENTRY(drc_no_thread, drc_no_thread_db),
+	HACK_ENTRY(needs_interlace, needs_interlace_db),
 };
 
 static const struct
@@ -154,7 +184,12 @@ cycle_multiplier_overrides[] =
 	/* Vib-Ribbon - cd timing issues (PAL+ari64drc only?) */
 	{ 200, { "SCES02873" } },
 	/* Zero Divide - sometimes too fast */
-	{ 200, { "SLUS00183", "SLES00159", "SLPS00083", "SLPM80008" } },
+#ifdef LIGHTREC
+	{ 222, // missing gte stalling
+#else
+	{ 200,
+#endif
+		{ "SLUS00183", "SLES00159", "SLPS00083", "SLPM80008" } },
 	/* Eagle One: Harrier Attack - hangs (but not in standalone build?) */
 	{ 153, { "SLUS00943" } },
 	/* Sol Divide: FMV timing */
@@ -162,6 +197,12 @@ cycle_multiplier_overrides[] =
 	/* Legend of Legaia - some attack moves lag and cause a/v desync */
 	{ 160, { "SCUS94254", "SCUS94366", "SCES01752" } },
 	{ 160, { "SCES01944", "SCES01945", "SCES01946", "SCES01947" } },
+	/* Tunguska: Legend of Faith - 2x too fast */
+	{ 232, { "SLES03298" } },
+	/* Riichi Mahjong - hangs */
+	{ 200, { "SLPS03023" } },
+	/* NBA Jam: Tournament Edition - halftime stats */
+	{ 161, { "SLUS00002", "SLPS00199", "SLES00068" } },
 };
 
 static const struct
@@ -226,7 +267,7 @@ void Apply_Hacks_Cdrom(void)
 
 	/* Dynarec game-specific hacks */
 	ndrc_g.hacks_pergame = 0;
-	if (Config.hacks.f1)
+	if (Config.hacks.f1 || Config.hacks.drc_no_thread)
 		ndrc_g.hacks_pergame |= NDHACK_THREAD_FORCE; // force without *_ON -> off
 	Config.cycle_multiplier_override = 0;
 

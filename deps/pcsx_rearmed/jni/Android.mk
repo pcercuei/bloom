@@ -5,8 +5,10 @@ $(shell cd "$(LOCAL_PATH)" && ((git describe --always || echo) | sed -e 's/.*/#d
 $(shell cd "$(LOCAL_PATH)" && (diff -q ../include/revision.h_ ../include/revision.h > /dev/null 2>&1 || cp ../include/revision.h_ ../include/revision.h))
 $(shell cd "$(LOCAL_PATH)" && (rm ../include/revision.h_))
 
-USE_LIBRETRO_VFS ?= 0
+USE_LIBRETRO_VFS ?= 1
 USE_ASYNC_CDROM ?= 1
+USE_ASYNC_GPU ?= 1
+USE_ASYNC_SPU ?= 1
 USE_RTHREADS ?= 0
 NDRC_THREAD ?= 1
 
@@ -35,6 +37,7 @@ SOURCES_C := $(CORE_DIR)/cdriso.c \
              $(CORE_DIR)/decode_xa.c \
              $(CORE_DIR)/mdec.c \
              $(CORE_DIR)/misc.c \
+             $(CORE_DIR)/pad.c \
              $(CORE_DIR)/plugins.c \
              $(CORE_DIR)/ppf.c \
              $(CORE_DIR)/psxbios.c \
@@ -77,37 +80,30 @@ SOURCES_C += $(FRONTEND_DIR)/main.c \
 
 # libchdr
 LCHDR = $(DEPS_DIR)/libchdr
-LCHDR_LZMA = $(LCHDR)/deps/lzma-24.05
-LCHDR_ZSTD = $(LCHDR)/deps/zstd-1.5.6/lib
+LCHDR_LZMA = $(LCHDR)/deps/lzma-26.02
+LCHDR_ZSTD = $(LCHDR)/deps/zstd-1.5.7
 SOURCES_C += \
 	     $(LCHDR)/src/libchdr_bitstream.c \
 	     $(LCHDR)/src/libchdr_cdrom.c \
 	     $(LCHDR)/src/libchdr_chd.c \
+	     $(LCHDR)/src/libchdr_codec_cdfl.c \
+	     $(LCHDR)/src/libchdr_codec_cdlz.c \
+	     $(LCHDR)/src/libchdr_codec_cdzl.c \
+	     $(LCHDR)/src/libchdr_codec_cdzs.c \
+	     $(LCHDR)/src/libchdr_codec_flac.c \
+	     $(LCHDR)/src/libchdr_codec_huff.c \
+	     $(LCHDR)/src/libchdr_codec_lzma.c \
+	     $(LCHDR)/src/libchdr_codec_zlib.c \
+	     $(LCHDR)/src/libchdr_codec_zstd.c \
 	     $(LCHDR)/src/libchdr_flac.c \
 	     $(LCHDR)/src/libchdr_huffman.c \
-	     $(LCHDR_LZMA)/src/Alloc.c \
-	     $(LCHDR_LZMA)/src/CpuArch.c \
-	     $(LCHDR_LZMA)/src/Delta.c \
-	     $(LCHDR_LZMA)/src/LzFind.c \
 	     $(LCHDR_LZMA)/src/LzmaDec.c \
-	     $(LCHDR_LZMA)/src/LzmaEnc.c \
-	     $(LCHDR_LZMA)/src/Sort.c \
-	     $(LCHDR_ZSTD)/common/entropy_common.c \
-	     $(LCHDR_ZSTD)/common/error_private.c \
-	     $(LCHDR_ZSTD)/common/fse_decompress.c \
-	     $(LCHDR_ZSTD)/common/xxhash.c \
-	     $(LCHDR_ZSTD)/common/zstd_common.c \
-	     $(LCHDR_ZSTD)/decompress/huf_decompress.c \
-	     $(LCHDR_ZSTD)/decompress/zstd_ddict.c \
-	     $(LCHDR_ZSTD)/decompress/zstd_decompress_block.c \
-	     $(LCHDR_ZSTD)/decompress/zstd_decompress.c
+	     $(LCHDR_ZSTD)/zstddeclib.c
 EXTRA_INCLUDES += $(LCHDR)/include $(LCHDR_LZMA)/include $(LCHDR_ZSTD)
-COREFLAGS += -DHAVE_CHD -DZ7_ST -DZSTD_DISABLE_ASM
-ifeq (,$(call gte,$(APP_PLATFORM_LEVEL),18))
-ifneq ($(TARGET_ARCH_ABI),arm64-v8a)
-# HACK
-COREFLAGS += -Dgetauxval=0*
-endif
+COREFLAGS += -DHAVE_CHD -DCHDR_SYSTEM_ZLIB
+ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
+SOURCES_ASM += $(LCHDR_LZMA)/Asm/arm64/LzmaDecOpt.S
+COREFLAGS += -DZ7_LZMA_DEC_OPT
 endif
 
 COREFLAGS += -ffast-math -DHAVE_LIBRETRO -DNO_FRONTEND -DANDROID -DREARMED
@@ -117,9 +113,11 @@ ifeq ($(USE_LIBRETRO_VFS),1)
 SOURCES_C += \
              $(LIBRETRO_COMMON)/compat/compat_posix_string.c \
              $(LIBRETRO_COMMON)/compat/fopen_utf8.c \
-             $(LIBRETRO_COMMON)/encodings/compat_strl.c \
+             $(LIBRETRO_COMMON)/compat/compat_strl.c \
              $(LIBRETRO_COMMON)/encodings/encoding_utf.c \
              $(LIBRETRO_COMMON)/file/file_path.c \
+             $(LIBRETRO_COMMON)/file/file_path_io.c \
+             $(LIBRETRO_COMMON)/file/retro_dirent.c \
              $(LIBRETRO_COMMON)/streams/file_stream.c \
              $(LIBRETRO_COMMON)/streams/file_stream_transforms.c \
              $(LIBRETRO_COMMON)/string/stdstring.c \
@@ -161,9 +159,12 @@ ifeq ($(HAVE_ARI64),1)
   SOURCES_C   += $(DYNAREC_DIR)/new_dynarec.c \
                  $(DYNAREC_DIR)/pcsxmem.c
   ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
-    SOURCES_ASM += $(DYNAREC_DIR)/linkage_arm64.S
+    SOURCES_ASM += $(CORE_DIR)/gte_arm64.S \
+                   $(CORE_DIR)/gte_nf_arm64.S \
+                   $(DYNAREC_DIR)/linkage_arm64.S
   else
     SOURCES_ASM += $(CORE_DIR)/gte_arm.S \
+                   $(CORE_DIR)/gte_nf_arm.S \
                    $(SPU_DIR)/arm_utils.S \
                    $(DYNAREC_DIR)/linkage_arm.S
   endif
@@ -175,6 +176,9 @@ endif
   SOURCES_C   += $(DYNAREC_DIR)/emu_if.c
 
 ifeq ($(HAVE_LIGHTREC),1)
+  ifeq ($(findstring clang,$(notdir $(TARGET_CC))),clang)
+    COREFLAGS += -Wno-initializer-overrides
+  endif
   COREFLAGS   += -DLIGHTREC -DLIGHTREC_STATIC -DLIGHTREC_CODE_INV=0
   EXTRA_INCLUDES += $(DEPS_DIR)/lightning/include \
 		    $(DEPS_DIR)/lightrec \
@@ -230,6 +234,7 @@ endif
 ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)
   COREFLAGS   += -DHAVE_bgr555_to_rgb565 -DHAVE_bgr888_to_x
   SOURCES_ASM += $(CORE_DIR)/gte_neon.S \
+                 $(CORE_DIR)/gte_nf_neon.S \
                  $(FRONTEND_DIR)/cspace_neon.S
 endif
 
@@ -237,9 +242,18 @@ ifeq ($(USE_ASYNC_CDROM),1)
 COREFLAGS += -DUSE_ASYNC_CDROM
 USE_RTHREADS := 1
 endif
+ifeq ($(USE_ASYNC_GPU),1)
+SOURCES_C += $(GPU_DIR)/gpu_async.c
+COREFLAGS += -DUSE_ASYNC_GPU
+USE_RTHREADS := 1
+endif
+ifeq ($(USE_ASYNC_SPU),1)
+COREFLAGS += -DUSE_ASYNC_SPU
+USE_RTHREADS := 1
+endif
 ifeq ($(USE_RTHREADS),1)
 SOURCES_C += \
-             $(FRONTEND_DIR)/libretro-rthreads.c \
+             $(FRONTEND_DIR)/pcsxr-threads.c \
              $(LIBRETRO_COMMON)/features/features_cpu.c
 COREFLAGS += -DHAVE_RTHREADS
 endif
@@ -258,6 +272,7 @@ LOCAL_C_INCLUDES    += $(EXTRA_INCLUDES)
 LOCAL_LDFLAGS       := -Wl,-version-script=$(FRONTEND_DIR)/libretro-version-script
 LOCAL_LDFLAGS       += -Wl,--script=$(FRONTEND_DIR)/libretro-extern.T
 LOCAL_LDFLAGS       += -Wl,--gc-sections
+LOCAL_LDFLAGS       += -Wl,-z,max-page-size=16384
 LOCAL_LDLIBS        := -lz -llog
 LOCAL_ARM_MODE      := arm
 

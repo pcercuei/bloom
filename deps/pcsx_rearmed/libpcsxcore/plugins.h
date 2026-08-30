@@ -39,7 +39,7 @@ typedef long (CALLBACK *SIO1open)(unsigned long *);
 
 int LoadPlugins();
 void ReleasePlugins();
-int OpenPlugins();
+int OpenPlugins(int load_memcards);
 void ClosePlugins();
 int ReloadCdromPlugin();
 
@@ -58,13 +58,11 @@ typedef uint32_t (CALLBACK* GPUreadStatus)(void);
 typedef uint32_t (CALLBACK* GPUreadData)(void);
 typedef void (CALLBACK* GPUreadDataMem)(uint32_t *, int);
 typedef long (CALLBACK* GPUdmaChain)(uint32_t *, uint32_t, uint32_t *, int32_t *);
-typedef void (CALLBACK* GPUupdateLace)(void);
-typedef long (CALLBACK* GPUfreeze)(uint32_t, GPUFreeze_t *);
+typedef long (CALLBACK* GPUfreeze)(uint32_t, GPUFreeze_t *, uint16_t **);
 typedef void (CALLBACK* GPUvBlank)(int, int);
 typedef void (CALLBACK* GPUgetScreenInfo)(int *, int *);
 
 // GPU function pointers
-extern GPUupdateLace    GPU_updateLace;
 extern GPUinit          GPU_init;
 extern GPUshutdown      GPU_shutdown; 
 extern GPUopen          GPU_open;
@@ -84,7 +82,8 @@ extern GPUgetScreenInfo GPU_getScreenInfo;
 struct CdrStat {
 	uint32_t Type; // DATA, CDDA
 	uint32_t Status; // same as cdr.StatP
-	unsigned char Time_[3]; // unused
+	uint8_t  nodisk;
+	uint8_t  mode1;
 };
 
 int CDR__getStatus(struct CdrStat *stat);
@@ -93,6 +92,7 @@ int CDR__getStatus(struct CdrStat *stat);
 typedef long (CALLBACK* SPUinit)(void);				
 typedef long (CALLBACK* SPUshutdown)(void);	
 typedef long (CALLBACK* SPUclose)(void);			
+typedef void (CALLBACK* SPUconfigure)(void);			
 typedef void (CALLBACK* SPUwriteRegister)(unsigned long, unsigned short, unsigned int);
 typedef unsigned short (CALLBACK* SPUreadRegister)(unsigned long, unsigned int);
 typedef void (CALLBACK* SPUwriteDMAMem)(unsigned short *, int, unsigned int);
@@ -100,21 +100,8 @@ typedef void (CALLBACK* SPUreadDMAMem)(unsigned short *, int, unsigned int);
 typedef void (CALLBACK* SPUplayADPCMchannel)(xa_decode_t *, unsigned int, int);
 typedef void (CALLBACK* SPUregisterCallback)(void (CALLBACK *callback)(int));
 typedef void (CALLBACK* SPUregisterScheduleCb)(void (CALLBACK *callback)(unsigned int cycles_after));
-typedef struct {
-	unsigned char PluginName[8];
-	uint32_t PluginVersion;
-	uint32_t Size;
-} SPUFreezeHdr_t;
-typedef struct SPUFreeze {
-	unsigned char PluginName[8];
-	uint32_t PluginVersion;
-	uint32_t Size;
-	unsigned char SPUPorts[0x200];
-	unsigned char SPURam[0x80000];
-	xa_decode_t xa;
-	unsigned char *unused;
-} SPUFreeze_t;
-typedef long (CALLBACK* SPUfreeze)(unsigned int, struct SPUFreeze *, unsigned int);
+typedef long (CALLBACK* SPUfreeze)(int ulFreezeMode, SPUFreeze_t * pF,
+		unsigned short **ram, void * pF2, unsigned int cycles);
 typedef void (CALLBACK* SPUasync)(unsigned int, unsigned int);
 typedef int  (CALLBACK* SPUplayCDDAchannel)(short *, int, unsigned int, int);
 typedef void (CALLBACK* SPUsetCDvol)(unsigned char, unsigned char, unsigned char, unsigned char, unsigned int);
@@ -124,6 +111,7 @@ extern SPUinit             SPU_init;
 extern SPUshutdown         SPU_shutdown;
 extern SPUopen             SPU_open;
 extern SPUclose            SPU_close;
+extern SPUconfigure        SPU_configure;
 extern SPUwriteRegister    SPU_writeRegister;
 extern SPUreadRegister     SPU_readRegister;
 extern SPUwriteDMAMem      SPU_writeDMAMem;
@@ -137,13 +125,18 @@ extern SPUplayCDDAchannel  SPU_playCDDAchannel;
 extern SPUsetCDvol         SPU_setCDvol;
 
 // PAD Functions
-long PAD1_readPort(PadDataS *);
-unsigned char PAD1_startPoll(int);
+void PAD1_readPort(struct PadDataS *, int *is_multitap);
+unsigned char PAD1_startPoll(void);
 unsigned char PAD1_poll(unsigned char, int *);
 
-long PAD2_readPort(PadDataS *);
-unsigned char PAD2_startPoll(int);
+void PAD2_readPort(struct PadDataS *, int *is_multitap);
+unsigned char PAD2_startPoll(void);
 unsigned char PAD2_poll(unsigned char, int *);
+
+int padFreeze(void *f, int Mode);
+int padToggleAnalog(unsigned int index);
+void padReset(void);
+void padChanged(void);
 
 #ifdef ENABLE_SIO1API
 
@@ -222,9 +215,6 @@ void SetIsoFile(const char *filename);
 const char *GetIsoFile(void);
 boolean UsingIso(void);
 void SetCdOpenCaseTime(s64 time);
-
-int padFreeze(void *f, int Mode);
-int padToggleAnalog(unsigned int index);
 
 extern void pl_gun_byte2(int port, unsigned char byte);
 extern void plat_trigger_vibrate(int pad, int low, int high);

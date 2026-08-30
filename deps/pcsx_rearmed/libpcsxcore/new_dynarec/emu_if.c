@@ -6,6 +6,7 @@
  */
 
 #include <stdio.h>
+#include <assert.h>
 
 #include "emu_if.h"
 #include "pcsxmem.h"
@@ -15,14 +16,12 @@
 #include "../psxevents.h"
 #include "../psxbios.h"
 #include "../r3000a.h"
-#include "../gte_arm.h"
-#include "../gte_neon.h"
 #include "compiler_features.h"
 #include "arm_features.h"
-#define FLAGLESS
 #include "../gte.h"
+#include "../gte_divider.h"
 #if defined(NDRC_THREAD) && !defined(DRC_DISABLE) && !defined(LIGHTREC)
-#include "../../frontend/libretro-rthreads.h"
+#include "../../frontend/pcsxr-threads.h"
 #include "features/features_cpu.h"
 #include "retro_timers.h"
 #endif
@@ -59,23 +58,27 @@ void ndrc_freeze(void *f, int mode)
 		SaveFuncs.write(f, addrs, size);
 	}
 	else {
-		bytes = SaveFuncs.read(f, header, sizeof(header));
-		if (bytes != sizeof(header) || strcmp(header, header_save)) {
-			if (bytes > 0)
-				SaveFuncs.seek(f, -bytes, SEEK_CUR);
-			return;
-		}
-		SaveFuncs.read(f, &size, sizeof(size));
-		if (size <= 0)
-			return;
-		if (size > sizeof(addrs)) {
-			bytes = size - sizeof(addrs);
-			SaveFuncs.seek(f, bytes, SEEK_CUR);
-			size = sizeof(addrs);
-		}
-		bytes = SaveFuncs.read(f, addrs, size);
-		if (bytes != size)
-			return;
+		do {
+			bytes = SaveFuncs.read(f, header, sizeof(header));
+			if (bytes != sizeof(header) || strcmp(header, header_save)) {
+				if (bytes > 0)
+					SaveFuncs.seek(f, -bytes, SEEK_CUR);
+				break;
+			}
+			SaveFuncs.read(f, &size, sizeof(size));
+			if (size <= 0) {
+				size = 0;
+				break;
+			}
+			if (size > sizeof(addrs)) {
+				bytes = size - sizeof(addrs);
+				SaveFuncs.seek(f, bytes, SEEK_CUR);
+				size = sizeof(addrs);
+			}
+			bytes = SaveFuncs.read(f, addrs, size);
+			if (bytes != size)
+				size = 0;
+		} while (0);
 
 		if (psxCpu != &psxInt)
 			new_dynarec_load_blocks(addrs, size);
@@ -110,20 +113,7 @@ void pcsx_mtc0_ds(psxRegisters *regs, u32 reg, u32 val)
 }
 
 /* GTE stuff */
-void *gte_handlers[64];
-
-void *gte_handlers_nf[64] = {
-	NULL      , gteRTPS_nf , NULL       , NULL      , NULL     , NULL       , gteNCLIP_nf, NULL      , // 00
-	NULL      , NULL       , NULL       , NULL      , gteOP_nf , NULL       , NULL       , NULL      , // 08
-	gteDPCS_nf, gteINTPL_nf, gteMVMVA_nf, gteNCDS_nf, gteCDP_nf, NULL       , gteNCDT_nf , NULL      , // 10
-	NULL      , NULL       , NULL       , gteNCCS_nf, gteCC_nf , NULL       , gteNCS_nf  , NULL      , // 18
-	gteNCT_nf , NULL       , NULL       , NULL      , NULL     , NULL       , NULL       , NULL      , // 20
-	gteSQR_nf , gteDCPL_nf , gteDPCT_nf , NULL      , NULL     , gteAVSZ3_nf, gteAVSZ4_nf, NULL      , // 28 
-	gteRTPT_nf, NULL       , NULL       , NULL      , NULL     , NULL       , NULL       , NULL      , // 30
-	NULL      , NULL       , NULL       , NULL      , NULL     , gteGPF_nf  , gteGPL_nf  , gteNCCT_nf, // 38
-};
-
-const char *gte_regnames[64] = {
+const char *gte_opnames[64] = {
 	NULL  , "RTPS" , NULL   , NULL  , NULL , NULL   , "NCLIP", NULL  , // 00
 	NULL  , NULL   , NULL   , NULL  , "OP" , NULL   , NULL   , NULL  , // 08
 	"DPCS", "INTPL", "MVMVA", "NCDS", "CDP", NULL   , "NCDT" , NULL  , // 10
@@ -160,54 +150,54 @@ const char *gte_regnames[64] = {
 	(GDBITS9(b0,b1,b2,b3,b4,b5,b6,b7,b8) | GDBIT(b9))
 
 const uint64_t gte_reg_reads[64] = {
-	[GTE_RTPS]  = 0x1f0000ff00000000ll | GDBITS7(0,1,13,14,17,18,19),
-	[GTE_NCLIP] =                        GDBITS3(12,13,14),
-	[GTE_OP]    = GCBITS3(0,2,4)       | GDBITS3(9,10,11),
-	[GTE_DPCS]  = GCBITS3(21,22,23)    | GDBITS4(6,8,21,22),
-	[GTE_INTPL] = GCBITS3(21,22,23)    | GDBITS7(6,8,9,10,11,21,22),
-	[GTE_MVMVA] = 0x00ffffff00000000ll | GDBITS9(0,1,2,3,4,5,9,10,11), // XXX: maybe decode further?
-	[GTE_NCDS]  = 0x00ffff0000000000ll | GDBITS6(0,1,6,8,21,22),
-	[GTE_CDP]   = 0x00ffe00000000000ll | GDBITS7(6,8,9,10,11,21,22),
-	[GTE_NCDT]  = 0x00ffff0000000000ll | GDBITS8(0,1,2,3,4,5,6,8),
-	[GTE_NCCS]  = 0x001fff0000000000ll | GDBITS5(0,1,6,21,22),
-	[GTE_CC]    = 0x001fe00000000000ll | GDBITS6(6,9,10,11,21,22),
-	[GTE_NCS]   = 0x001fff0000000000ll | GDBITS5(0,1,6,21,22),
-	[GTE_NCT]   = 0x001fff0000000000ll | GDBITS7(0,1,2,3,4,5,6),
-	[GTE_SQR]   =                        GDBITS3(9,10,11),
-	[GTE_DCPL]  = GCBITS3(21,22,23)    | GDBITS7(6,8,9,10,11,21,22),
-	[GTE_DPCT]  = GCBITS3(21,22,23)    | GDBITS4(8,20,21,22),
-	[GTE_AVSZ3] = GCBIT(29)            | GDBITS3(17,18,19),
-	[GTE_AVSZ4] = GCBIT(30)            | GDBITS4(16,17,18,19),
-	[GTE_RTPT]  = 0x1f0000ff00000000ll | GDBITS7(0,1,2,3,4,5,19),
-	[GTE_GPF]   =                        GDBITS7(6,8,9,10,11,21,22),
-	[GTE_GPL]   =                        GDBITS10(6,8,9,10,11,21,22,25,26,27),
-	[GTE_NCCT]  = 0x001fff0000000000ll | GDBITS7(0,1,2,3,4,5,6),
+	[GTEOP_RTPS]  = 0x1f0000ff00000000ll | GDBITS7(0,1,13,14,17,18,19),
+	[GTEOP_NCLIP] =                        GDBITS3(12,13,14),
+	[GTEOP_OP]    = GCBITS3(0,2,4)       | GDBITS3(9,10,11),
+	[GTEOP_DPCS]  = GCBITS3(21,22,23)    | GDBITS4(6,8,21,22),
+	[GTEOP_INTPL] = GCBITS3(21,22,23)    | GDBITS7(6,8,9,10,11,21,22),
+	[GTEOP_MVMVA] = 0x00ffffff00000000ll | GDBITS9(0,1,2,3,4,5,9,10,11), // XXX: maybe decode further?
+	[GTEOP_NCDS]  = 0x00ffff0000000000ll | GDBITS6(0,1,6,8,21,22),
+	[GTEOP_CDP]   = 0x00ffe00000000000ll | GDBITS7(6,8,9,10,11,21,22),
+	[GTEOP_NCDT]  = 0x00ffff0000000000ll | GDBITS8(0,1,2,3,4,5,6,8),
+	[GTEOP_NCCS]  = 0x001fff0000000000ll | GDBITS5(0,1,6,21,22),
+	[GTEOP_CC]    = 0x001fe00000000000ll | GDBITS6(6,9,10,11,21,22),
+	[GTEOP_NCS]   = 0x001fff0000000000ll | GDBITS5(0,1,6,21,22),
+	[GTEOP_NCT]   = 0x001fff0000000000ll | GDBITS7(0,1,2,3,4,5,6),
+	[GTEOP_SQR]   =                        GDBITS3(9,10,11),
+	[GTEOP_DCPL]  = GCBITS3(21,22,23)    | GDBITS7(6,8,9,10,11,21,22),
+	[GTEOP_DPCT]  = GCBITS3(21,22,23)    | GDBITS4(8,20,21,22),
+	[GTEOP_AVSZ3] = GCBIT(29)            | GDBITS3(17,18,19),
+	[GTEOP_AVSZ4] = GCBIT(30)            | GDBITS4(16,17,18,19),
+	[GTEOP_RTPT]  = 0x1f0000ff00000000ll | GDBITS7(0,1,2,3,4,5,19),
+	[GTEOP_GPF]   =                        GDBITS7(6,8,9,10,11,21,22),
+	[GTEOP_GPL]   =                        GDBITS10(6,8,9,10,11,21,22,25,26,27),
+	[GTEOP_NCCT]  = 0x001fff0000000000ll | GDBITS7(0,1,2,3,4,5,6),
 };
 
 // note: this excludes gteFLAG that is always written to
 const uint64_t gte_reg_writes[64] = {
-	[GTE_RTPS]  = 0x0f0f7f00ll,
-	[GTE_NCLIP] = GDBIT(24),
-	[GTE_OP]    = GDBITS6(9,10,11,25,26,27),
-	[GTE_DPCS]  = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_INTPL] = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_MVMVA] = GDBITS6(9,10,11,25,26,27),
-	[GTE_NCDS]  = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_CDP]   = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_NCDT]  = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_NCCS]  = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_CC]    = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_NCS]   = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_NCT]   = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_SQR]   = GDBITS6(9,10,11,25,26,27),
-	[GTE_DCPL]  = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_DPCT]  = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_AVSZ3] = GDBITS2(7,24),
-	[GTE_AVSZ4] = GDBITS2(7,24),
-	[GTE_RTPT]  = 0x0f0f7f00ll,
-	[GTE_GPF]   = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_GPL]   = GDBITS9(9,10,11,20,21,22,25,26,27),
-	[GTE_NCCT]  = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_RTPS]  = 0x0f0f7f00ll,
+	[GTEOP_NCLIP] = GDBIT(24),
+	[GTEOP_OP]    = GDBITS6(9,10,11,25,26,27),
+	[GTEOP_DPCS]  = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_INTPL] = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_MVMVA] = GDBITS6(9,10,11,25,26,27),
+	[GTEOP_NCDS]  = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_CDP]   = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_NCDT]  = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_NCCS]  = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_CC]    = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_NCS]   = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_NCT]   = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_SQR]   = GDBITS6(9,10,11,25,26,27),
+	[GTEOP_DCPL]  = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_DPCT]  = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_AVSZ3] = GDBITS2(7,24),
+	[GTEOP_AVSZ4] = GDBITS2(7,24),
+	[GTEOP_RTPT]  = 0x0f0f7f00ll,
+	[GTEOP_GPF]   = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_GPL]   = GDBITS9(9,10,11,20,21,22,25,26,27),
+	[GTEOP_NCCT]  = GDBITS9(9,10,11,20,21,22,25,26,27),
 };
 
 static void ari64_reset()
@@ -290,6 +280,12 @@ static void ari64_notify(enum R3000Anote note, void *data) {
 		ari64_on_ext_change(data == NULL, 0);
 		psxInt.Notify(note, data);
 		break;
+	case R3000ACPU_NOTIFY_AFTER_LOAD_STATE:
+		// no invalidate since ndrc_freeze() already did it
+		new_dyna_pcsx_mem_reset();
+		new_dyna_pcsx_mem_load_state();
+		psxInt.Notify(note, data);
+		break;
 	}
 }
 
@@ -365,6 +361,8 @@ static R3000Acpu psxMixedCpu = {
 	NULL /* ApplyConfig */,	NULL /* Shutdown */
 };
 
+#define cacheIsolated(regs) ((regs)->CP0.n.SR & (1u << 16))
+
 static noinline void ari64_execute_threaded_slow(struct psxRegisters *regs,
 	enum blockExecCaller block_caller)
 {
@@ -384,6 +382,11 @@ static noinline void ari64_execute_threaded_slow(struct psxRegisters *regs,
 	{
 		mixed_execute_block(regs, block_caller);
 
+		// drc only stops on taken branches, so avoid useless blocks
+		if (regs->branchSeen == R3000A_BRANCH_NOT_TAKEN)
+			continue;
+		if (!regs->stop && cacheIsolated(regs))
+			continue;
 		if (ndrc_g.thread.busy_addr == ~0u)
 			break;
 		if (block_caller == EXEC_CALLER_HLE) {
@@ -487,7 +490,7 @@ static int ari64_thread_check_range(unsigned int start, unsigned int end)
 	return 1;
 }
 
-static void ari64_compile_thread(void *unused)
+static STRHEAD_RET_TYPE ari64_compile_thread(void *unused)
 {
 	struct ht_entry *hash_table =
 		*(void **)((char *)dynarec_local + LO_hash_table_ptr);
@@ -511,6 +514,7 @@ static void ari64_compile_thread(void *unused)
 	}
 	slock_unlock(ndrc_g.thread.lock);
 	(void)target;
+	STRHEAD_RETURN();
 }
 
 static void ari64_thread_shutdown(void)
@@ -551,7 +555,7 @@ static void ari64_thread_init(void)
 	else {
 		u32 cpu_count = cpu_features_get_core_amount();
 		enable = cpu_count > 1;
-#ifdef _3DS
+#if defined(DRC_DBG) || defined(_3DS)
 		// bad for old3ds, reprotedly no improvement for new3ds
 		enable = 0;
 #endif
@@ -588,35 +592,12 @@ static int ari64_thread_check_range(unsigned int start, unsigned int end) { retu
 
 static int ari64_init()
 {
-	static u32 scratch_buf[8*8*2] __attribute__((aligned(64)));
-	size_t i;
-
 	new_dynarec_init();
 	new_dyna_pcsx_mem_init();
 
-	for (i = 0; i < ARRAY_SIZE(gte_handlers); i++)
-		if (psxCP2[i] != gteNULL)
-			gte_handlers[i] = psxCP2[i];
-
-#if defined(__arm__) && !defined(DRC_DBG)
-	gte_handlers[0x06] = gteNCLIP_arm;
-#ifdef HAVE_ARMV5
-	gte_handlers_nf[0x01] = gteRTPS_nf_arm;
-	gte_handlers_nf[0x30] = gteRTPT_nf_arm;
-#endif
-#ifdef __ARM_NEON__
-	// compiler's _nf version is still a lot slower than neon
-	// _nf_arm RTPS is roughly the same, RTPT slower
-	gte_handlers[0x01] = gte_handlers_nf[0x01] = gteRTPS_neon;
-	gte_handlers[0x30] = gte_handlers_nf[0x30] = gteRTPT_neon;
-#endif
-#endif
-#ifdef DRC_DBG
-	memcpy(gte_handlers_nf, gte_handlers, sizeof(gte_handlers_nf));
-#endif
-	psxH_ptr = psxH;
+	psxH_ptr = psxRegs.ptrs.psxH;
 	zeromem_ptr = zero_mem;
-	scratch_buf_ptr = scratch_buf; // for gte_neon.S
+	gte_divider_tab_ptr = gte_divider_tab; // for gte_neon.S
 
 	ndrc_g.cycle_multiplier_old = Config.cycle_multiplier;
 	ndrc_g.hacks_old = ndrc_g.hacks | ndrc_g.hacks_pergame;
@@ -688,15 +669,15 @@ static u32 memcheck_read(u32 a)
 {
 	if ((a >> 16) == 0x1f80)
 		// scratchpad/IO
-		return *(u32 *)(psxH + (a & 0xfffc));
+		return *(u32 *)(psxRegs.ptrs.psxH + (a & 0xfffc));
 
 	if ((a >> 16) == 0x1f00)
 		// parallel
-		return *(u32 *)(psxP + (a & 0xfffc));
+		return *(u32 *)(psxRegs.ptrs.psxP + (a & 0xfffc));
 
 //	if ((a & ~0xe0600000) < 0x200000)
 	// RAM
-	return *(u32 *)(psxM + (a & 0x1ffffc));
+	return *(u32 *)(psxRegs.ptrs.psxM + (a & 0x1ffffc));
 }
 
 #if 0
@@ -752,8 +733,8 @@ void do_insn_trace(void)
 
 #if 0
 	if (psxRegs.cycle == 190230) {
-		dump_mem("/mnt/ntz/dev/pnd/tmp/psxram_i.dump", psxM, 0x200000);
-		dump_mem("/mnt/ntz/dev/pnd/tmp/psxregs_i.dump", psxH, 0x10000);
+		dump_mem("/mnt/ntz/dev/pnd/tmp/psxram_i.dump", psxRegs.ptrs.psxM, 0x200000);
+		dump_mem("/mnt/ntz/dev/pnd/tmp/psxregs_i.dump", psxRegs.ptrs.psxH, 0x10000);
 		printf("dumped\n");
 		exit(1);
 	}
@@ -928,8 +909,8 @@ void do_insn_cmp(void)
 			i+8, allregs_p[i+8], i+16, allregs_p[i+16], i+24, allregs_p[i+24]);
 	printf("PC: %08x/%08x, cycle %u, next %u\n", psxRegs.pc, ppc,
 		psxRegs.cycle, psxRegs.next_interupt);
-	//dump_mem("/tmp/psxram.dump", psxM, 0x200000);
-	//dump_mem("/mnt/ntz/dev/pnd/tmp/psxregs.dump", psxH, 0x10000);
+	//dump_mem("/tmp/psxram.dump", psxRegs.ptrs.psxM, 0x200000);
+	//dump_mem("/mnt/ntz/dev/pnd/tmp/psxregs.dump", psxRegs.ptrs.psxH, 0x10000);
 	exit(1);
 ok:
 	//psxRegs.cycle = rregs.cycle + 2; // sync timing

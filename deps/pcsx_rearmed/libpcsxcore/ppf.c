@@ -19,10 +19,16 @@
  *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1307 USA
  */
 
+#include <stdio.h>
+#include <ctype.h>
 #include "psxcommon.h"
 #include "ppf.h"
 #include "misc.h"
 #include "cdrom.h"
+
+#ifdef USE_LIBRETRO_VFS
+#include <streams/file_stream_transforms.h>
+#endif
 
 typedef struct tagPPF_DATA {
 	s32					addr;
@@ -421,7 +427,7 @@ int LoadSBI(const char *fname, int sector_count) {
 
 end:
 	if (!clean_eof)
-		SysPrintf(_("SBI: parse failure at 0x%lx\n"), ftell(sbihandle));
+		SysPrintf(_("SBI: parse failure at 0x%lx\n"), (long)ftell(sbihandle));
 	if (!good_sectors) {
 		free(sbi_sectors);
 		sbi_sectors = NULL;

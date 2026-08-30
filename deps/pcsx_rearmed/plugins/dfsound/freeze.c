@@ -24,6 +24,7 @@
 #include "externals.h"
 #include "registers.h"
 #include "spu.h"
+#include "psemu_plugin_defs.h"
 
 ////////////////////////////////////////////////////////////////////////
 // freeze structs
@@ -61,7 +62,7 @@ typedef struct
  int            ReleaseRate;
  int            EnvelopeVol;
  int            lVolume;
- int            lDummy1;
+ int            StepCounter;
  int            lDummy2;
 } ADSRInfoEx_orig;
 
@@ -108,18 +109,10 @@ typedef struct
  ADSRInfoEx_orig   ADSRX;                              // next ADSR settings (will be moved to active on sample start)
 } SPUCHAN_orig;
 
-typedef struct SPUFreeze
-{
- char          szSPUName[8];
- uint32_t ulFreezeVersion;
- uint32_t ulFreezeSize;
- unsigned char cSPUPort[0x200];
- unsigned char cSPURam[0x80000];
- xa_decode_t   xaS;     
-} SPUFreeze_t;
-
 typedef struct
 {
+ xa_decode_t xa;
+
  unsigned short  spuIrq;
  unsigned short  decode_pos;
  uint32_t   pSpuIrq;
@@ -145,8 +138,10 @@ typedef struct
 
 ////////////////////////////////////////////////////////////////////////
 
-static SPUOSSFreeze_t * LoadStateV5(SPUFreeze_t * pF, uint32_t cycles);
-static void LoadStateUnknown(SPUFreeze_t * pF, uint32_t cycles); // unknown format
+static void LoadStateV5(SPUOSSFreeze_t * pFO, uint32_t cycles);
+static void LoadStateUnknown(uint32_t cycles); // unknown format
+
+#define SB_FORMAT_MAGIC 0x73626201
 
 // we want to retain compatibility between versions,
 // so use original channel struct
@@ -158,6 +153,7 @@ static void save_channel(SPUCHAN_orig *d, const SPUCHAN *s, int ch)
  d->spos = s->spos;
  d->sinc = s->sinc;
  assert(sizeof(d->SB) >= sizeof(spu.sb[ch]));
+ d->SB[sizeof(d->SB) / sizeof(d->SB[0]) - 1] = SB_FORMAT_MAGIC;
  memcpy(d->SB, &spu.sb[ch], sizeof(spu.sb[ch]));
  d->iStart = (regAreaGetCh(ch, 6) & ~1) << 3;
  d->iCurr = 0; // set by the caller
@@ -172,8 +168,8 @@ static void save_channel(SPUCHAN_orig *d, const SPUCHAN *s, int ch)
  d->bIgnoreLoop = (s->prevflags ^ 2) << 1;
  d->iRightVolume = s->iRightVolume;
  d->iRawPitch = s->iRawPitch;
- d->s_1 = spu.sb[ch].SB[27]; // yes it's reversed
- d->s_2 = spu.sb[ch].SB[26];
+ d->s_1 = spu.sb[ch].decode[27]; // yes it's reversed
+ d->s_2 = spu.sb[ch].decode[26];
  d->bRVBActive = s->bRVBActive;
  d->bNoise = s->bNoise;
  d->bFMod = s->bFMod;
@@ -187,7 +183,8 @@ static void save_channel(SPUCHAN_orig *d, const SPUCHAN *s, int ch)
  d->ADSRX.SustainRate = s->ADSRX.SustainRate;
  d->ADSRX.ReleaseModeExp = s->ADSRX.ReleaseModeExp;
  d->ADSRX.ReleaseRate = s->ADSRX.ReleaseRate;
- d->ADSRX.EnvelopeVol = s->ADSRX.EnvelopeVol;
+ d->ADSRX.EnvelopeVol = (uint32_t)s->ADSRX.EnvelopeVol << 16;
+ d->ADSRX.StepCounter = s->ADSRX.StepCounter;
  d->ADSRX.lVolume = d->bOn; // hmh
 }
 
@@ -200,7 +197,13 @@ static void load_channel(SPUCHAN *d, const SPUCHAN_orig *s, int ch)
  d->spos = s->spos;
  d->sinc = s->sinc;
  d->sinc_inv = 0;
- memcpy(&spu.sb[ch], s->SB, sizeof(spu.sb[ch]));
+ if (s->SB[sizeof(s->SB) / sizeof(s->SB[0]) - 1] == SB_FORMAT_MAGIC)
+  memcpy(&spu.sb[ch], s->SB, sizeof(spu.sb[ch]));
+ else {
+  memset(&spu.sb[ch], 0, sizeof(spu.sb[ch]));
+  spu.sb[ch].decode[27] = s->s_1; // yes it's reversed
+  spu.sb[ch].decode[26] = s->s_2;
+ }
  d->pCurr = (void *)((uintptr_t)s->iCurr & 0x7fff0);
  d->pLoop = (void *)((uintptr_t)s->iLoop & 0x7fff0);
  d->bReverb = s->bReverb;
@@ -222,7 +225,8 @@ static void load_channel(SPUCHAN *d, const SPUCHAN_orig *s, int ch)
  d->ADSRX.SustainRate = s->ADSRX.SustainRate;
  d->ADSRX.ReleaseModeExp = s->ADSRX.ReleaseModeExp;
  d->ADSRX.ReleaseRate = s->ADSRX.ReleaseRate;
- d->ADSRX.EnvelopeVol = s->ADSRX.EnvelopeVol;
+ d->ADSRX.EnvelopeVol = s->ADSRX.EnvelopeVol >> 16;
+ d->ADSRX.StepCounter = s->ADSRX.StepCounter;
  if (s->bOn) spu.dwChannelsAudible |= 1<<ch;
  else d->ADSRX.EnvelopeVol = 0;
 }
@@ -239,43 +243,47 @@ static void load_register(unsigned long reg, unsigned int cycles)
 // SPUFREEZE: called by main emu on savestate load/save
 ////////////////////////////////////////////////////////////////////////
 
-long DoFreeze(unsigned int ulFreezeMode, SPUFreeze_t * pF,
- unsigned int cycles)
+long DoFreeze(int ulFreezeMode, struct SPUFreeze * pF, unsigned short **ram,
+ void * pF2, unsigned int cycles)
 {
  SPUOSSFreeze_t * pFO = NULL;
- sample_buf *sb_rvb = &spu.sb[MAXCHAN];
+ sample_buf_rvb *sb_rvb = &spu.sb_rvb;
+ unsigned int ossOffset = sizeof(SPUFreeze_t) + 512*1024; // when combined
  int i, j;
 
- if(!pF) return 0;                                     // first check
+ assert(sizeof(SPUOSSFreeze_t) <= SPUFREEZE_F2_MAX_SIZE);
+ if (ram)
+  *ram = spu.spuMem;
+ if (!pF || !pF2) return 0;                            // first check
+ pFO = pF2;
 
-#if P_HAVE_PTHREAD || defined(WANT_THREAD_CODE)
- sb_rvb = &spu.sb_thread[MAXCHAN];
+#if defined(USE_ASYNC_SPU) || defined(WANT_THREAD_CODE)
+ sb_rvb = (sample_buf_rvb *)&spu.sb_thread[MAXCHAN];
 #endif
  if(ulFreezeMode)                                      // info or save?
   {//--------------------------------------------------//
    int xa_left = 0, cdda_left = 0;
    do_samples(cycles, 1);
 
-   if(ulFreezeMode==1)                                 
-    memset(pF,0,sizeof(SPUFreeze_t)+sizeof(SPUOSSFreeze_t));
+   if (ulFreezeMode == 1)
+    memset(pF, 0, sizeof(*pF));
 
-   strcpy(pF->szSPUName,"PBOSS");
-   pF->ulFreezeVersion=5;
-   pF->ulFreezeSize=sizeof(SPUFreeze_t)+sizeof(SPUOSSFreeze_t);
+   strcpy(pF->PluginName, "PBOSS");
+   pF->PluginVersion = 5;
+   pF->Size = ossOffset + sizeof(SPUOSSFreeze_t);
 
    if(ulFreezeMode==2) return 1;                       // info mode? ok, bye
                                                        // save mode:
    regAreaGet(H_SPUctrl) = spu.spuCtrl;
    regAreaGet(H_SPUstat) = spu.spuStat;
-   memcpy(pF->cSPURam,spu.spuMem,0x80000);             // copy common infos
-   memcpy(pF->cSPUPort,spu.regArea,0x200);
+   memcpy(pF->SPUPorts, spu.regArea, 0x200);
 
    if(spu.xapGlobal && spu.XAPlay!=spu.XAFeed)         // some xa
     {
      xa_left = spu.XAFeed - spu.XAPlay;
      if (xa_left < 0)
       xa_left = spu.XAEnd - spu.XAPlay + spu.XAFeed - spu.XAStart;
-     pF->xaS = *spu.xapGlobal;
+     pFO->xa = *spu.xapGlobal;
     }
    else if (spu.CDDAPlay != spu.CDDAFeed)
     {
@@ -284,21 +292,19 @@ long DoFreeze(unsigned int ulFreezeMode, SPUFreeze_t * pF,
      cdda_left = spu.CDDAFeed - spu.CDDAPlay;
      if (cdda_left < 0)
       cdda_left = spu.CDDAEnd - spu.CDDAPlay + spu.CDDAFeed - spu.CDDAStart;
-     if (cdda_left > sizeof(pF->xaS.pcm) / 4)
-      cdda_left = sizeof(pF->xaS.pcm) / 4;
+     if (cdda_left > sizeof(pFO->xa.pcm) / 4)
+      cdda_left = sizeof(pFO->xa.pcm) / 4;
      if (p + cdda_left <= spu.CDDAEnd)
-      memcpy(pF->xaS.pcm, p, cdda_left * 4);
+      memcpy(pFO->xa.pcm, p, cdda_left * 4);
      else {
-      memcpy(pF->xaS.pcm, p, (spu.CDDAEnd - p) * 4);
-      memcpy((char *)pF->xaS.pcm + (spu.CDDAEnd - p) * 4, spu.CDDAStart,
+      memcpy(pFO->xa.pcm, p, (spu.CDDAEnd - p) * 4);
+      memcpy((char *)pFO->xa.pcm + (spu.CDDAEnd - p) * 4, spu.CDDAStart,
              (cdda_left - (spu.CDDAEnd - p)) * 4);
      }
-     pF->xaS.nsamples = 0;
+     pFO->xa.nsamples = 0;
     }
    else
-    memset(&pF->xaS,0,sizeof(xa_decode_t));            // or clean xa
-
-   pFO=(SPUOSSFreeze_t *)(pF+1);                       // store special stuff
+    memset(&pFO->xa, 0, sizeof(xa_decode_t));          // or clean xa
 
    pFO->spuIrq = spu.regArea[(H_SPUirqAddr - 0x0c00) / 2];
    if(spu.pSpuIrq) pFO->pSpuIrq = spu.pSpuIrq - spu.spuMemC;
@@ -318,7 +324,7 @@ long DoFreeze(unsigned int ulFreezeMode, SPUFreeze_t * pF,
    pFO->XALastVal = spu.XALastVal;
    pFO->last_keyon_cycles = spu.last_keyon_cycles;
    for (i = 0; i < 2; i++)
-    memcpy(&pFO->rvb_sb[i], sb_rvb->SB_rvb[i], sizeof(pFO->rvb_sb[i]));
+    memcpy(&pFO->rvb_sb[i], sb_rvb->sample[i], sizeof(pFO->rvb_sb[i]));
    pFO->interpolation = spu.interpolation;
 
    for(i=0;i<MAXCHAN;i++)
@@ -336,27 +342,29 @@ long DoFreeze(unsigned int ulFreezeMode, SPUFreeze_t * pF,
                                                        
  if(ulFreezeMode!=0) return 0;                         // bad mode? bye
 
- memcpy(spu.spuMem,pF->cSPURam,0x80000);               // get ram
- memcpy(spu.regArea,pF->cSPUPort,0x200);
+ memcpy(spu.regArea, pF->SPUPorts, 0x200);
  spu.bMemDirty = 1;
  spu.spuCtrl = regAreaGet(H_SPUctrl);
  spu.spuStat = regAreaGet(H_SPUstat);
 
- if (!strcmp(pF->szSPUName,"PBOSS") && pF->ulFreezeVersion==5)
-   pFO = LoadStateV5(pF, cycles);
- else LoadStateUnknown(pF, cycles);
+ if (!strcmp(pF->PluginName, "PBOSS") && pF->PluginVersion == 5)
+   LoadStateV5(pFO, cycles);
+ else {
+   LoadStateUnknown(cycles);
+   pFO = NULL;
+ }
 
  spu.XAPlay = spu.XAFeed = spu.XAStart;
  spu.CDDAPlay = spu.CDDAFeed = spu.CDDAStart;
  spu.cdClearSamples = 512;
- if (pFO && pFO->xa_left && pF->xaS.nsamples) {        // start xa again
-  FeedXA(&pF->xaS);
+ if (pFO && pFO->xa_left && pFO->xa.nsamples) {        // start xa again
+  FeedXA(&pFO->xa);
   spu.XAPlay = spu.XAFeed - pFO->xa_left;
   if (spu.XAPlay < spu.XAStart)
    spu.XAPlay = spu.XAStart;
  }
  else if (pFO && pFO->cdda_left) {                     // start cdda again
-  FeedCDDA((void *)pF->xaS.pcm, pFO->cdda_left * 4);
+  FeedCDDA((void *)pFO->xa.pcm, pFO->cdda_left * 4);
  }
 
  // not in old savestates
@@ -368,7 +376,7 @@ long DoFreeze(unsigned int ulFreezeMode, SPUFreeze_t * pF,
  spu.XALastVal = 0;
  spu.last_keyon_cycles = cycles - 16*786u;
  spu.interpolation = -1;
- if (pFO && pF->ulFreezeSize >= sizeof(*pF) + offsetof(SPUOSSFreeze_t, rvb_sb)) {
+ if (pFO && pF->Size >= ossOffset + offsetof(SPUOSSFreeze_t, rvb_sb)) {
   spu.cycles_dma_end = pFO->cycles_dma_end;
   spu.decode_dirty_ch = pFO->decode_dirty_ch;
   spu.dwNoiseVal = pFO->dwNoiseVal;
@@ -377,10 +385,10 @@ long DoFreeze(unsigned int ulFreezeMode, SPUFreeze_t * pF,
   spu.XALastVal = pFO->XALastVal;
   spu.last_keyon_cycles = pFO->last_keyon_cycles;
  }
- if (pFO && pF->ulFreezeSize >= sizeof(*pF) + sizeof(*pFO)) {
+ if (pFO && pF->Size >= ossOffset + sizeof(*pFO)) {
   for (i = 0; i < 2; i++)
    for (j = 0; j < 2; j++)
-    memcpy(&sb_rvb->SB_rvb[i][j*4], pFO->rvb_sb[i], 4 * sizeof(sb_rvb->SB_rvb[i][0]));
+    memcpy(&sb_rvb->sample[i][j*4], pFO->rvb_sb[i], 4 * sizeof(sb_rvb->sample[i][0]));
   spu.interpolation = pFO->interpolation;
  }
  for (i = 0; i <= 2; i += 2)
@@ -411,11 +419,9 @@ long DoFreeze(unsigned int ulFreezeMode, SPUFreeze_t * pF,
 
 ////////////////////////////////////////////////////////////////////////
 
-static SPUOSSFreeze_t * LoadStateV5(SPUFreeze_t * pF, uint32_t cycles)
+static void LoadStateV5(SPUOSSFreeze_t * pFO, uint32_t cycles)
 {
- int i;SPUOSSFreeze_t * pFO;
-
- pFO=(SPUOSSFreeze_t *)(pF+1);
+ int i;
 
  spu.pSpuIrq = spu.spuMemC + ((spu.regArea[(H_SPUirqAddr - 0x0c00) / 2] << 3) & ~0xf);
 
@@ -438,13 +444,11 @@ static SPUOSSFreeze_t * LoadStateV5(SPUFreeze_t * pF, uint32_t cycles)
    spu.s_chan[i].pCurr+=(uintptr_t)spu.spuMemC;
    spu.s_chan[i].pLoop+=(uintptr_t)spu.spuMemC;
   }
-
- return pFO;
 }
 
 ////////////////////////////////////////////////////////////////////////
 
-static void LoadStateUnknown(SPUFreeze_t * pF, uint32_t cycles)
+static void LoadStateUnknown(uint32_t cycles)
 {
  int i;
 

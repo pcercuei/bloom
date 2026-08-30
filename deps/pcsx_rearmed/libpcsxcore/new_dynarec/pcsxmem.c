@@ -31,25 +31,22 @@ static uintptr_t mem_ffwtab[(1+2+4) * 0x1000 / 4];
 //static uintptr_t mem_unmrtab[(1+2+4) * 0x1000 / 4];
 static uintptr_t mem_unmwtab[(1+2+4) * 0x1000 / 4];
 
-static
-#ifdef __clang__
-// When this is called in a loop, and 'h' is a function pointer, clang will crash.
-__attribute__ ((noinline))
-#endif
-void map_item(uintptr_t *out, const void *h, uintptr_t flag)
+static void map_item_(uintptr_t *out, uintptr_t hv, uintptr_t flag)
 {
-	uintptr_t hv = (uintptr_t)h;
 	if (hv & 1) {
-		SysPrintf("FATAL: %p has LSB set\n", h);
+		SysPrintf("FATAL: %zx has LSB set\n", hv);
 		abort();
 	}
 	*out = (hv >> 1) | (flag << (sizeof(hv) * 8 - 1));
 }
 
+#define map_item(out_, h_, flag_) \
+	map_item_(out_, (uintptr_t)(h_), flag_)
+
 // size must be power of 2, at least 4k
 #define map_l1_mem(tab, i, addr, size, base) \
-	map_item(&tab[((u32)(addr) >> 12) + i], \
-		 (u8 *)(base) - (u32)((addr) + ((i << 12) & ~(size - 1))), 0)
+	map_item_(&tab[((u32)(addr) >> 12) + i], \
+		 (uintptr_t)(base) - (u32)((addr) + ((i << 12) & ~(size - 1))), 0)
 
 #define IOMEM32(a) (((a) & 0xfff) / 4)
 #define IOMEM16(a) (0x1000/4 + (((a) & 0xfff) / 2))
@@ -72,6 +69,12 @@ static void write_mem_dummy(u32 data)
 			  address, data, psxRegs.pc, psxRegs.cycle);
 }
 
+static void write_mem_ro(u32 data)
+{
+	memprintf("ro w %08x, %08x @%08x %u\n",
+		  address, data, psxRegs.pc, psxRegs.cycle);
+}
+
 /* IO handlers */
 static u32 io_read_sio16()
 {
@@ -84,11 +87,6 @@ static u32 io_read_sio32()
 }
 
 static void io_write_sio16(u32 value)
-{
-	sioWrite8(value);
-}
-
-static void io_write_sio32(u32 value)
 {
 	sioWrite8(value);
 }
@@ -130,8 +128,8 @@ static void map_rcnt_rcount1(u32 mode)
 static void map_rcnt_rcount2(u32 mode)
 {
 	if ((mode & 7) == 1 || (mode & 7) == 7) { // sync mode
-		map_item(&mem_iortab[IOMEM32(0x1120)], &psxH[0x1000], 0);
-		map_item(&mem_iortab[IOMEM16(0x1120)], &psxH[0x1000], 0);
+		map_item(&mem_iortab[IOMEM32(0x1120)], &psxRegs.ptrs.psxH[0x1000], 0);
+		map_item(&mem_iortab[IOMEM16(0x1120)], &psxRegs.ptrs.psxH[0x1000], 0);
 	}
 	else if (mode & 0x200) { // clk/8
 		map_item(&mem_iortab[IOMEM32(0x1120)], rcnt2_read_count_m1, 1);
@@ -150,8 +148,11 @@ static void map_rcnt_rcount2(u32 mode)
 #endif
 
 #define make_rcnt_funcs(i) \
-static u32 io_rcnt_read_mode##i()   { return psxRcntRmode(i); } \
-static u32 io_rcnt_read_target##i() { return psxRcntRtarget(i); } \
+static u32 io_rcnt_read8_count##i##odd()  { return psxRcntRcount##i() >> 8; } \
+static u32 io_rcnt_read_mode##i()         { return psxRcntRmode(i); } \
+static u32 io_rcnt_read8_mode##i##odd()   { return psxRcntRmode(i) >> 8; } \
+static u32 io_rcnt_read_target##i()       { return psxRcntRtarget(i); } \
+static u32 io_rcnt_read8_target##i##odd() { return psxRcntRtarget(i) >> 8; } \
 static void io_rcnt_write_count##i(u32 val)  { psxRcntWcount(i, val & 0xffff); } \
 static void io_rcnt_write_mode##i(u32 val)   { psxRcntWmode(i, val); map_rcnt_rcount##i(val); } \
 static void io_rcnt_write_target##i(u32 val) { psxRcntWtarget(i, val & 0xffff); }
@@ -181,6 +182,15 @@ static u32 io_spu_read32(u32 addr)
 	ret  = SPU_readRegister(addr, psxRegs.cycle);
 	ret |= SPU_readRegister(addr + 2, psxRegs.cycle) << 16;
 	return ret;
+}
+
+static void io_spu_write8_even(u32 value)
+{
+	SPU_writeRegister(address, value, psxRegs.cycle);
+}
+
+static void io_spu_write8_odd(u32 value)
+{
 }
 
 static void io_spu_write16(u32 value)
@@ -214,9 +224,10 @@ void new_dyna_pcsx_mem_isolate(int enable)
 	}
 	else {
 		for (i = 0; i < (0x800000 >> 12); i++) {
-			map_l1_mem(mem_writetab, i, 0x80000000, 0x200000, psxM);
-			map_l1_mem(mem_writetab, i, 0x00000000, 0x200000, psxM);
-			map_l1_mem(mem_writetab, i, 0xa0000000, 0x200000, psxM);
+			void *ram = psxRegs.ptrs.psxM;
+			map_l1_mem(mem_writetab, i, 0x80000000, 0x200000, ram);
+			map_l1_mem(mem_writetab, i, 0x00000000, 0x200000, ram);
+			map_l1_mem(mem_writetab, i, 0xa0000000, 0x200000, ram);
 		}
 	}
 }
@@ -308,25 +319,26 @@ void new_dyna_pcsx_mem_init(void)
 		map_item(&mem_writetab[i], mem_unmwtab, 1);
 	}
 
-	// RAM and it's mirrors
+	// RAM and its mirrors
 	for (i = 0; i < (0x800000 >> 12); i++) {
-		map_l1_mem(mem_readtab,  i, 0x80000000, 0x200000, psxM);
-		map_l1_mem(mem_readtab,  i, 0x00000000, 0x200000, psxM);
-		map_l1_mem(mem_readtab,  i, 0xa0000000, 0x200000, psxM);
+		void *ram = psxRegs.ptrs.psxM;
+		map_l1_mem(mem_readtab,  i, 0x80000000, 0x200000, ram);
+		map_l1_mem(mem_readtab,  i, 0x00000000, 0x200000, ram);
+		map_l1_mem(mem_readtab,  i, 0xa0000000, 0x200000, ram);
 	}
 	new_dyna_pcsx_mem_isolate(0);
 
-	// BIOS and it's mirrors
+	// BIOS and its mirrors
 	for (i = 0; i < (0x80000 >> 12); i++) {
-		map_l1_mem(mem_readtab, i, 0x1fc00000, 0x80000, psxR);
-		map_l1_mem(mem_readtab, i, 0xbfc00000, 0x80000, psxR);
+		map_l1_mem(mem_readtab, i, 0x1fc00000, 0x80000, psxRegs.ptrs.psxR);
+		map_l1_mem(mem_readtab, i, 0xbfc00000, 0x80000, psxRegs.ptrs.psxR);
 	}
 
 	// scratchpad
-	map_l1_mem(mem_readtab, 0, 0x1f800000, 0x1000, psxH);
-	map_l1_mem(mem_readtab, 0, 0x9f800000, 0x1000, psxH);
-	map_l1_mem(mem_writetab, 0, 0x1f800000, 0x1000, psxH);
-	map_l1_mem(mem_writetab, 0, 0x9f800000, 0x1000, psxH);
+	map_l1_mem(mem_readtab, 0, 0x1f800000, 0x1000, psxRegs.ptrs.psxH);
+	map_l1_mem(mem_readtab, 0, 0x9f800000, 0x1000, psxRegs.ptrs.psxH);
+	map_l1_mem(mem_writetab, 0, 0x1f800000, 0x1000, psxRegs.ptrs.psxH);
+	map_l1_mem(mem_writetab, 0, 0x9f800000, 0x1000, psxRegs.ptrs.psxH);
 
 	// I/O
 	map_item(&mem_readtab[0x1f801000u >> 12], mem_iortab, 1);
@@ -343,20 +355,19 @@ void new_dyna_pcsx_mem_init(void)
 
 	// fill IO tables
 	for (i = 0; i < 0x1000/4; i++) {
-		map_item(&mem_iortab[i], &psxH[0x1000], 0);
-		map_item(&mem_iowtab[i], &psxH[0x1000], 0);
+		map_item(&mem_iortab[i], &psxRegs.ptrs.psxH[0x1000], 0);
+		map_item(&mem_iowtab[i], &psxRegs.ptrs.psxH[0x1000], 0);
 	}
 	for (; i < 0x1000/4 + 0x1000/2; i++) {
-		map_item(&mem_iortab[i], &psxH[0x1000], 0);
-		map_item(&mem_iowtab[i], &psxH[0x1000], 0);
+		map_item(&mem_iortab[i], &psxRegs.ptrs.psxH[0x1000], 0);
+		map_item(&mem_iowtab[i], &psxRegs.ptrs.psxH[0x1000], 0);
 	}
 	for (; i < 0x1000/4 + 0x1000/2 + 0x1000; i++) {
-		map_item(&mem_iortab[i], &psxH[0x1000], 0);
-		map_item(&mem_iowtab[i], &psxH[0x1000], 0);
+		map_item(&mem_iortab[i], &psxRegs.ptrs.psxH[0x1000], 0);
+		map_item(&mem_iowtab[i], &psxRegs.ptrs.psxH[0x1000], 0);
 	}
 
 	map_item(&mem_iortab[IOMEM32(0x1040)], io_read_sio32, 1);
-	map_item(&mem_iortab[IOMEM32(0x1044)], sioReadStat16, 1);
 	map_item(&mem_iortab[IOMEM32(0x1100)], psxRcntRcount0, 1);
 	map_item(&mem_iortab[IOMEM32(0x1104)], io_rcnt_read_mode0, 1);
 	map_item(&mem_iortab[IOMEM32(0x1108)], io_rcnt_read_target0, 1);
@@ -372,11 +383,6 @@ void new_dyna_pcsx_mem_init(void)
 	map_item(&mem_iortab[IOMEM32(0x1824)], mdecRead1, 1);
 
 	map_item(&mem_iortab[IOMEM16(0x1040)], io_read_sio16, 1);
-	map_item(&mem_iortab[IOMEM16(0x1044)], sioReadStat16, 1);
-	map_item(&mem_iortab[IOMEM16(0x1048)], sioReadMode16, 1);
-	map_item(&mem_iortab[IOMEM16(0x104a)], sioReadCtrl16, 1);
-	map_item(&mem_iortab[IOMEM16(0x104e)], sioReadBaud16, 1);
-	map_item(&mem_iortab[IOMEM16(0x1054)], sio1ReadStat16, 1);
 	map_item(&mem_iortab[IOMEM16(0x1100)], psxRcntRcount0, 1);
 	map_item(&mem_iortab[IOMEM16(0x1104)], io_rcnt_read_mode0, 1);
 	map_item(&mem_iortab[IOMEM16(0x1108)], io_rcnt_read_target0, 1);
@@ -392,6 +398,25 @@ void new_dyna_pcsx_mem_init(void)
 	map_item(&mem_iortab[IOMEM8(0x1801)], cdrRead1, 1);
 	map_item(&mem_iortab[IOMEM8(0x1802)], cdrRead2, 1);
 	map_item(&mem_iortab[IOMEM8(0x1803)], cdrRead3, 1);
+	// 16bit regs (rarely used)
+	map_item(&mem_iortab[IOMEM8(0x1100)], psxRcntRcount0, 1);
+	map_item(&mem_iortab[IOMEM8(0x1101)], io_rcnt_read8_count0odd, 1);
+	map_item(&mem_iortab[IOMEM8(0x1104)], io_rcnt_read_mode0, 1);
+	map_item(&mem_iortab[IOMEM8(0x1105)], io_rcnt_read8_mode0odd, 1);
+	map_item(&mem_iortab[IOMEM8(0x1108)], io_rcnt_read_target0, 1);
+	map_item(&mem_iortab[IOMEM8(0x1109)], io_rcnt_read8_target0odd, 1);
+	map_item(&mem_iortab[IOMEM8(0x1110)], psxRcntRcount1, 1);
+	map_item(&mem_iortab[IOMEM8(0x1111)], io_rcnt_read8_count1odd, 1);
+	map_item(&mem_iortab[IOMEM8(0x1114)], io_rcnt_read_mode1, 1);
+	map_item(&mem_iortab[IOMEM8(0x1115)], io_rcnt_read8_mode1odd, 1);
+	map_item(&mem_iortab[IOMEM8(0x1118)], io_rcnt_read_target1, 1);
+	map_item(&mem_iortab[IOMEM8(0x1119)], io_rcnt_read8_target1odd, 1);
+	map_item(&mem_iortab[IOMEM8(0x1120)], psxRcntRcount2, 1);
+	map_item(&mem_iortab[IOMEM8(0x1121)], io_rcnt_read8_count2odd, 1);
+	map_item(&mem_iortab[IOMEM8(0x1124)], io_rcnt_read_mode2, 1);
+	map_item(&mem_iortab[IOMEM8(0x1125)], io_rcnt_read8_mode2odd, 1);
+	map_item(&mem_iortab[IOMEM8(0x1128)], io_rcnt_read_target2, 1);
+	map_item(&mem_iortab[IOMEM8(0x1129)], io_rcnt_read8_target2odd, 1);
 
 	for (i = 0x1c00; i < 0x2000; i += 2) {
 		map_item(&mem_iortab[IOMEM8(i)], io_spu_read8_even, 1);
@@ -401,7 +426,10 @@ void new_dyna_pcsx_mem_init(void)
 	}
 
 	// write(u32 data)
-	map_item(&mem_iowtab[IOMEM32(0x1040)], io_write_sio32, 1);
+	map_item(&mem_iowtab[IOMEM32(0x1040)], io_write_sio16, 1);
+	map_item(&mem_iowtab[IOMEM32(0x1044)], write_mem_ro, 1);
+	map_item(&mem_iowtab[IOMEM32(0x1048)], sioWriteMode16, 1);
+	map_item(&mem_iowtab[IOMEM32(0x1054)], write_mem_ro, 1);
 	map_item(&mem_iowtab[IOMEM32(0x1070)], psxHwWriteIstat, 1);
 	map_item(&mem_iowtab[IOMEM32(0x1074)], psxHwWriteImask, 1);
 	map_item(&mem_iowtab[IOMEM32(0x1088)], psxHwWriteChcr0, 1);
@@ -434,10 +462,12 @@ void new_dyna_pcsx_mem_init(void)
 
 	map_item(&mem_iowtab[IOMEM16(0x1014)], io_write_force32_1014, 1);
 	map_item(&mem_iowtab[IOMEM16(0x1040)], io_write_sio16, 1);
-	map_item(&mem_iowtab[IOMEM16(0x1044)], sioWriteStat16, 1);
+	map_item(&mem_iowtab[IOMEM16(0x1044)], write_mem_ro, 1);
+	map_item(&mem_iowtab[IOMEM16(0x1046)], write_mem_ro, 1);
 	map_item(&mem_iowtab[IOMEM16(0x1048)], sioWriteMode16, 1);
 	map_item(&mem_iowtab[IOMEM16(0x104a)], sioWriteCtrl16, 1);
-	map_item(&mem_iowtab[IOMEM16(0x104e)], sioWriteBaud16, 1);
+	map_item(&mem_iowtab[IOMEM16(0x1054)], write_mem_ro, 1);
+	map_item(&mem_iowtab[IOMEM16(0x1056)], write_mem_ro, 1);
 	map_item(&mem_iowtab[IOMEM16(0x1060)], io_write_force32_1060, 1);
 	map_item(&mem_iowtab[IOMEM16(0x1070)], psxHwWriteIstat, 1);
 	map_item(&mem_iowtab[IOMEM16(0x1074)], psxHwWriteImask, 1);
@@ -472,12 +502,22 @@ void new_dyna_pcsx_mem_init(void)
 	map_item(&mem_iowtab[IOMEM16(0x1128)], io_rcnt_write_target2, 1);
 
 	map_item(&mem_iowtab[IOMEM8(0x1040)], sioWrite8, 1);
+	map_item(&mem_iowtab[IOMEM8(0x1044)], write_mem_ro, 1);
+	map_item(&mem_iowtab[IOMEM8(0x1045)], write_mem_ro, 1);
+	map_item(&mem_iowtab[IOMEM8(0x1046)], write_mem_ro, 1);
+	map_item(&mem_iowtab[IOMEM8(0x1047)], write_mem_ro, 1);
+	map_item(&mem_iowtab[IOMEM8(0x1054)], write_mem_ro, 1);
+	map_item(&mem_iowtab[IOMEM8(0x1055)], write_mem_ro, 1);
+	map_item(&mem_iowtab[IOMEM8(0x1056)], write_mem_ro, 1);
+	map_item(&mem_iowtab[IOMEM8(0x1057)], write_mem_ro, 1);
 	map_item(&mem_iowtab[IOMEM8(0x1800)], cdrWrite0, 1);
 	map_item(&mem_iowtab[IOMEM8(0x1801)], cdrWrite1, 1);
 	map_item(&mem_iowtab[IOMEM8(0x1802)], cdrWrite2, 1);
 	map_item(&mem_iowtab[IOMEM8(0x1803)], cdrWrite3, 1);
 
 	for (i = 0x1c00; i < 0x2000; i += 2) {
+		map_item(&mem_iowtab[IOMEM8(i)], io_spu_write8_even, 1);
+		map_item(&mem_iowtab[IOMEM8(i+1)], io_spu_write8_odd, 1);
 		map_item(&mem_iowtab[IOMEM16(i)], io_spu_write16, 1);
 		map_item(&mem_iowtab[IOMEM32(i)], io_spu_write32, 1);
 	}

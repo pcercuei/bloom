@@ -81,7 +81,7 @@ DRC_VAR(mem_wtab, 8)
 DRC_VAR(psxH_ptr, 8)
 DRC_VAR(invc_ptr, 8)
 DRC_VAR(zeromem_ptr, 8)
-DRC_VAR(scratch_buf_ptr, 8)
+DRC_VAR(gte_divider_tab_ptr, 8)
 DRC_VAR(ram_offset, 8)
 DRC_VAR(hash_table_ptr, 8)
 DRC_VAR(mini_ht, 256)
@@ -427,4 +427,8 @@ FUNCTION(do_insn_cmp_arm64):
 	ldp	x16, x17, [sp, #(SSP_CALLEE_REGS + 16*8)]
 	ldp	x18, x30, [sp, #(SSP_CALLEE_REGS + 18*8)]
 	ret
+#endif
+
+#ifdef __ELF__
+.section .note.GNU-stack,"",@progbits
 #endif

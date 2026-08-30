@@ -16,6 +16,8 @@
  *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1307 USA
  */
 
+#include <stdio.h>
+#include <assert.h>
 #include "psxcommon.h"
 #include "r3000a.h"
 #include "psxmem.h"
@@ -32,12 +34,7 @@ CheatCode *CheatCodes = NULL;
 int NumCodes = 0;
 int NumCodesAllocated = 0;
 
-s8 *prevM = NULL;
-u32 *SearchResults = NULL;
-int NumSearchResults = 0;
-static int NumSearchResultsAllocated = 0;
-
-#define ALLOC_INCREMENT		100
+#define ALLOC_INCREMENT		16
 
 void ClearAllCheats() {
 	int i;
@@ -230,7 +227,7 @@ void ApplyCheats() {
 					break;
 
 				case CHEAT_SCRATCHPAD16: // 1F
-					psxHs16ref(addr) = SWAPu16(val);
+					psxHu16ref(addr) = SWAPu16(val);
 					break;
 
 				case CHEAT_INC16:
@@ -492,6 +489,12 @@ int EditCheat(int index, const char *descr, char *code) {
 	return 0;
 }
 
+#if 0
+static int NumSearchResultsAllocated = 0;
+int NumSearchResults = 0;
+u32 *SearchResults = NULL;
+s8 *prevM = NULL;
+
 void FreeCheatSearchResults() {
 	if (SearchResults != NULL) {
 		free(SearchResults);
@@ -511,7 +514,7 @@ void FreeCheatSearchMem() {
 
 void CheatSearchBackupMemory() {
 	if (prevM != NULL) {
-		memcpy(prevM, psxM, 0x200000);
+		memcpy(prevM, psxRegs.ptrs.psxM, 0x200000);
 	}
 }
 
@@ -1067,3 +1070,4 @@ void CheatSearchNoChange32() {
 
 	NumSearchResults = j;
 }
+#endif
