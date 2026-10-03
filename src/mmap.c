@@ -5,6 +5,7 @@
  * Copyright (C) 2024 Paul Cercueil <paul@crapouillou.net>
  */
 
+#include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -31,6 +32,7 @@ static void *do_memset(void *dst, int c, size_t len)
 
 int lightrec_init_mmap(void)
 {
+	s8 *psxH, *psxR, *psxP, *psxM;
 	unsigned int i;
 	int err;
 
@@ -96,19 +98,21 @@ int lightrec_init_mmap(void)
 
 	printf("BIOS mapped\n");
 
-	psxM = (void *)OFFSET;
-	psxP = (void *)(OFFSET + 0x1f000000);
-	psxH = (void *)(OFFSET + 0x1f800000);
-	psxR = (void *)(OFFSET + 0x1fc00000);
+	psxRegs.ptrs.psxM = (void *)OFFSET;
+	psxRegs.ptrs.psxP = (void *)(OFFSET + 0x1f000000);
+	psxRegs.ptrs.psxH = (void *)(OFFSET + 0x1f800000);
+	psxRegs.ptrs.psxR = (void *)(OFFSET + 0x1fc00000);
 
 	/* Clear pages */
-	do_memset(psxM, 0x0, 0x200000);
-	do_memset(psxH, 0x0, 0x10000);
-	do_memset(psxP, 0xff, 0x10000);
+	do_memset(psxRegs.ptrs.psxM, 0x0, 0x200000);
+	do_memset(psxRegs.ptrs.psxH, 0x0, 0x10000);
+	do_memset(psxRegs.ptrs.psxP, 0xff, 0x10000);
 
 	printf("Memory-map succeeded.\n"
 	       "RAM: 0x%x BIOS: 0x%x SCRATCH: 0x%x CODE: 0x%x\n",
-	       (unsigned int)psxM, (unsigned int)psxR, (unsigned int)psxH,
+	       (unsigned int)psxRegs.ptrs.psxM,
+	       (unsigned int)psxRegs.ptrs.psxR,
+	       (unsigned int)psxRegs.ptrs.psxH,
 	       (unsigned int)code_buffer);
 
 	return 0;

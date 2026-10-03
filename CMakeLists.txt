@@ -131,12 +131,13 @@ add_library(libpcsxcore STATIC
 	${PCSX_REAL_DIR}/libpcsxcore/cheat.c
 	${PCSX_REAL_DIR}/libpcsxcore/database.c
 	${PCSX_REAL_DIR}/libpcsxcore/decode_xa.c
-	${PCSX_REAL_DIR}/libpcsxcore/disr3000a.c
 	${PCSX_REAL_DIR}/libpcsxcore/gpu.c
 	${PCSX_REAL_DIR}/libpcsxcore/gte.c
+	${PCSX_REAL_DIR}/libpcsxcore/gte_nf.c
 	${PCSX_REAL_DIR}/libpcsxcore/gte_divider.c
 	${PCSX_REAL_DIR}/libpcsxcore/mdec.c
 	${PCSX_REAL_DIR}/libpcsxcore/misc.c
+	${PCSX_REAL_DIR}/libpcsxcore/pad.c
 	${PCSX_REAL_DIR}/libpcsxcore/plugins.c
 	${PCSX_REAL_DIR}/libpcsxcore/ppf.c
 	${PCSX_REAL_DIR}/libpcsxcore/psxbios.c
@@ -179,6 +180,8 @@ target_compile_definitions(libpcsxcore PUBLIC
 	USE_C11_THREADS
 	HAVE_CDROM
 	GPUSTATUS_POLLING_THRESHOLD=${WITH_GPUSTATUS_POLLING_THRESHOLD}
+	GTE_USE_NATIVE_DIVIDE
+	GTE_MAC123_FLAGLESS
 )
 target_compile_options(libpcsxcore PRIVATE -Wno-format)
 target_link_libraries(libpcsxcore PUBLIC lightrec zlib)
