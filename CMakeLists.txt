@@ -181,6 +181,7 @@ target_compile_definitions(libpcsxcore PUBLIC
 	HAVE_CDROM
 	GPUSTATUS_POLLING_THRESHOLD=${WITH_GPUSTATUS_POLLING_THRESHOLD}
 	GTE_USE_NATIVE_DIVIDE
+	GTE_MAC123_FLAGLESS
 )
 target_compile_options(libpcsxcore PRIVATE -Wno-format)
 target_link_libraries(libpcsxcore PUBLIC lightrec zlib)
