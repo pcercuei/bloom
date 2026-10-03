@@ -24,14 +24,19 @@
 // generic defines
 /////////////////////////////////////////////////////////
 
-//#define log_unhandled printf
+#ifdef LOG_UNHANDLED
+#define log_unhandled printf
+#else
 #define log_unhandled(...)
+#endif
 
 #ifdef __GNUC__
 #define noinline __attribute__((noinline))
+#define forceinline __attribute__((always_inline))
 #define unlikely(x) __builtin_expect((x), 0)
 #else
 #define noinline
+#define forceinline
 #define unlikely(x) x
 #endif
 #if defined(__GNUC__) && !defined(_TMS320C6X)
@@ -85,8 +90,11 @@ typedef struct
  unsigned char  SustainRate;
  unsigned char  ReleaseRate;
  int            EnvelopeVol;
+ int            StepCounter;	// 0 -> 32k
 } ADSRInfoEx;
               
+struct xa_decode;
+
 ///////////////////////////////////////////////////////////
 
 // MAIN CHANNEL STRUCT
@@ -172,22 +180,17 @@ typedef struct
 
 // psx buffers / addresses
 
-typedef union
-{
- int SB[28 + 4 + 4];
- int SB_rvb[2][4*2]; // for reverb filtering
+typedef union {
+ short buf[4+28];
  struct {
-  int sample[28];
-  union {
-   struct {
-    int pos;
-    int val[4];
-   } gauss;
-   int simple[5]; // 28-32
-  } interp;
-  int sinc_old;
+  short old[4];        // old samples for interpolation
+  short decode[28];
  };
 } sample_buf;
+
+typedef struct {
+ int sample[2][4*2];
+} sample_buf_rvb;
 
 typedef struct
 {
@@ -241,7 +244,7 @@ typedef struct
  //void (CALLBACK *cddavCallback)(short, short);
  void (CALLBACK *scheduleCallback)(unsigned int);
 
- const xa_decode_t * xapGlobal;
+ const struct xa_decode * xapGlobal;
  unsigned int  * XAFeed;
  unsigned int  * XAPlay;
  unsigned int  * XAStart;
@@ -252,12 +255,14 @@ typedef struct
  unsigned int  * CDDAStart;
  unsigned int  * CDDAEnd;
 
+ __attribute__((aligned(32)))
  unsigned short  regArea[0x400];
 
- sample_buf      sb[MAXCHAN+1]; // last entry is used for reverb filter
+ sample_buf      sb[MAXCHAN];
+ sample_buf_rvb  sb_rvb; // for reverb filtering
  int             interpolation;
 
-#if P_HAVE_PTHREAD || defined(WANT_THREAD_CODE)
+#if defined(USE_ASYNC_SPU) || defined(WANT_THREAD_CODE)
  sample_buf    * sb_thread;
  sample_buf      sb_thread_[MAXCHAN+1];
 #endif
@@ -291,7 +296,7 @@ void do_irq_io(int cycles_after);
 
 #endif
 
-void FeedXA(const xa_decode_t *xap);
+void FeedXA(const struct xa_decode *xap);
 void FeedCDDA(unsigned char *pcm, int nBytes);
 
 #endif /* __P_SOUND_EXTERNALS_H__ */

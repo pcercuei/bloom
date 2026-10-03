@@ -24,24 +24,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "arm_features.h"
 #include "../gpulib/gpu.h"
 #include "old/if.h"
-
-#ifdef THREAD_RENDERING
-#include "../gpulib/gpulib_thread_if.h"
-#define do_cmd_list real_do_cmd_list
-#define renderer_init real_renderer_init
-#define renderer_finish real_renderer_finish
-#define renderer_sync_ecmds real_renderer_sync_ecmds
-#define renderer_update_caches real_renderer_update_caches
-#define renderer_flush_queues real_renderer_flush_queues
-#define renderer_set_interlace real_renderer_set_interlace
-#define renderer_set_config real_renderer_set_config
-#define renderer_notify_res_change real_renderer_notify_res_change
-#define renderer_notify_update_lace real_renderer_notify_update_lace
-#define renderer_sync real_renderer_sync
-#define ex_regs scratch_ex_regs
-#endif
 
 //#include "port.h"
 #include "gpu_unai.h"
@@ -75,159 +60,6 @@
 #define IS_OLD_RENDERER() false
 #endif
 
-#define DOWNSCALE_VRAM_SIZE (1024 * 512 * 2 * 2 + 4096)
-
-INLINE void scale_640_to_320(le16_t *dest, const le16_t *src, bool isRGB24) {
-  size_t uCount = 320;
-
-  if(isRGB24) {
-    const uint8_t* src8 = (const uint8_t *)src;
-    uint8_t* dst8 = (uint8_t *)dest;
-
-    do {
-      *dst8++ = *src8++;
-      *dst8++ = *src8++;
-      *dst8++ = *src8;
-      src8 += 4;
-    } while(--uCount);
-  } else {
-    const le16_t* src16 = src;
-    le16_t* dst16 = dest;
-
-    do {
-      *dst16++ = *src16;
-      src16 += 2;
-    } while(--uCount);
-  }
-}
-
-INLINE void scale_512_to_320(le16_t *dest, const le16_t *src, bool isRGB24) {
-  size_t uCount = 64;
-
-  if(isRGB24) {
-    const uint8_t* src8 = (const uint8_t *)src;
-    uint8_t* dst8 = (uint8_t *)dest;
-
-    do {
-      *dst8++ = *src8++;
-      *dst8++ = *src8++;
-      *dst8++ = *src8++;
-      *dst8++ = *src8++;
-      *dst8++ = *src8++;
-      *dst8++ = *src8;
-      src8 += 4;
-      *dst8++ = *src8++;
-      *dst8++ = *src8++;
-      *dst8++ = *src8++;
-      *dst8++ = *src8++;
-      *dst8++ = *src8++;
-      *dst8++ = *src8;
-      src8 += 4;
-      *dst8++ = *src8++;
-      *dst8++ = *src8++;
-      *dst8++ = *src8;
-      src8 += 4;
-    } while(--uCount);
-  } else {
-    const le16_t* src16 = src;
-    le16_t* dst16 = dest;
-
-    do {
-      *dst16++ = *src16++;
-      *dst16++ = *src16;
-      src16 += 2;
-      *dst16++ = *src16++;
-      *dst16++ = *src16;
-      src16 += 2;
-      *dst16++ = *src16;
-      src16 += 2;
-    } while(--uCount);
-  }
-}
-
-static uint16_t *get_downscale_buffer(int *x, int *y, int *w, int *h, int *vram_h)
-{
-  le16_t *dest = gpu_unai.downscale_vram;
-  const le16_t *src = gpu_unai.vram;
-  bool isRGB24 = (gpu_unai.GPU_GP1 & 0x00200000 ? true : false);
-  int stride = 1024, dstride = 1024, lines = *h, orig_w = *w;
-
-  // PS1 fb read wraps around (fixes black screen in 'Tobal no. 1')
-  unsigned int fb_mask = 1024 * 512 - 1;
-
-  if (*h > 240) {
-    *h /= 2;
-    stride *= 2;
-    lines = *h;
-
-    // Ensure start at a non-skipped line
-    while (*y & gpu_unai.inn.ilace_mask) ++*y;
-  }
-
-  unsigned int fb_offset_src = (*y * dstride + *x) & fb_mask;
-  unsigned int fb_offset_dest = fb_offset_src;
-
-  if (*w == 512 || *w == 640) {
-    *w = 320;
-  }
-
-  switch(orig_w) {
-  case 640:
-    do {
-      scale_640_to_320(dest + fb_offset_dest, src + fb_offset_src, isRGB24);
-      fb_offset_src = (fb_offset_src + stride) & fb_mask;
-      fb_offset_dest = (fb_offset_dest + dstride) & fb_mask;
-    } while(--lines);
-
-    break;
-  case 512:
-    do {
-      scale_512_to_320(dest + fb_offset_dest, src + fb_offset_src, isRGB24);
-      fb_offset_src = (fb_offset_src + stride) & fb_mask;
-      fb_offset_dest = (fb_offset_dest + dstride) & fb_mask;
-    } while(--lines);
-    break;
-  default:
-    size_t size = isRGB24 ? *w * 3 : *w * 2;
-
-    do {
-      memcpy(dest + fb_offset_dest, src + fb_offset_src, size);
-      fb_offset_src = (fb_offset_src + stride) & fb_mask;
-      fb_offset_dest = (fb_offset_dest + dstride) & fb_mask;
-    } while(--lines);
-    break;
-  }
-
-  return (uint16_t *)gpu_unai.downscale_vram;
-}
-
-static void map_downscale_buffer(void)
-{
-  if (gpu_unai.downscale_vram)
-    return;
-
-  gpu_unai.downscale_vram = (le16_t*)gpu.mmap(DOWNSCALE_VRAM_SIZE);
-
-  if (gpu_unai.downscale_vram == NULL || gpu_unai.downscale_vram == (le16_t *)(intptr_t)-1) {
-    fprintf(stderr, "failed to map downscale buffer\n");
-    gpu_unai.downscale_vram = NULL;
-    gpu.get_downscale_buffer = NULL;
-  }
-  else {
-    gpu.get_downscale_buffer = get_downscale_buffer;
-  }
-}
-
-static void unmap_downscale_buffer(void)
-{
-  if (gpu_unai.downscale_vram == NULL)
-    return;
-
-  gpu.munmap(gpu_unai.downscale_vram, DOWNSCALE_VRAM_SIZE);
-  gpu_unai.downscale_vram = NULL;
-  gpu.get_downscale_buffer = NULL;
-}
-
 int renderer_init(void)
 {
   memset((void*)&gpu_unai, 0, sizeof(gpu_unai));
@@ -242,9 +74,8 @@ int renderer_init(void)
   gpu_unai.TextureWindow[3] = 255;
   //senquack - new vars must be updated whenever texture window is changed:
   //           (used for polygon-drawing in gpu_inner.h, gpu_raster_polygon.h)
-  const u32 fb = FIXED_BITS;  // # of fractional fixed-pt bits of u4/v4
-  gpu_unai.inn.u_msk = (((u32)gpu_unai.TextureWindow[2]) << fb) | ((1 << fb) - 1);
-  gpu_unai.inn.v_msk = (((u32)gpu_unai.TextureWindow[3]) << fb) | ((1 << fb) - 1);
+  gpu_unai.inn.mask_v00u =
+    ((u32)gpu_unai.TextureWindow[3] << 24) | gpu_unai.TextureWindow[2];
 
   // Configuration options
   gpu_unai.config = gpu_unai_config_ext;
@@ -271,25 +102,18 @@ int renderer_init(void)
   SetupLightLUT();
   SetupDitheringConstants();
 
-  if (gpu_unai.config.scale_hires) {
-    map_downscale_buffer();
-  }
-
   return 0;
 }
 
 void renderer_finish(void)
 {
-  unmap_downscale_buffer();
 }
 
-void renderer_notify_res_change(void)
+void renderer_notify_screen_change(const struct psx_gpu_screen *screen)
 {
   gpu_unai.inn.ilace_mask = gpu_unai.config.ilace_force;
 
-#ifndef HAVE_PRE_ARMV7 /* XXX */
-  if (gpu_unai.config.scale_hires)
-#endif
+  if (gpu.state.downscale_enable)
   {
     gpu_unai.inn.ilace_mask |= !!(gpu.status & PSX_GPU_STATUS_INTERLACE);
   }
@@ -301,17 +125,12 @@ void renderer_notify_res_change(void)
   */
 }
 
-void renderer_notify_scanout_change(int x, int y)
-{
-}
-
 #ifdef USE_GPULIB
 // Handles GP0 draw settings commands 0xE1...0xE6
 static void gpuGP0Cmd_0xEx(gpu_unai_t &gpu_unai, u32 cmd_word)
 {
   // Assume incoming GP0 command is 0xE1..0xE6, convert to 1..6
   u8 num = (cmd_word >> 24) & 7;
-  gpu.ex_regs[num] = cmd_word; // Update gpulib register
   switch (num) {
     case 1: {
       // GP0(E1h) - Draw Mode setting (aka "Texpage")
@@ -339,9 +158,8 @@ static void gpuGP0Cmd_0xEx(gpu_unai_t &gpu_unai, u32 cmd_word)
         gpu_unai.TextureWindow[1] &= ~gpu_unai.TextureWindow[3];
 
         // Inner loop vars must be updated whenever texture window is changed:
-        const u32 fb = FIXED_BITS;  // # of fractional fixed-pt bits of u4/v4
-        gpu_unai.inn.u_msk = (((u32)gpu_unai.TextureWindow[2]) << fb) | ((1 << fb) - 1);
-        gpu_unai.inn.v_msk = (((u32)gpu_unai.TextureWindow[3]) << fb) | ((1 << fb) - 1);
+        gpu_unai.inn.mask_v00u =
+          ((u32)gpu_unai.TextureWindow[3] << 24) | gpu_unai.TextureWindow[2];
 
         gpuSetTexture(gpu_unai.GPU_GP1);
       }
@@ -411,7 +229,7 @@ static inline void textured_sprite(int &cpu_cycles_sum, int &cpu_cycles)
 
 extern const unsigned char cmd_lengths[256];
 
-int do_cmd_list(u32 *list_, int list_len,
+int renderer_do_cmd_list(u32 *list_, int list_len, uint32_t *ex_regs,
  int *cycles_sum_out, int *cycles_last, int *last_cmd)
 {
   int cpu_cycles_sum = 0, cpu_cycles = *cycles_last;
@@ -420,8 +238,10 @@ int do_cmd_list(u32 *list_, int list_len,
   le32_t *list_start = list;
   le32_t *list_end = list + list_len;
 
-  if (IS_OLD_RENDERER())
-    return oldunai_do_cmd_list(list_, list_len, cycles_sum_out, cycles_last, last_cmd);
+  if (IS_OLD_RENDERER()) {
+    return oldunai_do_cmd_list(list_, list_len, ex_regs,
+             cycles_sum_out, cycles_last, last_cmd);
+  }
 
   for (; list < list_end; list += 1 + len)
   {
@@ -452,7 +272,6 @@ int do_cmd_list(u32 *list_, int list_len,
       case 0x22:
       case 0x23: {          // Monochrome 3-pt poly
         PP driver = gpuPolySpanDrivers[
-          //(gpu_unai.blit_mask?1024:0) |
           Blending_Mode |
           gpu_unai.Masking | Blending | gpu_unai.PixelMSB
         ];
@@ -468,7 +287,6 @@ int do_cmd_list(u32 *list_, int list_len,
         gpuSetTexture(le32_to_u32(gpu_unai.PacketBuffer.U4[4]) >> 16);
 
         u32 driver_idx =
-          //(gpu_unai.blit_mask?1024:0) |
           Dithering |
           Blending_Mode | gpu_unai.TEXT_MODE |
           gpu_unai.Masking | Blending | gpu_unai.PixelMSB;
@@ -490,7 +308,6 @@ int do_cmd_list(u32 *list_, int list_len,
       case 0x2A:
       case 0x2B: {          // Monochrome 4-pt poly
         PP driver = gpuPolySpanDrivers[
-          //(gpu_unai.blit_mask?1024:0) |
           Blending_Mode |
           gpu_unai.Masking | Blending | gpu_unai.PixelMSB
         ];
@@ -502,9 +319,11 @@ int do_cmd_list(u32 *list_, int list_len,
       case 0x2D:
       case 0x2E:
       case 0x2F: {          // Textured 4-pt poly
+        u32 dithering = Dithering;
         u32 simplified_count;
         gpuSetTexture(le32_to_u32(gpu_unai.PacketBuffer.U4[4]) >> 16);
-        if ((simplified_count = prim_try_simplify_quad_t(gpu_unai.PacketBuffer.U4,
+        if (!dithering &&
+            (simplified_count = prim_try_simplify_quad_t(gpu_unai.PacketBuffer.U4,
               gpu_unai.PacketBuffer.U4)))
         {
           for (i = 0;; ) {
@@ -518,8 +337,7 @@ int do_cmd_list(u32 *list_, int list_len,
         gpuSetCLUT(le32_to_u32(gpu_unai.PacketBuffer.U4[2]) >> 16);
 
         u32 driver_idx =
-          //(gpu_unai.blit_mask?1024:0) |
-          Dithering |
+          dithering |
           Blending_Mode | gpu_unai.TEXT_MODE |
           gpu_unai.Masking | Blending | gpu_unai.PixelMSB;
 
@@ -539,19 +357,21 @@ int do_cmd_list(u32 *list_, int list_len,
       case 0x31:
       case 0x32:
       case 0x33: {          // Gouraud-shaded 3-pt poly
+        u32 dithering = Dithering;
         //NOTE: The '129' here is CF_GOURAUD | CF_LIGHT, however
         // this is an untextured poly, so CF_LIGHT (texture blend)
         // shouldn't apply. Until the original array of template
         // instantiation ptrs is fixed, we're stuck with this. (TODO)
         u8 gouraud = 129;
-        u32 xor_ = 0, rgb0 = le32_raw(gpu_unai.PacketBuffer.U4[0]);
-        for (i = 1; i < 3; i++)
-          xor_ |= rgb0 ^ le32_raw(gpu_unai.PacketBuffer.U4[i * 2]);
-        if ((xor_ & HTOLE32(0xf8f8f8)) == 0)
-          gouraud = 0;
+        if (!dithering) {
+          u32 xor_ = 0, rgb0 = le32_raw(gpu_unai.PacketBuffer.U4[0]);
+          for (i = 1; i < 3; i++)
+            xor_ |= rgb0 ^ le32_raw(gpu_unai.PacketBuffer.U4[i * 2]);
+          if ((xor_ & HTOLE32(0xf8f8f8)) == 0)
+            gouraud = 0;
+        }
         PP driver = gpuPolySpanDrivers[
-          //(gpu_unai.blit_mask?1024:0) |
-          Dithering |
+          dithering |
           Blending_Mode |
           gpu_unai.Masking | Blending | gouraud | gpu_unai.PixelMSB
         ];
@@ -568,6 +388,7 @@ int do_cmd_list(u32 *list_, int list_len,
       case 0x37: {          // Gouraud-shaded, textured 3-pt poly
         gpuSetCLUT    (le32_to_u32(gpu_unai.PacketBuffer.U4[2]) >> 16);
         gpuSetTexture (le32_to_u32(gpu_unai.PacketBuffer.U4[5]) >> 16);
+        u32 dithering = Dithering;
         u8 lighting = Lighting;
         u8 gouraud = lighting ? (1<<7) : 0;
         if (lighting) {
@@ -576,13 +397,12 @@ int do_cmd_list(u32 *list_, int list_len,
             xor_ |= rgb0 ^ le32_raw(gpu_unai.PacketBuffer.U4[i * 3]);
           if ((xor_ & HTOLE32(0xf8f8f8)) == 0) {
             gouraud = 0;
-            if (!need_lighting(rgb0))
+            if (!dithering && !need_lighting(rgb0))
               lighting = 0;
           }
         }
         PP driver = gpuPolySpanDrivers[
-          //(gpu_unai.blit_mask?1024:0) |
-          Dithering |
+          dithering |
           Blending_Mode | gpu_unai.TEXT_MODE |
           gpu_unai.Masking | Blending | gouraud | lighting | gpu_unai.PixelMSB
         ];
@@ -597,16 +417,18 @@ int do_cmd_list(u32 *list_, int list_len,
       case 0x39:
       case 0x3A:
       case 0x3B: {          // Gouraud-shaded 4-pt poly
+        u32 dithering = Dithering;
         // See notes regarding '129' for 0x30..0x33 further above -senquack
         u8 gouraud = 129;
-        u32 xor_ = 0, rgb0 = le32_raw(gpu_unai.PacketBuffer.U4[0]);
-        for (i = 1; i < 4; i++)
-          xor_ |= rgb0 ^ le32_raw(gpu_unai.PacketBuffer.U4[i * 2]);
-        if ((xor_ & HTOLE32(0xf8f8f8)) == 0)
-          gouraud = 0;
+        if (!dithering) {
+          u32 xor_ = 0, rgb0 = le32_raw(gpu_unai.PacketBuffer.U4[0]);
+          for (i = 1; i < 4; i++)
+            xor_ |= rgb0 ^ le32_raw(gpu_unai.PacketBuffer.U4[i * 2]);
+          if ((xor_ & HTOLE32(0xf8f8f8)) == 0)
+            gouraud = 0;
+        }
         PP driver = gpuPolySpanDrivers[
-          //(gpu_unai.blit_mask?1024:0) |
-          Dithering |
+          dithering |
           Blending_Mode |
           gpu_unai.Masking | Blending | gouraud | gpu_unai.PixelMSB
         ];
@@ -621,9 +443,11 @@ int do_cmd_list(u32 *list_, int list_len,
       case 0x3D:
       case 0x3E:
       case 0x3F: {          // Gouraud-shaded, textured 4-pt poly
+        u32 dithering = Dithering;
         u32 simplified_count;
         gpuSetTexture(le32_to_u32(gpu_unai.PacketBuffer.U4[5]) >> 16);
-        if ((simplified_count = prim_try_simplify_quad_gt(gpu_unai.PacketBuffer.U4,
+        if (!dithering &&
+             (simplified_count = prim_try_simplify_quad_gt(gpu_unai.PacketBuffer.U4,
               gpu_unai.PacketBuffer.U4)))
         {
           for (i = 0;; ) {
@@ -643,13 +467,12 @@ int do_cmd_list(u32 *list_, int list_len,
             xor_ |= rgb0 ^ le32_raw(gpu_unai.PacketBuffer.U4[i * 3]);
           if ((xor_ & HTOLE32(0xf8f8f8)) == 0) {
             gouraud = 0;
-            if (!need_lighting(rgb0))
+            if (!dithering && !need_lighting(rgb0))
               lighting = 0;
           }
         }
         PP driver = gpuPolySpanDrivers[
-          //(gpu_unai.blit_mask?1024:0) |
-          Dithering |
+          dithering |
           Blending_Mode | gpu_unai.TEXT_MODE |
           gpu_unai.Masking | Blending | gouraud | lighting | gpu_unai.PixelMSB
         ];
@@ -835,14 +658,16 @@ int do_cmd_list(u32 *list_, int list_len,
         goto breakloop;
 #endif
       case 0xE1 ... 0xE6: { // Draw settings
-        gpuGP0Cmd_0xEx(gpu_unai, le32_to_u32(gpu_unai.PacketBuffer.U4[0]));
+        u32 cmd_word = le32_to_u32(gpu_unai.PacketBuffer.U4[0]);
+        ex_regs[(cmd_word >> 24) & 7] = cmd_word;
+        gpuGP0Cmd_0xEx(gpu_unai, cmd_word);
       } break;
     }
   }
 
 breakloop:
-  gpu.ex_regs[1] &= ~0x1ff;
-  gpu.ex_regs[1] |= gpu_unai.GPU_GP1 & 0x1ff;
+  ex_regs[1] &= ~0x1ff;
+  ex_regs[1] |= gpu_unai.GPU_GP1 & 0x1ff;
 
   *cycles_sum_out += cpu_cycles_sum;
   *cycles_last = cpu_cycles;
@@ -850,11 +675,19 @@ breakloop:
   return list - list_start;
 }
 
-void renderer_sync_ecmds(u32 *ecmds)
+void renderer_sync_ecmds(u32 *ecmds_)
 {
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  // the funcs below expect LE
+  uint32_t i, ecmds[8];
+  for (i = 1; i <= 6; i++)
+    ecmds[i] = HTOLE32(ecmds_[i]);
+#else
+  uint32_t *ecmds = ecmds_;
+#endif
   if (!IS_OLD_RENDERER()) {
     int dummy;
-    do_cmd_list(&ecmds[1], 6, &dummy, &dummy, &dummy);
+    renderer_do_cmd_list(&ecmds[1], 6, ecmds, &dummy, &dummy, &dummy);
   }
   else
     oldunai_renderer_sync_ecmds(ecmds);
@@ -870,7 +703,7 @@ void renderer_flush_queues(void)
 
 void renderer_set_interlace(int enable, int is_odd)
 {
-  renderer_notify_res_change();
+  renderer_notify_screen_change(&gpu.screen);
 }
 
 #include "../../frontend/plugin_lib.h"
@@ -883,25 +716,11 @@ void renderer_set_config(const struct rearmed_cbs *cbs)
   gpu_unai.config.lighting      = cbs->gpu_unai.lighting;
   gpu_unai.config.fast_lighting = cbs->gpu_unai.fast_lighting;
   gpu_unai.config.blending      = cbs->gpu_unai.blending;
-  gpu_unai.config.scale_hires   = cbs->gpu_unai.scale_hires;
   gpu_unai.config.dithering     = cbs->dithering != 0;
   gpu_unai.config.force_dithering = cbs->dithering >> 1;
 
-  gpu.state.downscale_enable    = gpu_unai.config.scale_hires;
-  if (gpu_unai.config.scale_hires) {
-    map_downscale_buffer();
-  } else {
-    unmap_downscale_buffer();
-  }
+  renderer_notify_screen_change(&gpu.screen);
   oldunai_renderer_set_config(cbs);
-}
-
-void renderer_sync(void)
-{
-}
-
-void renderer_notify_update_lace(int updated)
-{
 }
 
 // vim:shiftwidth=2:expandtab
