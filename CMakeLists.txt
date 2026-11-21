@@ -234,6 +234,7 @@ option(WITH_480P "Enable high-resolution 480p mode" ON)
 option(WITH_HYBRID_RENDERING "Enable hybrid rendering" ON)
 option(WITH_MAGENTA_BG "Enable magenta background to detect painting issues" OFF)
 option(WITH_CLIPPING "Enable pixel clipping" ON)
+option(WITH_FASTBOOT "Disable BIOS animation" ON)
 
 if (WITH_HYBRID_RENDERING)
 	set(WITH_POLYBUF_SIZE_KB 128 CACHE STRING "Poly buffer size for hybrid rendering, in KiB")
