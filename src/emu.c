@@ -312,5 +312,5 @@ void psxMemReset()
 	}
 
 	Config.HLE = !success && !WITH_EMBEDDED_BIOS_PATH;
-	Config.SlowBoot = 1;
+	Config.SlowBoot = !WITH_FASTBOOT;
 }

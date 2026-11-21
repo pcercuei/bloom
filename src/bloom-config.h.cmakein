@@ -32,5 +32,6 @@
 #cmakedefine01 WITH_MAGENTA_BG
 #cmakedefine01 WITH_CLIPPING
 #cmakedefine01 WITH_EMBEDDED_BIOS_PATH
+#cmakedefine01 WITH_FASTBOOT
 
 #endif /* BLOOM_CONFIG_H */
