@@ -83,7 +83,7 @@ DRC_VAR(mem_wtab, 4)
 DRC_VAR(psxH_ptr, 4)
 DRC_VAR(zeromem_ptr, 4)
 DRC_VAR(invc_ptr, 4)
-DRC_VAR(scratch_buf_ptr, 4)
+DRC_VAR(gte_divider_tab_ptr, 4)
 DRC_VAR(ram_offset, 4)
 DRC_VAR(hash_table_ptr, 4)
 DRC_VAR(mini_ht, 256)
@@ -669,4 +669,7 @@ FUNCTION(get_reg):
 
 #endif /* HAVE_ARMV6 */
 
+#ifdef __ELF__
+.section .note.GNU-stack,"",%progbits
+#endif
 @ vim:filetype=armasm

@@ -235,11 +235,40 @@ typedef struct PadDataS
 		unsigned char padding;
 	} ds;
 	unsigned char multitapLongModeEnabled;
-	unsigned char padding2;
-	unsigned char txData[34];
+	unsigned char respSize;
+	unsigned char txData[8];      // after multitap
+	unsigned char txData1;        // txData[1] before multitap
+	unsigned char reserved1[25];
+	unsigned char rxData[8];
+	unsigned char rxDataOld[8];   // for multitap
+	unsigned char respSizeOld;
 
-	unsigned char reserved[22];
+	unsigned char reserved2[5];
 } PadDataS;
+
+typedef struct {
+	int	y0, y1;
+} ADPCM_Decode_t;
+
+typedef struct xa_decode {
+	int				freq;
+	int				nbits;
+	int				stereo;
+	int				nsamples;
+	ADPCM_Decode_t	left, right;
+	short			pcm[16384];
+} xa_decode_t;
+
+typedef struct SPUFreeze {
+	char PluginName[8];
+	unsigned int PluginVersion;
+	unsigned int Size;
+	unsigned char SPUPorts[0x200];
+	//unsigned char SPURam[0x80000]; // handled separately
+	//xa_decode_t xa;
+} SPUFreeze_t;
+
+#define SPUFREEZE_F2_MAX_SIZE 0xc000
 
 /*         NET PlugIn v2       */
 /* Added by linuzappz@pcsx.net */

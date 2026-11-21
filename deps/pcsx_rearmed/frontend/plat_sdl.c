@@ -137,6 +137,7 @@ static int vout_fullscreen_old;
 static int forced_clears;
 static int forced_flips;
 static int sdl12_compat;
+static int sdl_dispmanx;
 static int resized;
 static int in_menu;
 
@@ -151,6 +152,20 @@ static float gl_vertices[] = {
 static void handle_window_resize(void);
 static void handle_scaler_resize(int w, int h);
 static void centered_clear(void);
+
+// -novid mode
+static void novid_clear(void)
+{
+}
+
+static void novid_blit(int doffs, const void *src, int w, int h,
+  int sstride, int bgr24)
+{
+}
+
+static void novid_hud_print(int x, int y, const char *str, int bpp)
+{
+}
 
 static int plugin_owns_display(void)
 {
@@ -222,6 +237,18 @@ void plat_init(void)
 
   old_fullscreen = -1; // hack
 
+  if (g_novideo) {
+    g_menuscreen_w = 640;
+    g_menuscreen_h = 480;
+    g_menuscreen_pp = g_menuscreen_w;
+    pl_plat_clear = novid_clear;
+    pl_plat_blit = novid_blit;
+    pl_plat_hud_print = novid_hud_print;
+    in_probe();
+    pl_rearmed_cbs.only_16bpp = 1;
+    return;
+  }
+
   ret = plat_sdl_init();
   if (ret != 0)
     exit(1);
@@ -229,6 +256,11 @@ void plat_init(void)
   ver = SDL_Linked_Version();
   sdl12_compat = ver->patch >= 50;
   printf("SDL %u.%u.%u compat=%d\n", ver->major, ver->minor, ver->patch, sdl12_compat);
+  {
+    char vid_drv[32];
+    sdl_dispmanx = SDL_VideoDriverName(vid_drv, sizeof(vid_drv)) &&
+      strcmp(vid_drv, "dispmanx") == 0;
+  }
 
   in_menu = 1;
   SDL_WM_SetCaption("PCSX-ReARMed " REV, NULL);
@@ -266,7 +298,8 @@ void plat_finish(void)
   shadow_fb = NULL;
   free(menubg_img);
   menubg_img = NULL;
-  plat_sdl_finish();
+  if (!g_novideo)
+    plat_sdl_finish();
 }
 
 void plat_gvideo_open(int is_pal)
@@ -484,11 +517,11 @@ static void centered_blit(int doffs, const void *src_, int w, int h,
 
   if (bgr24) {
     for (; h > 0; dst += dstride, src += sstride, h--)
-      bgr888_to_rgb565(dst, src, w * 3);
+      bgr888_to_rgb565(dst, src, w);
   }
   else {
     for (; h > 0; dst += dstride, src += sstride, h--)
-      bgr555_to_rgb565(dst, src, w * 2);
+      bgr555_to_rgb565(dst, src, w);
   }
 
   if (SDL_MUSTLOCK(plat_sdl_screen))
@@ -566,6 +599,9 @@ static void change_mode(int w, int h)
   int set_w = w, set_h = h, had_overlay = 0, had_gl = 0;
   if (plat_target.vout_fullscreen && (plat_target.vout_method != 0 || !sdl12_compat))
     set_w = fs_w, set_h = fs_h;
+  if (sdl_dispmanx)
+    // RPi dispmanx shows a slanted picture if the width is not a multiple of 16
+    set_w = (set_w + 15) & ~15;
   if (plat_sdl_screen->w != set_w || plat_sdl_screen->h != set_h ||
       plat_target.vout_fullscreen != vout_fullscreen_old)
   {
@@ -646,6 +682,8 @@ void *plat_gvideo_set_mode(int *w, int *h, int *bpp)
   psx_w = *w;
   psx_h = *h;
 
+  if (g_novideo)
+    return NULL;
   if (plat_sdl_gl_active && plugin_owns_display())
     return NULL;
 
@@ -666,6 +704,8 @@ void *plat_gvideo_flip(void)
 {
   void *ret = NULL;
   int do_flip = 0;
+  if (g_novideo)
+    return NULL;
   if (plat_sdl_overlay != NULL) {
     SDL_Rect dstrect = {
       (plat_sdl_screen->w - g_layer_w) / 2,
@@ -712,6 +752,9 @@ void plat_video_menu_enter(int is_rom_loaded)
 
   in_menu = 1;
 
+  if (g_novideo)
+    return;
+
   /* surface will be lost, must adjust pl_vout_buf for menu bg */
   if (plat_sdl_overlay != NULL)
     uyvy_to_rgb565(menubg_img, psx_w * psx_h);
@@ -748,6 +791,10 @@ void plat_video_menu_begin(void)
   void *old_ovl = plat_sdl_overlay;
   static int g_scaler_old;
   int scaler_changed = g_scaler_old != g_scaler;
+
+  if (g_novideo)
+    return;
+
   g_scaler_old = g_scaler;
   if (plat_target.vout_fullscreen != vout_fullscreen_old ||
       (plat_target.vout_fullscreen && scaler_changed)) {
@@ -764,6 +811,9 @@ void plat_video_menu_begin(void)
 void plat_video_menu_end(void)
 {
   int do_flip = 0;
+
+  if (g_novideo)
+    return;
 
   if (plat_sdl_overlay != NULL) {
     SDL_Rect dstrect = {
@@ -804,6 +854,9 @@ void plat_video_menu_leave(void)
   int d;
 
   in_menu = 0;
+
+  if (g_novideo)
+    return;
   if (plat_sdl_overlay != NULL || plat_sdl_gl_active)
     memset(shadow_fb, 0, g_menuscreen_w * g_menuscreen_h * 2);
 
@@ -819,6 +872,9 @@ void plat_video_menu_leave(void)
 
 void *plat_prepare_screenshot(int *w, int *h, int *bpp)
 {
+  if (g_novideo)
+    return NULL;
+
   if (plat_sdl_screen && !SDL_MUSTLOCK(plat_sdl_screen) &&
       plat_sdl_overlay == NULL && !plat_sdl_gl_active)
   {
