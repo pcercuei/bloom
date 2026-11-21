@@ -23,6 +23,9 @@
 #define JIT_HASH_CONSTS		0
 #define JIT_NUM_OPERANDS	2
 
+/* Forward conditional branch that reaches farther than what BF/BT accept */
+#define jit_flag_far		0x8000
+
 typedef enum {
 #define jit_r(i)		(JIT_R0 + (i))
 #define jit_r_num()		3

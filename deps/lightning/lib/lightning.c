@@ -2620,8 +2620,8 @@ _jit_emit(jit_state_t *_jit)
 #  endif
 #  ifndef NDEBUG
 	result =
-	mprotect(_jit->code.ptr, _jit->code.protect, PROT_READ | PROT_EXEC);
 #  endif
+	mprotect(_jit->code.ptr, _jit->code.protect, PROT_READ | PROT_EXEC);
 	assert(result == 0);
     }
 #endif /* HAVE_MMAP */
@@ -3817,12 +3817,13 @@ _simplify_stxi(jit_state_t *_jit, jit_node_t *prev, jit_node_t *node)
     if (value->kind == 0) {
 	switch (node->code) {
 	    /* no information about signed/unsigned either */
-	    case jit_code_stxi_c:	value->code = jit_code_ldxi_c;	break;
-	    case jit_code_stxi_s:	value->code = jit_code_ldxi_s;	break;
+#if __WORDSIZE == 32
 	    case jit_code_stxi_i:	value->code = jit_code_ldxi_i;	break;
-	    case jit_code_stxi_l:	value->code = jit_code_ldxi_l;	break;
 	    case jit_code_stxi_f:	value->code = jit_code_ldxi_f;	break;
+#else
+	    case jit_code_stxi_l:	value->code = jit_code_ldxi_l;	break;
 	    case jit_code_stxi_d:	value->code = jit_code_ldxi_d;	break;
+#endif
 	    default:		 	abort();
 	}
 	value->kind = jit_kind_code;
@@ -3943,20 +3944,26 @@ _simplify(jit_state_t *_jit)
 		    simplify_spill(node = prev, regno);
 		}
 		break;
-	    case jit_code_ldxi_c:	case jit_code_ldxi_uc:
-	    case jit_code_ldxi_s:	case jit_code_ldxi_us:
-	    case jit_code_ldxi_i:	case jit_code_ldxi_ui:
+#if __WORDSIZE == 32
+	    case jit_code_ldxi_i:
+	    case jit_code_ldxi_f:
+#else
 	    case jit_code_ldxi_l:
-	    case jit_code_ldxi_f:	case jit_code_ldxi_d:
+	    case jit_code_ldxi_d:
+#endif
 		regno = jit_regno(node->u.w);
 		if (simplify_ldxi(prev, node)) {
 		    result = 1;
 		    simplify_spill(node = prev, regno);
 		}
 		break;
-	    case jit_code_stxi_c:	case jit_code_stxi_s:
-	    case jit_code_stxi_i:	case jit_code_stxi_l:
-	    case jit_code_stxi_f:	case jit_code_stxi_d:
+#if __WORDSIZE == 32
+	    case jit_code_stxi_i:
+	    case jit_code_stxi_f:
+#else
+	    case jit_code_stxi_l:
+	    case jit_code_stxi_d:
+#endif
 		regno = jit_regno(node->u.w);
 		if (simplify_stxi(prev, node)) {
 		    result = 1;
@@ -4334,12 +4341,12 @@ static void _htoni_ul(jit_state_t*, jit_int32_t, jit_word_t);
 #endif
 #  define movi_f_w(r0, i0)		_movi_f_w(_jit, r0, i0)
 static void _movi_f_w(jit_state_t*, jit_int32_t, jit_float32_t);
-#if __WORDSIZE == 32 && !(defined(__mips__) && NEW_ABI)
-#  define movi_d_ww(r0, r1, i0)		_movi_d_ww(_jit, r0, r1, i0)
-static void _movi_d_ww(jit_state_t*, jit_int32_t, jit_int32_t, jit_float64_t);
-#else
+#if __WORDSIZE == 64
 #  define movi_d_w(r0, i0)		_movi_d_w(_jit, r0, i0)
 static void _movi_d_w(jit_state_t*, jit_int32_t, jit_float64_t);
+#elif !(defined(__mips__) && NEW_ABI)
+#  define movi_d_ww(r0, r1, i0)		_movi_d_ww(_jit, r0, r1, i0)
+static void _movi_d_ww(jit_state_t*, jit_int32_t, jit_int32_t, jit_float64_t);
 #endif
 #define cloi(r0, i0)			_cloi(_jit, r0, i0)
 static void _cloi(jit_state_t*, jit_int32_t, jit_word_t);
@@ -4808,7 +4815,23 @@ _movi_f_w(jit_state_t *_jit, jit_int32_t r0, jit_float32_t i0)
     movi(r0, data.i);
 }
 
-#if __WORDSIZE == 32 && !(defined(__mips__) && NEW_ABI)
+#if __WORDSIZE == 64
+static void
+_movi_d_w(jit_state_t *_jit, jit_int32_t r0, jit_float64_t i0)
+{
+    union {
+	jit_int64_t	l;
+	jit_float64_t	d;
+    } data;
+    data.d = i0;
+#  if defined(__ia64__)
+    /* Should be used only in this case (with out0 == 120) */
+    if (r0 >= 120)
+	r0 = _jitc->rout + (r0 - 120);
+#  endif
+    movi(r0, data.l);
+}
+#elif !(defined(__mips__) && NEW_ABI)
 static void
 _movi_d_ww(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1, jit_float64_t i0)
 {
@@ -4825,23 +4848,6 @@ _movi_d_ww(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1, jit_float64_t i0)
     movi(r1, data.i[0]);
     movi(r0, data.i[1]);
 #  endif
-}
-
-#else
-static void
-_movi_d_w(jit_state_t *_jit, jit_int32_t r0, jit_float64_t i0)
-{
-    union {
-	jit_int64_t	l;
-	jit_float64_t	d;
-    } data;
-    data.d = i0;
-#  if defined(__ia64__)
-    /* Should be used only in this case (with out0 == 120) */
-    if (r0 >= 120)
-	r0 = _jitc->rout + (r0 - 120);
-#  endif
-    movi(r0, data.l);
 }
 #endif
 

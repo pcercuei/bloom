@@ -39,6 +39,17 @@
 #    define SH_SINGLE_ONLY 0
 #  endif
 
+#  ifndef ARRAY_SIZE
+#    define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
+#  endif
+
+#  ifndef BITLL
+#    define BITLL(x) (1ull << (x))
+#  endif
+
+#  ifdef __GNUC__
+#    define fallthrough __attribute__((__fallthrough__))
+#  endif
 
 struct jit_instr_ni {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -95,6 +106,95 @@ typedef union {
     struct jit_instr_d d;
     jit_uint16_t op;
 } jit_instr_t;
+
+enum sh4_instr_type {
+    SH4_TYPE_CNMC,
+    SH4_TYPE_CNMI,
+    SH4_TYPE_CNCC,
+    SH4_TYPE_CNII,
+    SH4_TYPE_CCMI,
+    SH4_TYPE_CCII,
+    SH4_TYPE_CIII,
+    SH4_TYPE_I,
+};
+
+enum sh4_instr_group {
+    /* Instruction groups, ranked by their priority (lowest to highest) used
+     * during the reorder optimization. */
+    SH4_GROUP_MT,
+    SH4_GROUP_BR,
+    SH4_GROUP_EX,
+    SH4_GROUP_FE,
+    SH4_GROUP_LS,
+    SH4_GROUP_CO,
+    SH4_GROUP_NONE,
+};
+
+enum sh4_write_mode {
+    SH4_WRITE_NONE,
+    SH4_WRITE_T,
+    SH4_WRITE_R0,
+    SH4_WRITE_N,
+    SH4_LOAD_N,
+    SH4_WRITE_NT,
+    SH4_WRITE_M_LOAD_N,
+    SH4_WRITE_MACL,
+    SH4_WRITE_MACH,
+    SH4_WRITE_MACLH,
+    SH4_WRITE_FPUL,
+    SH4_LOAD_FN,
+    SH4_WRITE_FN,
+    SH4_WRITE_M_LOAD_FN,
+    SH4_WRITE_FPSCR,
+    SH4_WRITE_GBR,
+};
+
+enum sh4_read_mode {
+    SH4_READ_NONE,
+    SH4_READ_T,
+    SH4_READ_R0,
+    SH4_READ_N,
+    SH4_READ_NT,
+    SH4_READ_NM,
+    SH4_READ_NMT,
+    SH4_READ_M,
+    SH4_READ_MT,
+    SH4_READ_MR0,
+    SH4_READ_NMR0,
+    SH4_READ_MACL,
+    SH4_READ_MACH,
+    SH4_READ_FPUL,
+    SH4_READ_N_FM,
+    SH4_READ_FN,
+    SH4_READ_FM,
+    SH4_READ_FNM,
+    SH4_READ_NR0FM,
+    SH4_READ_FNFMFR0,
+    SH4_READ_FPSCR,
+    SH4_READ_GBR,
+    SH4_READ_GBR_R0,
+};
+
+typedef struct {
+    enum sh4_instr_type type    :3;
+    enum sh4_instr_group group  :3;
+    enum sh4_read_mode read     :5;
+    enum sh4_write_mode write   :5;
+    jit_uint16_t op;
+    const char *name;
+} sh4_instr_t;
+
+typedef struct {
+    const sh4_instr_t *instr;
+    jit_uint16_t op;
+    jit_uint16_t coef;			/* scheduling priority, see _flush() */
+} sh4_code_t;
+
+static const uint16_t sh4_instr_type_mask[];
+static const sh4_instr_t * sh4_instructions[];
+static const sh4_instr_t *sh4_instr_nop;
+
+static const sh4_instr_t *find_sh4_instr(jit_uint16_t op);
 
 static void _cni(jit_state_t*,jit_uint16_t,jit_uint16_t,jit_uint16_t);
 static void
@@ -265,7 +365,14 @@ static void _cd(jit_state_t*,jit_uint16_t,jit_uint16_t);
 #    define FSCHG()			ii(0xf3fd)
 #    define FRCHG()			ii(0xfbfd)
 
-#    define ii(i)			*_jit->pc.us++ = i
+static void _flush(jit_state_t*, jit_bool_t);
+#    define flush(all)         _flush(_jit,all)
+
+static void _ii(jit_state_t*,jit_uint16_t);
+#    define ii(i)			_ii(_jit, i)
+
+#    define do_idirect(fn) \
+    do { _jitc->idirect++; flush(1); fn; _jitc->idirect--; } while(0)
 
 #    define stack_framesize		((JIT_V_NUM + 2) * 4)
 
@@ -530,10 +637,10 @@ static void _ldxai_us(jit_state_t*,jit_uint16_t,jit_uint16_t,jit_word_t);
 #  define ldxai_us(r0,r1,i0)		_ldxai_us(_jit,r0,r1,i0)
 static void _ldxai_i(jit_state_t*,jit_uint16_t,jit_uint16_t,jit_word_t);
 #  define ldxai_i(r0,r1,i0)		_ldxai_i(_jit,r0,r1,i0)
-#  define unldr(r0, r1, i0)		fallback_unldr(r0, r1, i0)
-#  define unldi(r0, i0, i1)		fallback_unldi(r0, i0, i1)
-#  define unldr_u(r0, r1, i0)		fallback_unldr_u(r0, r1, i0)
-#  define unldi_u(r0, i0, i1)		fallback_unldi_u(r0, i0, i1)
+#  define unldr(r0, r1, i0)		do_idirect(fallback_unldr(r0, r1, i0))
+#  define unldi(r0, i0, i1)		do_idirect(fallback_unldi(r0, i0, i1))
+#  define unldr_u(r0, r1, i0)		do_idirect(fallback_unldr_u(r0, r1, i0))
+#  define unldi_u(r0, i0, i1)		do_idirect(fallback_unldi_u(r0, i0, i1))
 #    define str_c(r0,r1)		STB(r0,r1)
 #    define str_s(r0,r1)		STW(r0,r1)
 #    define str_i(r0,r1)		STL(r0,r1)
@@ -564,8 +671,8 @@ static void _stxbi_i(jit_state_t*,jit_word_t,jit_uint16_t,jit_uint16_t);
 #  define stxai_c(i0,r0,r1)		generic_stxai_c(i0,r0,r1)
 #  define stxai_s(i0,r0,r1)		generic_stxai_s(i0,r0,r1)
 #  define stxai_i(i0,r0,r1)		generic_stxai_i(i0,r0,r1)
-#  define unstr(r0, r1, i0)		fallback_unstr(r0, r1, i0)
-#  define unsti(i0, r0, i1)		fallback_unsti(i0, r0, i1)
+#  define unstr(r0, r1, i0)		do_idirect(fallback_unstr(r0, r1, i0))
+#  define unsti(i0, r0, i1)		do_idirect(fallback_unsti(i0, r0, i1))
 static jit_word_t _bger(jit_state_t*,jit_word_t,jit_uint16_t,
 			jit_uint16_t,jit_bool_t,jit_bool_t);
 #    define bltr(i0,r0,r1)		bltr_p(i0,r0,r1,0)
@@ -705,6 +812,8 @@ static void _patch_abs(jit_state_t*,jit_word_t,jit_word_t);
 #    define patch_abs(instr,label)	_patch_abs(_jit,instr,label)
 static void _patch_at(jit_state_t*,jit_word_t,jit_word_t);
 #    define patch_at(jump,label)	_patch_at(_jit,jump,label)
+static void _patch_const(jit_state_t*,jit_word_t,jit_word_t);
+#    define patch_const(jump,label)	_patch_const(_jit,jump,label)
 static void _prolog(jit_state_t*,jit_node_t*);
 #  define prolog(node)			_prolog(_jit,node)
 static void _epilog(jit_state_t*,jit_node_t*);
@@ -735,13 +844,673 @@ static void _vaarg(jit_state_t*, jit_int32_t, jit_int32_t);
 #    define jit_sh34_p()	0
 #  endif
 
+static jit_instr_t *_last_instr(jit_state_t *_jit);
+#  define last_instr() _last_instr(_jit)
 static void _maybe_emit_frchg(jit_state_t *_jit);
 #  define maybe_emit_frchg() _maybe_emit_frchg(_jit)
 static void _maybe_emit_fschg(jit_state_t *_jit);
 #  define maybe_emit_fschg() _maybe_emit_fschg(_jit)
+
+#define RWMASK_T	BITLL(32)
+#define RWMASK_MACL	BITLL(33)
+#define RWMASK_MACH	BITLL(34)
+#define RWMASK_FPUL	BITLL(35)
+#define RWMASK_FPSCR	BITLL(36)
+#define RWMASK_GBR	BITLL(37)
+#define RWMASK_MEM	BITLL(38)
+
+#define OP_GET_N(op)	(((op) & 0x0f00) >> 8)
+#define OP_GET_M(op)	(((op) & 0x00f0) >> 4)
+
+#define OP_NOP		0x0009
 #endif /* PROTO */
 
 #if CODE
+static const uint16_t sh4_instr_type_mask[] = {
+    [SH4_TYPE_CNMC] = 0xf00f,
+    [SH4_TYPE_CNMI] = 0xf000,
+    [SH4_TYPE_CNCC] = 0xf0ff,
+    [SH4_TYPE_CNII] = 0xf000,
+    [SH4_TYPE_CCMI] = 0xff00,
+    [SH4_TYPE_CCII] = 0xff00,
+    [SH4_TYPE_CIII] = 0xf000,
+    [SH4_TYPE_I]    = 0xffff,
+};
+
+static const sh4_instr_t sh4_instructions_0[] = {
+    { SH4_TYPE_CNCC, SH4_GROUP_BR, SH4_READ_N, 0, 0x0003, "bsrf" },
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_NMR0, 0, 0x0004, "mov.b" }, /* mov.b Rm,@(R0,Rn) */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_NMR0, 0, 0x0005, "mov.w" }, /* mov.w Rm,@(R0,Rn) */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_NMR0, 0, 0x0006, "mov.l" }, /* mov.w Rm,@(R0,Rn) */
+    { SH4_TYPE_I,    SH4_GROUP_MT, 0, SH4_WRITE_T, 0x0008, "clrt" },
+    { SH4_TYPE_I,    SH4_GROUP_MT, 0, 0, 0x0009, "nop" },
+    { SH4_TYPE_I,    SH4_GROUP_CO, 0, 0, 0x000b, "rts" },
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_MR0,  SH4_LOAD_N, 0x000c, "mov.b" }, /* mov.b @(R0,Rm),Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_MR0, SH4_LOAD_N, 0x000d, "mov.w" }, /* mov.w @(R0,Rm),Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_MR0, SH4_LOAD_N, 0x000e, "mov.l" }, /* mov.l @(R0,Rm),Rn */
+    { SH4_TYPE_I,    SH4_GROUP_MT, 0, SH4_WRITE_T, 0x0018, "sett" },
+    { SH4_TYPE_I,    SH4_GROUP_EX, 0, SH4_WRITE_T, 0x0019, "div0u" },
+    { SH4_TYPE_CNCC, SH4_GROUP_BR, SH4_READ_N, 0, 0x0023, "braf" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_T, SH4_WRITE_N, 0x0029, "movt" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, SH4_READ_MACH, SH4_WRITE_N, 0x000a, "sts MACH" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, SH4_READ_MACL, SH4_WRITE_N, 0x001a, "sts MACL" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, 0, SH4_WRITE_N, 0x002a, "sts PR" },
+    { SH4_TYPE_CNCC, SH4_GROUP_LS, SH4_READ_FPUL, SH4_WRITE_N, 0x005a, "sts FPUL" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, SH4_READ_FPSCR, SH4_WRITE_N, 0x006a, "sts FPSCR" },
+    { SH4_TYPE_CNMC, SH4_GROUP_CO, SH4_READ_NM, SH4_WRITE_MACL, 0x0007, "mul.l" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, SH4_READ_GBR, SH4_WRITE_N, 0x0012, "stc GBR" },
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_1[] = {
+    { SH4_TYPE_CNMI, SH4_GROUP_LS, SH4_READ_NM, 0, 0x1000, "mov.l" }, /* mov.l Rm,@(disp,Rn) */
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_2[] = {
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_NM, 0, 0x2000, "mov.b" }, /* mov.b Rm,@Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_NM, 0, 0x2001, "mov.w" }, /* mov.w Rm,@Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_NM, 0, 0x2002, "mov.l" }, /* mov.l Rm,@Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_NM, SH4_WRITE_N, 0x2004, "mov.b" }, /* mov.b Rm,@-Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_NM, SH4_WRITE_N, 0x2005, "mov.w" }, /* mov.w Rm,@-Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_NM, SH4_WRITE_N, 0x2006, "mov.l" }, /* mov.l Rm,@-Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_T, 0x2007, "div0s" },
+    { SH4_TYPE_CNMC, SH4_GROUP_MT, SH4_READ_NM, SH4_WRITE_T, 0x2008, "tst" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_N, 0x2009, "and" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_N, 0x200a, "xor" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_N, 0x200b, "or" },
+    { SH4_TYPE_CNMC, SH4_GROUP_CO, SH4_READ_NM, SH4_WRITE_MACL, 0x200e, "mulu.w" },
+    { SH4_TYPE_CNMC, SH4_GROUP_CO, SH4_READ_NM, SH4_WRITE_MACL, 0x200f, "muls.w" },
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_3[] = {
+    { SH4_TYPE_CNMC, SH4_GROUP_MT, SH4_READ_NM, SH4_WRITE_T, 0x3000, "cmp/eq" },
+    { SH4_TYPE_CNMC, SH4_GROUP_MT, SH4_READ_NM, SH4_WRITE_T, 0x3002, "cmp/hs" },
+    { SH4_TYPE_CNMC, SH4_GROUP_MT, SH4_READ_NM, SH4_WRITE_T, 0x3003, "cmp/ge" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_NT, 0x3004, "div1" },
+    { SH4_TYPE_CNMC, SH4_GROUP_CO, SH4_READ_NM, SH4_WRITE_MACLH, 0x3005, "dmulu.l" },
+    { SH4_TYPE_CNMC, SH4_GROUP_MT, SH4_READ_NM, SH4_WRITE_T, 0x3006, "cmp/hi" },
+    { SH4_TYPE_CNMC, SH4_GROUP_MT, SH4_READ_NM, SH4_WRITE_T, 0x3007, "cmp/gt" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_N, 0x3008, "sub" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NMT, SH4_WRITE_NT, 0x300a, "subc" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_NT, 0x300b, "subv" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_N, 0x300c, "add" },
+    { SH4_TYPE_CNMC, SH4_GROUP_CO, SH4_READ_NM, SH4_WRITE_MACLH, 0x300d, "dmuls.l" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NMT, SH4_WRITE_NT, 0x300e, "addc" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_NT, 0x300f, "addv" },
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_4[] = {
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_NT, 0x4000, "shll" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_NT, 0x4001, "shlr" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_NT, 0x4004, "rotl" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_NT, 0x4005, "rotr" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_N, 0x4008, "shll2" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_N, 0x4009, "shlr2" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, SH4_READ_N, 0, 0x400b, "jsr" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_N, 0x400c, "shad" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_NM, SH4_WRITE_N, 0x400d, "shld" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_NT, 0x4010, "dt" },
+    { SH4_TYPE_CNCC, SH4_GROUP_MT, SH4_READ_N, SH4_WRITE_T, 0x4011, "cmp/pz" },
+    { SH4_TYPE_CNCC, SH4_GROUP_MT, SH4_READ_N, SH4_WRITE_T, 0x4015, "cmp/pl" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_N, 0x4018, "shll8" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_N, 0x4019, "shlr8" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, SH4_READ_N, SH4_WRITE_T, 0x401b, "tas.b" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_NT, 0x4020, "shal" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_NT, 0x4021, "shar" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_NT, SH4_WRITE_NT, 0x4024, "rotcl" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_NT, SH4_WRITE_NT, 0x4025, "rotcr" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_N, 0x4028, "shll16" },
+    { SH4_TYPE_CNCC, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_N, 0x4029, "shlr16" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, SH4_READ_N, 0, 0x402a, "lds PR" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, SH4_READ_N, 0, 0x402b, "jmp" },
+    { SH4_TYPE_CNCC, SH4_GROUP_LS, SH4_READ_N, SH4_WRITE_FPUL, 0x405a, "lds FPUL" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, SH4_READ_N, SH4_WRITE_FPSCR, 0x406a, "lds FPSCR" },
+    { SH4_TYPE_CNCC, SH4_GROUP_CO, SH4_READ_N, SH4_WRITE_GBR, 0x401e, "ldc GBR" },
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_5[] = {
+    { SH4_TYPE_CNMI, SH4_GROUP_LS, SH4_READ_M, SH4_LOAD_N, 0x5000, "mov.l" }, /* mov.l @(disp,Rm),Rn */
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_6[] = {
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_M, SH4_LOAD_N, 0x6000, "mov.b" }, /* mov.b @Rm,Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_M, SH4_LOAD_N, 0x6001, "mov.w" }, /* mov.w @Rm,Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_M, SH4_LOAD_N, 0x6002, "mov.l" }, /* mov.l @Rm,Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_MT, SH4_READ_M, SH4_WRITE_N, 0x6003, "mov" },
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_M, SH4_WRITE_M_LOAD_N, 0x6004, "mov.b" }, /* mov.b @Rm+,Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_M, SH4_WRITE_M_LOAD_N, 0x6005, "mov.w" }, /* mov.w @Rm+,Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_M, SH4_WRITE_M_LOAD_N, 0x6006, "mov.l" }, /* mov.l @Rm+,Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_M, SH4_WRITE_N, 0x6007, "not" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_M, SH4_WRITE_N, 0x6008, "swap.b" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_M, SH4_WRITE_N, 0x6009, "swap.w" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_MT, SH4_WRITE_NT, 0x600a, "negc" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_M, SH4_WRITE_N, 0x600b, "neg" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_M, SH4_WRITE_N, 0x600c, "extu.b" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_M, SH4_WRITE_N, 0x600d, "extu.w" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_M, SH4_WRITE_N, 0x600e, "exts.b" },
+    { SH4_TYPE_CNMC, SH4_GROUP_EX, SH4_READ_M, SH4_WRITE_N, 0x600f, "exts.w" },
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_7[] = {
+    { SH4_TYPE_CNII, SH4_GROUP_EX, SH4_READ_N, SH4_WRITE_N, 0x7000, "add" },
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_8[] = {
+    { SH4_TYPE_CCMI, SH4_GROUP_LS, SH4_READ_MR0, 0, 0x8000, "mov.b" }, /* mov.b R0,@(disp,Rm) */
+    { SH4_TYPE_CCMI, SH4_GROUP_LS, SH4_READ_MR0, 0, 0x8100, "mov.w" }, /* mov.w R0,@(disp,Rm) */
+    { SH4_TYPE_CCMI, SH4_GROUP_LS, SH4_READ_M, SH4_WRITE_R0, 0x8400, "mov.b" }, /* mov.b @(disp,Rm),R0 */
+    { SH4_TYPE_CCMI, SH4_GROUP_LS, SH4_READ_M, SH4_WRITE_R0, 0x8500, "mov.w" }, /* mov.w @(disp,Rm),R0 */
+    { SH4_TYPE_CCII, SH4_GROUP_MT, SH4_READ_R0, SH4_WRITE_T, 0x8800, "cmp/eq" },
+    { SH4_TYPE_CCII, SH4_GROUP_BR, SH4_READ_T, 0, 0x8900, "bt" },
+    { SH4_TYPE_CCII, SH4_GROUP_BR, SH4_READ_T, 0, 0x8b00, "bf" },
+    { SH4_TYPE_CCII, SH4_GROUP_BR, SH4_READ_T, 0, 0x8d00, "bts" },
+    { SH4_TYPE_CCII, SH4_GROUP_BR, SH4_READ_T, 0, 0x8f00, "bfs" },
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_9[] = {
+    { SH4_TYPE_CNII, SH4_GROUP_LS, 0, SH4_LOAD_N, 0x9000, "mov.w" }, /* mov.w @(disp,PC),Rn */
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_a[] = {
+    { SH4_TYPE_CIII, SH4_GROUP_BR, 0, 0, 0xa000, "bra" },
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_b[] = {
+    { SH4_TYPE_CIII, SH4_GROUP_BR, 0, 0, 0xb000, "bsr" },
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_c[] = {
+    { SH4_TYPE_CCII, SH4_GROUP_EX, 0, SH4_WRITE_R0, 0xc700, "mova" },
+    { SH4_TYPE_CCII, SH4_GROUP_MT, SH4_READ_R0, SH4_WRITE_T, 0xc800, "tst" },
+    { SH4_TYPE_CCII, SH4_GROUP_EX, SH4_READ_R0, SH4_WRITE_R0, 0xc900, "and" },
+    { SH4_TYPE_CCII, SH4_GROUP_EX, SH4_READ_R0, SH4_WRITE_R0, 0xca00, "xor" },
+    { SH4_TYPE_CCII, SH4_GROUP_EX, SH4_READ_R0, SH4_WRITE_R0, 0xcb00, "or" },
+    { SH4_TYPE_CCII, SH4_GROUP_LS, SH4_READ_GBR_R0, 0, 0xc000, "mov.b" }, /* mov.w R0,@(disp,GBR) */
+    { SH4_TYPE_CCII, SH4_GROUP_LS, SH4_READ_GBR_R0, 0, 0xc100, "mov.w" }, /* mov.w R0,@(disp,GBR) */
+    { SH4_TYPE_CCII, SH4_GROUP_LS, SH4_READ_GBR_R0, 0, 0xc200, "mov.l" }, /* mov.l R0,@(disp,GBR) */
+    { SH4_TYPE_CCII, SH4_GROUP_LS, SH4_READ_GBR, SH4_WRITE_R0, 0xc400, "mov.b" }, /* mov.b @(disp,GBR),R0 */
+    { SH4_TYPE_CCII, SH4_GROUP_LS, SH4_READ_GBR, SH4_WRITE_R0, 0xc500, "mov.w" }, /* mov.w @(disp,GBR),R0 */
+    { SH4_TYPE_CCII, SH4_GROUP_LS, SH4_READ_GBR, SH4_WRITE_R0, 0xc600, "mov.l" }, /* mov.l @(disp,GBR),R0 */
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_d[] = {
+    { SH4_TYPE_CNII, SH4_GROUP_LS, 0, SH4_LOAD_N, 0xd000, "mov.l" }, /* mov.l @(disp,PC),Rn */
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_e[] = {
+    { SH4_TYPE_CNII, SH4_GROUP_EX, 0, SH4_WRITE_N, 0xe000, "mov" },
+    {},
+};
+
+static const sh4_instr_t sh4_instructions_f[] = {
+    { SH4_TYPE_CNMC, SH4_GROUP_FE, SH4_READ_FNM, SH4_WRITE_FN, 0xf000, "fadd" },
+    { SH4_TYPE_CNMC, SH4_GROUP_FE, SH4_READ_FNM, SH4_WRITE_FN, 0xf001, "fsub" },
+    { SH4_TYPE_CNMC, SH4_GROUP_FE, SH4_READ_FNM, SH4_WRITE_FN, 0xf002, "fmul" },
+    { SH4_TYPE_CNMC, SH4_GROUP_FE, SH4_READ_FNM, SH4_WRITE_FN, 0xf003, "fdiv" },
+    { SH4_TYPE_CNMC, SH4_GROUP_FE, SH4_READ_FNM, SH4_WRITE_T, 0xf004, "fcmp/eq" },
+    { SH4_TYPE_CNMC, SH4_GROUP_FE, SH4_READ_FNM, SH4_WRITE_T, 0xf005, "fcmp/gt" },
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_MR0, SH4_LOAD_FN, 0xf006, "fmov.s" }, /* fmov.s @(R0,Rm),FRn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_NR0FM, 0, 0xf007, "fmov.s" }, /* fmov.s FRm,@(R0,Rn) */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_M, SH4_LOAD_FN, 0xf008, "fmov.s" }, /* fmov.s @(Rm),FRn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_M, SH4_WRITE_M_LOAD_FN, 0xf009, "fmov.s" }, /* fmov.s @Rm+,FRn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_N_FM, 0, 0xf00a, "fmov.s" }, /* fmov.s FRm,@(Rn) */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_N_FM, SH4_WRITE_N, 0xf00b, "fmov.s" }, /* fmov.s FRm,@-Rn */
+    { SH4_TYPE_CNMC, SH4_GROUP_LS, SH4_READ_FM, SH4_WRITE_FN, 0xf00c, "fmov" },
+    { SH4_TYPE_CNCC, SH4_GROUP_LS, SH4_READ_FPUL, SH4_WRITE_FN, 0xf00d, "fsts FPUL" },
+    { SH4_TYPE_CNMC, SH4_GROUP_FE, SH4_READ_FNFMFR0, SH4_WRITE_FN, 0xf00e, "fmac" },
+    { SH4_TYPE_CNCC, SH4_GROUP_LS, SH4_READ_FN, SH4_WRITE_FPUL, 0xf01d, "flds FPUL" },
+    { SH4_TYPE_CNCC, SH4_GROUP_FE, SH4_READ_FPUL, SH4_WRITE_FN, 0xf02d, "float" },
+    { SH4_TYPE_CNCC, SH4_GROUP_FE, SH4_READ_FN, SH4_WRITE_FPUL, 0xf03d, "ftrc" },
+    { SH4_TYPE_CNCC, SH4_GROUP_LS, SH4_READ_FN, SH4_WRITE_FN, 0xf04d, "fneg" },
+    { SH4_TYPE_CNCC, SH4_GROUP_LS, SH4_READ_FN, SH4_WRITE_FN, 0xf05d, "fabs" },
+    { SH4_TYPE_CNCC, SH4_GROUP_FE, SH4_READ_FN, SH4_WRITE_FN, 0xf06d, "fsqrt" },
+    { SH4_TYPE_CNCC, SH4_GROUP_LS, 0, SH4_WRITE_FN, 0xf08d, "fldi0" },
+    { SH4_TYPE_CNCC, SH4_GROUP_LS, 0, SH4_WRITE_FN, 0xf09d, "fldi1" },
+    { SH4_TYPE_CNCC, SH4_GROUP_FE, SH4_READ_FPUL, SH4_WRITE_FN, 0xf0ad, "fcnvsd" },
+    { SH4_TYPE_CNCC, SH4_GROUP_FE, SH4_READ_FN, SH4_WRITE_FPUL, 0xf0bd, "fcnvds" },
+    { SH4_TYPE_I,    SH4_GROUP_FE, SH4_READ_FPSCR, SH4_WRITE_FPSCR, 0xf3fd, "fschg" },
+    { SH4_TYPE_I,    SH4_GROUP_FE, SH4_READ_FPSCR, SH4_WRITE_FPSCR, 0xfbfd, "frchg" },
+    {},
+};
+
+static const sh4_instr_t * sh4_instructions[16] = {
+    sh4_instructions_0,
+    sh4_instructions_1,
+    sh4_instructions_2,
+    sh4_instructions_3,
+    sh4_instructions_4,
+    sh4_instructions_5,
+    sh4_instructions_6,
+    sh4_instructions_7,
+    sh4_instructions_8,
+    sh4_instructions_9,
+    sh4_instructions_a,
+    sh4_instructions_b,
+    sh4_instructions_c,
+    sh4_instructions_d,
+    sh4_instructions_e,
+    sh4_instructions_f,
+};
+
+static jit_bool_t sh4_ls_is_mem_read(const sh4_instr_t *instr)
+{
+    switch (instr->write) {
+    case SH4_LOAD_N:
+        /* Consider that PC-relative loads are not in the same
+         * "memory space" as the regular loads/stores, and therefore
+         * don't conflict with stores. */
+        return instr->read != SH4_READ_NONE;
+    case SH4_WRITE_M_LOAD_N:
+    case SH4_LOAD_FN:
+    case SH4_WRITE_M_LOAD_FN:
+    case SH4_WRITE_R0:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static jit_bool_t sh4_ls_is_mem_write(const sh4_instr_t *instr)
+{
+    switch (instr->read) {
+    case SH4_READ_NR0FM:
+    case SH4_READ_NMR0:
+    case SH4_READ_NM:
+    case SH4_READ_N_FM:
+    case SH4_READ_GBR:
+    case SH4_READ_GBR_R0:
+        return 1;
+    case SH4_READ_MR0:
+        return instr->write == SH4_WRITE_NONE;
+    default:
+        return 0;
+    }
+}
+
+static uint64_t sh4_read_mask(const sh4_code_t *code)
+{
+    uint64_t read = 0;
+
+    switch (code->instr->read) {
+    case SH4_READ_NMT:
+        read |= BITLL(OP_GET_M(code->op));
+    case SH4_READ_NT:
+        read |= RWMASK_T;
+        fallthrough;
+    case SH4_READ_N:
+        read |= BITLL(OP_GET_N(code->op));
+        fallthrough;
+    case SH4_READ_NONE:
+        break;
+    case SH4_READ_NMR0:
+        read |= BITLL(OP_GET_N(code->op));
+        fallthrough;
+    case SH4_READ_MR0:
+        read |= BITLL(OP_GET_M(code->op));
+        fallthrough;
+    case SH4_READ_R0:
+        read |= BITLL(0);
+        break;
+    case SH4_READ_NM:
+        read |= BITLL(OP_GET_N(code->op));
+        fallthrough;
+    case SH4_READ_M:
+        read |= BITLL(OP_GET_M(code->op));
+        break;
+    case SH4_READ_T:
+        read |= RWMASK_T;
+        break;
+    case SH4_READ_MT:
+        read |= RWMASK_T | BITLL(OP_GET_M(code->op));
+        break;
+    case SH4_READ_MACL:
+        read |= RWMASK_MACL;
+        break;
+    case SH4_READ_MACH:
+        read |= RWMASK_MACH;
+        break;
+    case SH4_READ_FPUL:
+        read |= RWMASK_FPUL;
+        break;
+    case SH4_READ_FNM:
+        read |= BITLL(16 + OP_GET_M(code->op));
+        fallthrough;
+    case SH4_READ_FN:
+        read |= BITLL(16 + OP_GET_N(code->op));
+        break;
+    case SH4_READ_N_FM:
+        read |= BITLL(OP_GET_N(code->op));
+        fallthrough;
+    case SH4_READ_FM:
+        read |= BITLL(16 + OP_GET_M(code->op));
+        break;
+    case SH4_READ_NR0FM:
+        read |= BITLL(0) | BITLL(OP_GET_N(code->op)) | BITLL(16 + OP_GET_M(code->op));
+        break;
+    case SH4_READ_FNFMFR0:
+        read |= BITLL(16) | BITLL(16 + OP_GET_N(code->op)) | BITLL(16 + OP_GET_M(code->op));
+        break;
+    case SH4_READ_FPSCR:
+        read |= RWMASK_FPSCR;
+        break;
+    case SH4_READ_GBR_R0:
+        read |= BITLL(0);
+        fallthrough;
+    case SH4_READ_GBR:
+        read |= RWMASK_GBR;
+        break;
+    }
+
+    if (code->instr->group == SH4_GROUP_LS && sh4_ls_is_mem_read(code->instr))
+        read |= RWMASK_MEM;
+
+    return read;
+}
+
+static uint64_t sh4_write_mask(const sh4_code_t *code)
+{
+    uint64_t write = 0;
+
+    switch (code->instr->write) {
+    case SH4_WRITE_M_LOAD_N:
+        write |= BITLL(OP_GET_M(code->op));
+        fallthrough;
+    case SH4_WRITE_N:
+    case SH4_LOAD_N:
+        write |= BITLL(OP_GET_N(code->op));
+        fallthrough;
+    case SH4_WRITE_NONE:
+        break;
+
+    case SH4_WRITE_NT:
+        write |= BITLL(OP_GET_N(code->op));
+        fallthrough;
+    case SH4_WRITE_T:
+        write |= RWMASK_T;
+        break;
+
+    case SH4_WRITE_R0:
+        write |= BITLL(0);
+        break;
+
+    case SH4_WRITE_MACLH:
+        write |= RWMASK_MACH;
+        fallthrough;
+    case SH4_WRITE_MACL:
+        write |= RWMASK_MACL;
+        break;
+    case SH4_WRITE_MACH:
+        write |= RWMASK_MACH;
+        break;
+    case SH4_WRITE_FPUL:
+        write |= RWMASK_FPUL;
+        break;
+    case SH4_WRITE_M_LOAD_FN:
+        write |= BITLL(OP_GET_M(code->op));
+        fallthrough;
+    case SH4_LOAD_FN:
+    case SH4_WRITE_FN:
+        write |= BITLL(16 + OP_GET_N(code->op));
+        break;
+    case SH4_WRITE_FPSCR:
+        write |= 0xffff0000 | RWMASK_FPSCR;
+        break;
+    case SH4_WRITE_GBR:
+        write |= RWMASK_GBR;
+        break;
+    }
+
+    if (code->instr->group == SH4_GROUP_LS && sh4_ls_is_mem_write(code->instr))
+        write |= RWMASK_MEM;
+
+    return write;
+}
+
+static uint64_t sh4_load_mask(const sh4_code_t *code)
+{
+    uint64_t load = 0;
+
+    switch (code->instr->write) {
+    case SH4_LOAD_FN:
+    case SH4_WRITE_M_LOAD_FN:
+        load |= BITLL(16 + OP_GET_N(code->op));
+        break;
+    case SH4_LOAD_N:
+    case SH4_WRITE_M_LOAD_N:
+        load |= BITLL(OP_GET_N(code->op));
+        break;
+    case SH4_WRITE_R0:
+        load |= BITLL(0);
+        fallthrough;
+    default:
+        break;
+    }
+
+    return load;
+}
+
+static int find_instr(uint64_t write_mask, uint64_t old_write_mask,
+                      const sh4_code_t *code,
+                      enum sh4_instr_group prev_group,
+                      unsigned int nb_ops, int idx_skip)
+{
+    unsigned int i;
+    uint64_t read_mask = 0;
+    uint64_t op_read_mask, op_write_mask, curr_write_mask;
+    short best_coef = -1;
+    int best_index = -1;
+
+    for (i = 0; i < nb_ops; i++) {
+        if (code[i].instr->group == SH4_GROUP_BR) {
+            /* TODO: Allow to move delay slots */
+            break;
+        }
+
+        if (code[i].instr->group == SH4_GROUP_CO) {
+            if ((code[i].instr->op & 0x000f) == 0x000b) {
+                /* TODO: Allow to move delay slots */
+                break;
+            }
+        }
+
+        if (idx_skip == i)
+            continue;
+
+        if (code[i].op == OP_NOP)
+            continue; /* Ignore NOPs */
+
+        op_read_mask = sh4_read_mask(&code[i]);
+        op_write_mask = sh4_write_mask(&code[i]);
+        curr_write_mask = write_mask;
+
+        if (code[i].instr->group == SH4_GROUP_MT)
+            curr_write_mask |= old_write_mask;
+
+        if (!(curr_write_mask & op_read_mask)
+            && !((read_mask | curr_write_mask) & op_write_mask)
+            && (code[i].instr->group == SH4_GROUP_MT || prev_group == SH4_GROUP_NONE
+                || (code[i].instr->group != SH4_GROUP_CO && code[i].instr->group != prev_group))
+            && code[i].coef > best_coef) {
+                best_coef = code[i].coef;
+                best_index = i;
+        }
+
+        write_mask |= op_write_mask;
+        read_mask |= op_read_mask;
+    }
+
+    return best_index;
+}
+
+static void sh4_handle_patches(jit_state_t *_jit, unsigned int from,
+                               unsigned int to, unsigned int offt_start)
+{
+    unsigned int i;
+
+    /* Instruction is a LDPL - search if we have a patch for it.
+     * If we do, update the patch address to the moved LDPL. */
+
+    for (i = 0; i < _jitc->consts.offset; i += 2) {
+        if (_jitc->consts.patches[i] == _jit->pc.w + (offt_start + from) * 2) {
+            _jitc->consts.patches[i] = _jit->pc.w + (offt_start + to) * 2;
+            break;
+        }
+    }
+
+    assert(i != _jitc->consts.offset);
+}
+
+static void sh4_code_move(jit_state_t *_jit, sh4_code_t *code,
+                          unsigned int from, unsigned int to, unsigned int offt_start)
+{
+    unsigned int i;
+    sh4_code_t tmp;
+
+    assert(to < from);
+
+    tmp = code[from];
+
+    if (tmp.instr->op == 0xd000) {
+        /* Write a bogus value for the patch address that points to this
+         * LDPL, and we'll fix it after moving the other opcodes.
+         * Otherwise if we swap a LDPL between 'from' and 'to' indices,
+         * but another LDPL is moved to the old 'from', we'll have more than
+         * one patch for the same address. */
+        sh4_handle_patches(_jit, from, 0xffff, offt_start);
+    }
+
+    for (i = from; i > to; i--) {
+        code[i] = code[i - 1];
+
+        if (code[i].instr->op == 0xd000)
+            sh4_handle_patches(_jit, i - 1, i, offt_start);
+    }
+
+    code[to] = tmp;
+
+    if (tmp.instr->op == 0xd000) {
+        /* Fix the bogus value now. */
+        sh4_handle_patches(_jit, 0xffff, to, offt_start);
+    }
+}
+
+static int sh4_combine(jit_state_t *_jit, sh4_code_t *code,
+                       size_t nb_ops, jit_bool_t all)
+{
+    const sh4_instr_t *instr;
+    uint16_t op;
+    size_t i, nb;
+    int offt, offt2;
+    uint64_t mask, newmask, future_mask;
+    jit_bool_t doublenop = 0;
+    int nb_written = 0;
+    jit_bool_t out1_is_nop = 0;
+    size_t offt_start = 0;
+
+    do {
+        mask = _jitc->reg_mask[1] | _jitc->reg_mask[2];
+        future_mask = 0;
+
+        offt = find_instr(mask, _jitc->reg_mask[0], code,
+                          SH4_GROUP_NONE, nb_ops, -1);
+        if (offt >= 0) {
+            /* The first instruction is emitted before the second one, and
+             * both may be moved out of order: make the second one depend on
+             * the registers written by the first. */
+            newmask = mask | sh4_write_mask(&code[offt]);
+            offt2 = find_instr(newmask, _jitc->reg_mask[0], code,
+                               code[offt].instr->group, nb_ops, offt);
+        } else {
+            offt2 = -1;
+        }
+
+        /* Is the first instruction a branch? If so, use it with its delay slot */
+        if (offt < 0 && code[0].instr->group == SH4_GROUP_BR) {
+            offt = 0;
+            if (code[0].instr->op != 0x8900 && code[0].instr->op != 0x8b00)
+                offt2 = 1;
+        }
+
+        /* Is the first instruction a jump? If so, use it with its delay slot */
+        if (offt < 0 && code[0].instr->group == SH4_GROUP_CO
+            && (code[0].instr->op & 0x000f) == 0x000b) {
+            offt = 0;
+            offt2 = 1;
+        }
+
+        if (offt < 0 && code[0].op == OP_NOP) {
+            /* First instructions are NOPs? Skip them and try again */
+            offt = 0;
+
+            if (nb_ops > 1 && code[1].op == OP_NOP)
+                offt2 = 1;
+        }
+
+        /* Move the first instruction to the beginning of the code buffer */
+        if (offt > 0)
+            sh4_code_move(_jit, code, offt, 0, offt_start);
+
+        /* Move the second instruction */
+        if (offt2 >= 0 && offt2 + (offt2 < offt) != 1)
+            sh4_code_move(_jit, code, offt2 + (offt2 < offt), 1, offt_start);
+
+        nb = !!(offt >= 0) + !!(offt2 >= 0);
+
+        for (i = 0; i < nb; i++) {
+            if (code[i].instr->group == SH4_GROUP_LS)
+                future_mask |= sh4_load_mask(&code[i]);
+            if (code[i].instr->group != SH4_GROUP_MT)
+                _jitc->reg_mask[2] |= sh4_write_mask(&code[i]);
+        }
+
+        assert(mask != 0 || _jitc->reg_mask[0] != 0 || nb > 0);
+
+        code += nb;
+        nb_ops -= nb;
+        nb_written += nb;
+        offt_start += nb;
+
+        _jitc->reg_mask[0] = _jitc->reg_mask[1];
+        _jitc->reg_mask[1] = _jitc->reg_mask[2];
+        _jitc->reg_mask[2] = future_mask;
+        future_mask = 0;
+    } while ((all && nb_ops) || !nb_written);
+
+    return nb_written;
+}
+
+static const sh4_instr_t *find_sh4_instr(jit_uint16_t op)
+{
+    const sh4_instr_t *instr;
+    unsigned int i;
+    jit_uint16_t cmd = op >> 12;
+
+    for (i = 0;; i++) {
+        instr = &sh4_instructions[cmd][i];
+        if (!instr->op)
+            break;
+
+        if ((op & sh4_instr_type_mask[instr->type]) == instr->op)
+            return instr;
+    }
+
+    printf("Unable to find instr type for 0x%04hx\n", op);
+    return NULL;
+}
+
 static void
 _cni(jit_state_t *_jit, jit_uint16_t c, jit_uint16_t n, jit_uint16_t i)
 {
@@ -781,6 +1550,109 @@ _cd(jit_state_t *_jit, jit_uint16_t c, jit_uint16_t d)
 	op.d = (struct jit_instr_d){ .c = c, .d = d };
 
 	ii(op.op);
+}
+
+static void
+_flush(jit_state_t *_jit, jit_bool_t all)
+{
+    unsigned int i, bit, nb;
+    sh4_code_t code[ARRAY_SIZE(_jitc->ibuf)];
+    jit_uint16_t reg_coefs[64];
+    uint64_t mask;
+
+    if (_jitc->ioff == 0)
+	    return; /* Nothing to flush */
+
+    memset(reg_coefs, 0, sizeof(reg_coefs));
+
+    /* Reorder the instructions so that pairs that the SH4 can issue in the
+     * same cycle are emitted together, and dependencies are respected.
+     *
+     * If 'all', we want to flush all instructions of the buffer. Otherwise, we
+     * can settle with flushing one or two.
+     *
+     * - Each instruction gets a priority (see below): the instruction groups
+     *   are ordered by increasing priority, and an instruction that feeds a
+     *   later (higher priority) instruction is boosted so that the dependency
+     *   chain can start as early as possible.
+     *
+     * - The scheduler repeatedly picks the highest priority instruction that
+     *   can be moved to the front of the buffer, then tries to find a second
+     *   one from a different issue group to pair with it.
+     *
+     * - Keep track of load delays using a register mask: set the bit for the
+     *   target register of the LS, and for the next instruction slot (of the
+     *   next cycle, not for a combined instruction), make sure that we don't
+     *   pick an instruction that accesses this register. After the next
+     *   instruction, the bit is reset to 0 as the result becomes available.
+     *
+     * - Skip NOP pairs.
+     *
+     * - If we can't combine, emit just one instruction.
+     *
+     * - If we only have three instructions left, and the middle one is a BRA,
+     *   BRAF, JMP, JSR, BT/S or BF/S, and the last one is a NOP, check if the
+     *   first instruction can be moved to the branch's delay slot.
+     *
+     * - If we only have two instructions left:
+     *   * Second opcode is BT/BF, and does not have dependency with the first
+     *     opcode: convert those to BT/S or BF/S.
+     */
+    for (i = 0; i < _jitc->ioff; i++) {
+        code[i].op = _jitc->ibuf[i];
+        code[i].instr = find_sh4_instr(code[i].op);
+    }
+
+    /* Compute the priority of each instruction. The instruction groups are
+     * ordered by increasing priority, and an instruction is made more urgent
+     * when it produces a value that a later instruction needs (the earlier it
+     * is issued, the sooner the dependency chain can progress). */
+    for (i = _jitc->ioff; i > 0; i--) {
+        code[i - 1].coef = code[i - 1].instr->group;
+
+        mask = sh4_read_mask(&code[i - 1]);
+        for (bit = 0; mask; bit++) {
+            if (mask & BITLL(bit)) {
+                code[i - 1].coef += reg_coefs[bit];
+                reg_coefs[bit]++;
+                mask &= ~BITLL(bit);
+            }
+        }
+
+        mask = sh4_write_mask(&code[i - 1]);
+        for (bit = 0; mask; bit++) {
+            if (mask & BITLL(bit)) {
+                reg_coefs[bit] += code[i - 1].coef;
+                mask &= ~BITLL(bit);
+            }
+        }
+    }
+
+    nb = sh4_combine(_jit, code, _jitc->ioff, all);
+
+    if (nb > _jitc->ioff)
+        printf("Invalid combine return value!\n");
+
+    for (i = 0; i < nb; i++)
+        *_jit->pc.us++ = code[i].op;
+
+    _jitc->ioff -= nb;
+
+    for (i = 0; i < _jitc->ioff; i++)
+        _jitc->ibuf[i] = code[nb + i].op;
+}
+
+static void
+_ii(jit_state_t *_jit, jit_uint16_t c)
+{
+    if (_jitc->idirect) {
+        *_jit->pc.us++ = c;
+    } else {
+        if (_jitc->ioff == ARRAY_SIZE(_jitc->ibuf))
+            flush(0);
+
+        _jitc->ibuf[_jitc->ioff++] = c;
+    }
 }
 
 static void
@@ -852,7 +1724,7 @@ movi_loop_cnt(jit_word_t i0)
 static void
 _movi(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 {
-	jit_word_t w = _jit->pc.w & ~3;
+	jit_word_t w = (_jit->pc.w + _jitc->ioff * 2) & ~3;
 
 	if (i0 >= -128 && i0 < 128) {
 		MOVI(r0, i0);
@@ -865,13 +1737,7 @@ _movi(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 	} else if (i0 >= w && i0 <= w + 0x3ff && !((i0 - w) & 0x3)) {
 		MOVA((i0 - w) >> 2);
 		movr(r0, _R0);
-	} else if (is_low_mask(i0)) {
-		MOVI(r0, -1);
-		rshi_u(r0, r0, unmasked_bits_count(i0));
-	} else if (is_high_mask(i0)) {
-		MOVI(r0, -1);
-		lshi(r0, r0, unmasked_bits_count(i0));
-	} else if (movi_loop_cnt(i0) < 4) {
+	} else if (movi_loop_cnt(i0) < 3) {
 		movi_loop(_jit, r0, i0);
 	} else {
 		load_const(0, r0, i0);
@@ -886,19 +1752,23 @@ emit_branch_opcode(jit_state_t *_jit, jit_word_t i0, jit_word_t w,
 	jit_uint16_t reg;
 
 	if (!force_patchable && i0 == 0) {
+		_jitc->idirect++;
+		flush(1);
+
 		/* Positive displacement - we don't know the target yet. */
 		if (t_set)
 			BT(0);
 		else
 			BF(0);
 
-		/* Leave space after the BF/BT in case we need to add a
-		 * BRA opcode. */
-		w = _jit->code.length - (_jit->pc.uc - _jit->code.ptr);
-		if (w > 254) {
+		/* If branching to an address that BT/BF can't reach, do a
+		 * far branch: patch_at() will add a BRA() there */
+		if (_jitc->far) {
 			NOP();
 			NOP();
 		}
+
+		_jitc->idirect--;
 	} else if (!force_patchable && disp >= -128) {
 		if (t_set)
 			BT(disp);
@@ -906,6 +1776,8 @@ emit_branch_opcode(jit_state_t *_jit, jit_word_t i0, jit_word_t w,
 			BF(disp);
 	} else {
 		reg = jit_get_reg(jit_class_gpr);
+		_jitc->idirect++;
+		flush(1);
 
 		if (force_patchable)
 			movi_p(rn(reg), i0);
@@ -918,40 +1790,43 @@ emit_branch_opcode(jit_state_t *_jit, jit_word_t i0, jit_word_t w,
 		JMP(rn(reg));
 		NOP();
 
+		_jitc->idirect--;
 		jit_unget_reg(reg);
 	}
 }
 
+static jit_instr_t *_last_instr(jit_state_t *_jit)
+{
+    if(_jitc->ioff > 0)
+        return (jit_instr_t *)(&_jitc->ibuf[_jitc->ioff - 1]);
+    else
+        return (jit_instr_t *)(_jit->pc.w - 2);
+}
+
 static void _maybe_emit_frchg(jit_state_t *_jit)
 {
-	jit_instr_t *instr = (jit_instr_t *)(_jit->pc.w - 2);
-
-	if (_jitc->no_flag && instr->op == 0xfbfd)
-		_jit->pc.us--;
-	else
-		FRCHG();
+    if (_jitc->no_flag && _jitc->ioff > 0 && last_instr()->op == 0xfbfd)
+        _jitc->ioff--;
+    else
+        FRCHG();
 }
 
 static void _maybe_emit_fschg(jit_state_t *_jit)
 {
-	jit_instr_t *instr = (jit_instr_t *)(_jit->pc.w - 2);
-
-	if (_jitc->no_flag && instr->op == 0xf3fd)
-		_jit->pc.us--;
-	else
-		FSCHG();
+    if (_jitc->no_flag && _jitc->ioff > 0 && last_instr()->op == 0xf3fd)
+        _jitc->ioff--;
+    else
+        FSCHG();
 }
 
 static void maybe_emit_tst(jit_state_t *_jit, jit_uint16_t r0, jit_bool_t *set)
 {
-	jit_instr_t *instr = (jit_instr_t *)(_jit->pc.w - 2);
-
 	/* If the previous opcode is a MOVT(r0), we can skip the TST opcode,
 	 * but we need to invert the branch condition. */
-	if (_jitc->no_flag && instr->op == (0x29 | (r0 << 8)))
-		*set ^= 1;
-	else
-		TST(r0, r0);
+    if (_jitc->no_flag && last_instr()->op == (0x29 | (r0 << 8)))
+        *set ^= 1;
+    else
+        TST(r0, r0);
 }
 
 static void _movnr(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1,
@@ -959,8 +1834,12 @@ static void _movnr(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1,
 {
 	maybe_emit_tst(_jit, r2, &set);
 
+	_jitc->idirect++;
+	flush(1);
+
 	emit_branch_opcode(_jit, 4, 0, set, 0);
 	movr(r0, r1);
+	_jitc->idirect--;
 }
 
 static char atomic_byte;
@@ -980,6 +1859,9 @@ _casx(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1,
     addr_reg = jit_get_reg(jit_class_gpr);
     movi(rn(addr_reg), (uintptr_t)&atomic_byte);
 
+    _jitc->idirect++;
+    flush(1);
+
     TAS(rn(addr_reg));
     BF(-3);
 
@@ -992,6 +1874,8 @@ _casx(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1,
 
     MOVI(_R0, 0);
     STB(rn(addr_reg), _R0);
+
+    _jitc->idirect--;
 
     jit_unget_reg(addr_reg);
     if (iscasi)
@@ -1030,17 +1914,24 @@ _addxr(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_uint16_t r2)
 static void
 _addi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
+	jit_uint32_t reg;
+
 	if (i0 >= -128 && i0 < 127) {
 		movr(r0, r1);
 		ADDI(r0, i0);
 	} else if (r0 != r1) {
 		movi(r0, i0);
 		addr(r0, r1, r0);
+	} else if (r0 != r1) {
+		movi(r0, i0);
+		addr(r0, r1, r0);
 	} else {
-		assert(r1 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i0);
-		addr(r0, r1, _R0);
+		movi(rn(reg), i0);
+		addr(r0, r1, rn(reg));
+
+		jit_unget_reg(reg);
 	}
 }
 
@@ -1054,10 +1945,19 @@ _addci(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 static void
 _addxi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r0 != _R0 && r1 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	addxr(r0, r1, _R0);
+	if (r0 != r1) {
+		movi(r0, i0);
+		addxr(r0, r1, r0);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		addxr(r0, r1, rn(reg));
+
+		jit_unget_reg(reg);
+	}
 }
 
 static void
@@ -1109,37 +2009,57 @@ _subi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 static void
 _subci(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r0 != _R0 && r1 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	subcr(r0, r1, _R0);
+	if (r0 != r1) {
+		movi(r0, i0);
+		subcr(r0, r1, r0);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		subcr(r0, r1, rn(reg));
+
+		jit_unget_reg(reg);
+	}
 }
 
 static void
 _subxi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r0 != _R0 && r1 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	subxr(r0, r1, _R0);
+	if (r0 != r1) {
+		movi(r0, i0);
+		subxr(r0, r1, r0);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		subxr(r0, r1, rn(reg));
+
+		jit_unget_reg(reg);
+	}
 }
 
 static void
 _rsbi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
+	jit_uint32_t reg;
+
 	if ((jit_uword_t)((i0 >> 7) + 1) < 2) {
 		negr(r0, r1);
 		ADDI(r0, i0);
 	} else if (r0 != r1) {
-		assert(r0 != _R0 && r1 != _R0);
-
 		movi(r0, i0);
 		subr(r0, r0, r1);
 	} else {
-		assert(r0 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i0);
-		subr(r0, _R0, r1);
+		movi(rn(reg), i0);
+		subr(r0, rn(reg), r1);
+
+		jit_unget_reg(reg);
 	}
 }
 
@@ -1160,8 +2080,19 @@ _hmulr(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1, jit_int32_t r2)
 static void
 _hmuli(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1, jit_word_t i0)
 {
-    movi(_R0, i0);
-    hmulr(r0, r1, _R0);
+	jit_uint32_t reg;
+
+	if (r0 != r1) {
+		movi(r0, i0);
+		hmulr(r0, r1, r0);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		hmulr(r0, r1, rn(reg));
+
+		jit_unget_reg(reg);
+	}
 }
 
 static void
@@ -1174,8 +2105,19 @@ _hmulr_u(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1, jit_int32_t r2)
 static void
 _hmuli_u(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1, jit_word_t i0)
 {
-    movi(_R0, i0);
-    hmulr_u(r0, r1, _R0);
+	jit_uint32_t reg;
+
+	if (r0 != r1) {
+		movi(r0, i0);
+		hmulr_u(r0, r1, r0);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		hmulr_u(r0, r1, rn(reg));
+
+		jit_unget_reg(reg);
+	}
 }
 
 static void
@@ -1199,30 +2141,63 @@ _qmulr_u(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1,
 static void
 _muli(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r1 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	mulr(r0, r1, _R0);
+	if (r0 != r1) {
+		movi(r0, i0);
+		mulr(r0, r1, r0);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		mulr(r0, r1, rn(reg));
+
+		jit_unget_reg(reg);
+	}
 }
 
 static void
 _qmuli(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1,
        jit_uint16_t r2, jit_word_t i0)
 {
-	assert(r2 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	qmulr(r0, r1, r2, _R0);
+	if (r0 != r2) {
+		movi(r0, i0);
+		qmulr(r0, r1, r2, r0);
+	} else if (r1 != r2) {
+		movi(r1, i0);
+		qmulr(r0, r1, r2, r1);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		qmulr(r0, r1, r2, rn(reg));
+
+		jit_unget_reg(reg);
+	}
 }
 
 static void
 _qmuli_u(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1,
 	 jit_uint16_t r2, jit_word_t i0)
 {
-	assert(r2 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	qmulr_u(r0, r1, r2, _R0);
+	if (r0 != r2) {
+		movi(r0, i0);
+		qmulr_u(r0, r1, r2, r0);
+	} else if (r1 != r2) {
+		movi(r1, i0);
+		qmulr_u(r0, r1, r2, r1);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		qmulr_u(r0, r1, r2, rn(reg));
+
+		jit_unget_reg(reg);
+	}
 }
 
 static void
@@ -1255,6 +2230,8 @@ _divr(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_uint16_t r2)
 
 		MOVI(_R0, -2);
 		DIV0S(rn(reg), divisor);
+
+		flush(1);
 
 		ROTCL(r0);
 		DIV1(rn(reg), divisor);
@@ -1298,6 +2275,8 @@ _divr_u(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_uint16_t r2)
 		MOVI(rn(reg), 0);
 		MOVI(_R0, -2);
 		DIV0U();
+
+		flush(1);
 
 		ROTCL(r0);
 		DIV1(rn(reg), divisor);
@@ -1397,8 +2376,8 @@ _qdivi_u(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1,
 		jit_uint32_t reg = jit_get_reg(jit_class_gpr);
 
 		fallback_divi_u(rn(reg), r2, i0);
-		muli(_R0, rn(reg), i0);
-		subr(r1, r2, _R0);
+		muli(rn(reg), rn(reg), i0);
+		subr(r1, r2, rn(reg));
 
 		jit_unget_reg(reg);
 	}
@@ -1472,6 +2451,8 @@ _lrotr(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1, jit_int32_t r2)
 	movr(_R0, r2);
 	movr(r0, r1);
 
+	flush(1);
+
 	ROTL(r0);
 	TST(_R0, _R0);
 	BFS(-4);
@@ -1487,6 +2468,8 @@ _rrotr(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1, jit_int32_t r2)
 
 	movr(_R0, r2);
 	movr(r0, r1);
+
+	flush(1);
 
 	ROTR(r0);
 	TST(_R0, _R0);
@@ -1532,6 +2515,8 @@ _andr(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_uint16_t r2)
 static void
 _andi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
+	jit_uint32_t reg;
+
 	if (i0 == 0xff) {
 		extr_uc(r0, r1);
 	} else if (i0 == 0xffff) {
@@ -1543,10 +2528,12 @@ _andi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 		movi(r0, i0);
 		AND(r0, r1);
 	} else {
-		assert(r0 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i0);
-		AND(r0, _R0);
+		movi(rn(reg), i0);
+		AND(r0, rn(reg));
+
+		jit_unget_reg(reg);
 	}
 }
 
@@ -1564,14 +2551,18 @@ _orr(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_uint16_t r2)
 static void
 _ori(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
+	jit_uint32_t reg;
+
 	if (r0 != r1) {
 		movi(r0, i0);
 		OR(r0, r1);
 	} else {
-		assert(r0 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i0);
-		OR(r0, _R0);
+		movi(rn(reg), i0);
+		OR(r0, rn(reg));
+
+		jit_unget_reg(reg);
 	}
 }
 
@@ -1589,6 +2580,8 @@ _xorr(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_uint16_t r2)
 static void
 _xori(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
+	jit_uint32_t reg;
+
 	if (r0 == _R0 && !(i0 & ~0xff)) {
 		movr(r0, r1);
 		XORI(i0);
@@ -1596,10 +2589,12 @@ _xori(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 		movi(r0, i0);
 		XOR(r0, r1);
 	} else {
-		assert(r0 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i0);
-		XOR(r0, _R0);
+		movi(rn(reg), i0);
+		XOR(r0, rn(reg));
+
+		jit_unget_reg(reg);
 	}
 }
 
@@ -1607,6 +2602,8 @@ static void _clor(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1)
 {
 	movr(_R0, r1);
 	movi(r0, -1);
+
+	flush(1);
 
 	SHLL(_R0);
 	BTS(-3);
@@ -1619,6 +2616,8 @@ static void _clzr(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1)
 	movi(r0, -1);
 
 	SETT();
+	flush(1);
+
 	ROTCL(_R0);
 	BFS(-3);
 	ADDI(r0, 1);
@@ -1628,6 +2627,8 @@ static void _ctor(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1)
 {
 	movr(_R0, r1);
 	movi(r0, -1);
+
+	flush(1);
 
 	SHLR(_R0);
 	BTS(-3);
@@ -1640,6 +2641,8 @@ static void _ctzr(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1)
 	movi(r0, -1);
 
 	SETT();
+	flush(1);
+
 	ROTCR(_R0);
 	BFS(-3);
 	ADDI(r0, 1);
@@ -1651,6 +2654,8 @@ _rbitr(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1)
 	movr(_R0, r1);
 
 	SETT();
+	flush(1);
+
 	ROTCR(_R0);
 	ROTCL(r0);
 	CMPEQI(1);
@@ -1664,6 +2669,8 @@ _popcntr(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1)
 
 	movr(_R0, r1);
 	movi(r0, 0);
+
+	flush(1);
 
 	SHLR(_R0);
 	NEGC(r0, r0);
@@ -1710,28 +2717,41 @@ _eqr(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_uint16_t r2)
 static void
 _ner(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_uint16_t r2)
 {
-	assert(r1 != _R0 && r2 != _R0);
+	if (r0 != r1 && r0 != r2) {
+		MOVI(r0, -1);
+		CMPEQ(r1, r2);
+		NEGC(r0, r0);
+	} else {
+		assert(r1 != _R0 && r2 != _R0);
 
-	MOVI(_R0, -1);
-	CMPEQ(r1, r2);
-	NEGC(r0, _R0);
+		MOVI(_R0, -1);
+		CMPEQ(r1, r2);
+		NEGC(r0, _R0);
+	}
 }
 
 static void
 _eqi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
+	jit_uint32_t reg;
+
 	if (i0 == 0) {
 		TST(r1, r1);
 	} else if (i0 >= -128 && i0 < 128) {
-		assert(r1 != _R0);
+		assert(r0 != _R0);
 
 		movr(_R0, r1);
 		CMPEQI(i0);
+	} else if (r0 != r1) {
+		movi(r0, i0);
+		CMPEQ(r1, r0);
 	} else {
-		assert(r1 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i0);
-		CMPEQ(r1, _R0);
+		movi(rn(reg), i0);
+		CMPEQ(r1, rn(reg));
+
+		jit_unget_reg(reg);
 	}
 	MOVT(r0);
 }
@@ -1739,32 +2759,48 @@ _eqi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 static void
 _nei(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r0 != _R0 && r1 != _R0);
+	jit_uint32_t reg;
 
 	if (i0 == 0) {
 		TST(r1, r1);
 	} else if (i0 >= -128 && i0 < 128) {
+		assert(r0 != _R0);
+
 		movr(_R0, r1);
 		CMPEQI(i0);
+	} else if (r0 != r1) {
+		movi(r0, i0);
+		CMPEQ(r1, r0);
 	} else {
-		movi(_R0, i0);
-		CMPEQ(r1, _R0);
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		CMPEQ(r1, rn(reg));
+
+		jit_unget_reg(reg);
 	}
 
-	MOVI(_R0, -1);
-	NEGC(r0, _R0);
+	MOVI(r0, -1);
+	NEGC(r0, r0);
 }
 
 static void
 _gti(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
+	jit_uint32_t reg;
+
 	if (i0 == 0) {
 		CMPPL(r1);
+	} else if (r0 != r1) {
+		movi(r0, i0);
+		CMPGT(r1, r0);
 	} else {
-		assert(r1 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i0);
-		CMPGT(r1, _R0);
+		movi(rn(reg), i0);
+		CMPGT(r1, rn(reg));
+
+		jit_unget_reg(reg);
 	}
 	MOVT(r0);
 }
@@ -1772,13 +2808,20 @@ _gti(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 static void
 _gei(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
+	jit_uint32_t reg;
+
 	if (i0 == 0) {
 		CMPPZ(r1);
+	} else if (r0 != r1) {
+		movi(r0, i0);
+		CMPGE(r1, r0);
 	} else {
-		assert(r1 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i0);
-		CMPGE(r1, _R0);
+		movi(rn(reg), i0);
+		CMPGE(r1, rn(reg));
+
+		jit_unget_reg(reg);
 	}
 	MOVT(r0);
 }
@@ -1786,66 +2829,117 @@ _gei(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 static void
 _gti_u(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r1 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	CMPHI(r1, _R0);
+	if (r0 != r1) {
+		movi(r0, i0);
+		CMPHI(r1, r0);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		CMPHI(r1, rn(reg));
+
+		jit_unget_reg(reg);
+	}
 	MOVT(r0);
 }
 
 static void
 _gei_u(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r1 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	CMPHS(r1, _R0);
+	if (r0 != r1) {
+		movi(r0, i0);
+		CMPHS(r1, r0);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		CMPHS(r1, rn(reg));
+
+		jit_unget_reg(reg);
+	}
 	MOVT(r0);
 }
 
 static void
 _lti(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r1 != _R0);
+	jit_uint32_t reg;
 
 	if (i0 == 0) {
 		movr(r0, r1);
 		ROTCL(r0);
-		MOVT(r0);
+	} else if (r0 != r1) {
+		movi(r0, i0);
+		CMPGT(r0, r1);
 	} else {
-		movi(_R0, i0);
-		CMPGT(_R0, r1);
-		MOVT(r0);
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		CMPGT(rn(reg), r1);
+
+		jit_unget_reg(reg);
 	}
+	MOVT(r0);
 }
 
 static void
 _lei(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r1 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	CMPGE(_R0, r1);
+	if (r0 != r1) {
+		movi(r0, i0);
+		CMPGE(r0, r1);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		CMPGE(rn(reg), r1);
+
+		jit_unget_reg(reg);
+	}
 	MOVT(r0);
 }
 
 static void
 _lti_u(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r1 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	CMPHI(_R0, r1);
+	if (r0 != r1) {
+		movi(r0, i0);
+		CMPHI(r0, r1);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		CMPHI(rn(reg), r1);
+
+		jit_unget_reg(reg);
+	}
 	MOVT(r0);
 }
 
 static void
 _lei_u(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r1 != _R0);
+	jit_uint32_t reg;
 
-	movi(_R0, i0);
-	CMPHS(_R0, r1);
+	if (r0 != r1) {
+		movi(r0, i0);
+		CMPHS(r0, r1);
+	} else {
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0);
+		CMPHS(rn(reg), r1);
+
+		jit_unget_reg(reg);
+	}
 	MOVT(r0);
 }
 
@@ -1858,6 +2952,8 @@ emit_shllr(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1)
 		movr(_R0, r1);
 
 		TST(_R0, _R0);
+		flush(1);
+
 		BTS(2);
 		DT(_R0);
 		BFS(-3);
@@ -1894,6 +2990,8 @@ _rshr(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_uint16_t r2)
 		movr(r0, r1);
 
 		TST(_R0, _R0);
+		flush(1);
+
 		BTS(2);
 		DT(_R0);
 		BFS(-3);
@@ -1915,6 +3013,8 @@ _rshr_u(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_uint16_t r2)
 		movr(r0, r1);
 
 		TST(_R0, _R0);
+		flush(1);
+
 		BTS(2);
 		DT(_R0);
 		BFS(-3);
@@ -1945,22 +3045,19 @@ _lshi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 		if (i0 & 0x1)
 			SHLL(r0);
 	} else {
-		reg = r0 != _R0 ? _R0 : jit_get_reg(jit_class_gpr);
+		reg = jit_get_reg(jit_class_gpr);
 
 		movi(rn(reg), i0);
 		lshr(r0, r0, rn(reg));
 
-		if (r0 == _R0)
-			jit_unget_reg(reg);
+		jit_unget_reg(reg);
 	}
 }
 
 static void
 _rshi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	jit_uint32_t reg;
-
-	reg = r0 != _R0 ? _R0 : jit_get_reg(jit_class_gpr);
+	jit_uint32_t reg = jit_get_reg(jit_class_gpr);
 
 	movr(r0, r1);
 	if (jit_sh34_p()) {
@@ -1969,13 +3066,14 @@ _rshi(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 	} else {
 		assert(i0 > 0);
 		movi(rn(reg), i0);
+		flush(1);
+
 		DT(rn(reg));
 		BFS(-3);
 		SHAR(r0);
 	}
 
-	if (r0 == _R0)
-		jit_unget_reg(reg);
+	jit_unget_reg(reg);
 }
 
 static void
@@ -2001,20 +3099,21 @@ _rshi_u(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 		if (i0 & 0x1)
 			SHLR(r0);
 	} else {
-		reg = r0 != _R0 ? _R0 : jit_get_reg(jit_class_gpr);
+		reg = jit_get_reg(jit_class_gpr);
 
 		if (jit_sh34_p()) {
 			movi(rn(reg), -i0);
 			SHLD(r0, rn(reg));
 		} else {
 			movi(rn(reg), i0);
+			flush(1);
+
 			DT(rn(reg));
 			BFS(-3);
 			SHLR(r0);
 		}
 
-		if (r0 == _R0)
-			jit_unget_reg(reg);
+		jit_unget_reg(reg);
 	}
 }
 
@@ -2023,12 +3122,20 @@ _qlshr(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1,
        jit_int32_t r2, jit_int32_t r3)
 {
 	assert(r0 != r1);
+
 	movr(_R0, r3);
 	movr(r0, r2);
 	CMPEQI(32);
 	movr(r1, r2);
+
+	flush(1);
+	_jitc->idirect++;
+
 	BF(0);
 	XOR(r0, r0);
+
+	_jitc->idirect--;
+
 	SHAD(r0, _R0);
 	ADDI(_R0, -__WORDSIZE);
 	SHAD(r1, _R0);
@@ -2039,12 +3146,20 @@ _qlshr_u(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1,
          jit_int32_t r2, jit_int32_t r3)
 {
 	assert(r0 != r1);
+
 	movr(_R0, r3);
 	movr(r0, r2);
 	CMPEQI(32);
 	movr(r1, r2);
+
+	flush(1);
+	_jitc->idirect++;
+
 	BF(0);
 	XOR(r0, r0);
+
+	_jitc->idirect--;
+
 	SHLD(r0, _R0);
 	ADDI(_R0, -__WORDSIZE);
 	SHLD(r1, _R0);
@@ -2080,12 +3195,20 @@ _qrshr(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1,
        jit_int32_t r2, jit_int32_t r3)
 {
 	assert(r0 != r1);
+
 	NEG(_R0, r3);
 	movr(r1, r2);
 	CMPEQI(0);
 	movr(r0, r2);
+
+	flush(1);
+	_jitc->idirect++;
+
 	BF(0);
 	MOV(r1, _R0);
+
+	_jitc->idirect--;
+
 	SHAD(r0, _R0);
 	ADDI(_R0, __WORDSIZE);
 	SHAD(r1, _R0);
@@ -2096,12 +3219,20 @@ _qrshr_u(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1,
          jit_int32_t r2, jit_int32_t r3)
 {
 	assert(r0 != r1);
+
 	NEG(_R0, r3);
 	movr(r1, r2);
 	CMPEQI(0);
 	movr(r0, r2);
+
+	flush(1);
+	_jitc->idirect++;
+
 	BF(0);
 	MOV(r1, _R0);
+
+	_jitc->idirect--;
+
 	SHLD(r0, _R0);
 	ADDI(_R0, __WORDSIZE);
 	SHLD(r1, _R0);
@@ -2146,32 +3277,32 @@ static void _ldr_us(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1)
 
 static void _ldi_c(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 {
-	movi(_R0, i0);
-	ldr_c(r0, _R0);
+	movi(r0, i0);
+	ldr_c(r0, r0);
 }
 
 static void _ldi_s(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 {
-	movi(_R0, i0);
-	ldr_s(r0, _R0);
+	movi(r0, i0);
+	ldr_s(r0, r0);
 }
 
 static void _ldi_i(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 {
-	movi(_R0, i0);
-	ldr_i(r0, _R0);
+	movi(r0, i0);
+	ldr_i(r0, r0);
 }
 
 static void _ldi_uc(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 {
-	movi(_R0, i0);
-	ldr_uc(r0, _R0);
+	movi(r0, i0);
+	ldr_uc(r0, r0);
 }
 
 static void _ldi_us(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 {
-	movi(_R0, i0);
-	ldr_us(r0, _R0);
+	movi(r0, i0);
+	ldr_us(r0, r0);
 }
 
 static void
@@ -2231,6 +3362,9 @@ _ldxi_c(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 	} else if (i0 >= 0 && i0 <= 0xf) {
 		LDDB(r1, i0);
 		movr(r0, _R0);
+	} else if (r0 != r1 && r0 != _R0) {
+		movi(r0, i0);
+		ldxr_c(r0, r0, r1);
 	} else {
 		movi(_R0, i0);
 		ldxr_c(r0, r1, _R0);
@@ -2253,6 +3387,9 @@ _ldxi_s(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 	} else if (i0 >= 0 && i0 <= 0x1f && !(i0 & 0x1)) {
 		LDDW(r1, i0 >> 1);
 		movr(r0, _R0);
+	} else if (r0 != r1 && r0 != _R0) {
+		movi(r0, i0);
+		ldxr_s(r0, r0, r1);
 	} else {
 		movi(_R0, i0);
 		ldxr_s(r0, r1, _R0);
@@ -2274,6 +3411,9 @@ _ldxi_i(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 		}
 	} else if (i0 >= 0 && i0 <= 0x3f && !(i0 & 0x3)) {
 		LDDL(r0, r1, i0 >> 2);
+	} else if (r0 != r1 && r0 != _R0) {
+		movi(r0, i0);
+		ldxr_i(r0, r0, r1);
 	} else {
 		movi(_R0, i0);
 		ldxr_i(r0, r1, _R0);
@@ -2283,19 +3423,15 @@ _ldxi_i(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 static void
 _ldxi_uc(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r1 != _R0);
-
-	ldxi_c(_R0, r1, i0);
-	extr_uc(r0, _R0);
+	ldxi_c(r0, r1, i0);
+	extr_uc(r0, r0);
 }
 
 static void
 _ldxi_us(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 {
-	assert(r1 != _R0);
-
-	ldxi_s(_R0, r1, i0);
-	extr_us(r0, _R0);
+	ldxi_s(r0, r1, i0);
+	extr_us(r0, r0);
 }
 
 static void
@@ -2347,26 +3483,32 @@ _ldxai_i(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1, jit_word_t i0)
 
 static void _sti_c(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0)
 {
-	assert(r0 != _R0);
+	jit_uint32_t reg = jit_get_reg(jit_class_gpr);
 
-	movi(_R0, i0);
-	str_c(_R0, r0);
+	movi(rn(reg), i0);
+	str_c(rn(reg), r0);
+
+	jit_unget_reg(reg);
 }
 
 static void _sti_s(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0)
 {
-	assert(r0 != _R0);
+	jit_uint32_t reg = jit_get_reg(jit_class_gpr);
 
-	movi(_R0, i0);
-	str_s(_R0, r0);
+	movi(rn(reg), i0);
+	str_s(rn(reg), r0);
+
+	jit_unget_reg(reg);
 }
 
 static void _sti_i(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0)
 {
-	assert(r0 != _R0);
+	jit_uint32_t reg = jit_get_reg(jit_class_gpr);
 
-	movi(_R0, i0);
-	str_i(_R0, r0);
+	movi(rn(reg), i0);
+	str_i(rn(reg), r0);
+
+	jit_unget_reg(reg);
 }
 
 static void
@@ -2503,7 +3645,7 @@ _bger(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
 	CMPGE(r0, r1);
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, t, p);
 
 	return (w);
@@ -2518,7 +3660,7 @@ _bger_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
 	CMPHS(r0, r1);
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, t, p);
 
 	return (w);
@@ -2539,7 +3681,7 @@ _beqr(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 			w = _jmpi(_jit, i0, i0 == 0);
 	} else {
 		CMPEQ(r0, r1);
-		w = _jit->pc.w;
+		w = _jit->pc.w + _jitc->ioff * 2;
 		emit_branch_opcode(_jit, i0, w, 1, p);
 	}
 
@@ -2555,7 +3697,7 @@ _bner(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
 	CMPEQ(r0, r1);
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, 0, p);
 
 	return (w);
@@ -2575,7 +3717,7 @@ _bmsr(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	else
 		maybe_emit_tst(_jit, r0, &set);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2595,7 +3737,7 @@ _bmcr(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	else
 		maybe_emit_tst(_jit, r0, &set);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2605,6 +3747,7 @@ static jit_word_t
 _bgti(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
       jit_word_t i1, jit_bool_t set, jit_bool_t p)
 {
+	jit_uint32_t reg;
 	jit_word_t w;
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
@@ -2612,12 +3755,14 @@ _bgti(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	if (i1 == 0) {
 		CMPPL(r0);
 	} else {
-		assert(r0 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i1);
-		CMPGT(r0, _R0);
+		movi(rn(reg), i1);
+		CMPGT(r0, rn(reg));
+
+		jit_unget_reg(reg);
 	}
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2627,6 +3772,7 @@ static jit_word_t
 _bgei(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
       jit_word_t i1, jit_bool_t set, jit_bool_t p)
 {
+	jit_uint32_t reg;
 	jit_word_t w;
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
@@ -2634,12 +3780,14 @@ _bgei(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	if (i1 == 0) {
 		CMPPZ(r0);
 	} else {
-		assert(r0 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i1);
-		CMPGE(r0, _R0);
+		movi(rn(reg), i1);
+		CMPGE(r0, rn(reg));
+
+		jit_unget_reg(reg);
 	}
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2649,6 +3797,7 @@ static jit_word_t
 _bgti_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	jit_word_t i1, jit_bool_t set, jit_bool_t p)
 {
+	jit_uint32_t reg;
 	jit_word_t w;
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
@@ -2656,12 +3805,14 @@ _bgti_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	if (i1 == 0) {
 		maybe_emit_tst(_jit, r0, &set);
 	} else {
-		assert(r0 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i1);
-		CMPHI(r0, _R0);
+		movi(rn(reg), i1);
+		CMPHI(r0, rn(reg));
+
+		jit_unget_reg(reg);
 	}
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2671,15 +3822,19 @@ static jit_word_t
 _bgei_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	jit_word_t i1, jit_bool_t set, jit_bool_t p)
 {
+	jit_uint32_t reg;
 	jit_word_t w;
-
-	assert(r0 != _R0);
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	movi(_R0, i1);
-	CMPHS(r0, _R0);
-	w = _jit->pc.w;
+	reg = jit_get_reg(jit_class_gpr);
+
+	movi(rn(reg), i1);
+	CMPHS(r0, rn(reg));
+
+	jit_unget_reg(reg);
+
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2688,6 +3843,7 @@ _bgei_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 static jit_word_t _beqi(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 			jit_word_t i1, jit_bool_t set, jit_bool_t p)
 {
+	jit_uint32_t reg;
 	jit_word_t w;
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
@@ -2698,12 +3854,14 @@ static jit_word_t _beqi(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 		movr(_R0, r0);
 		CMPEQI(i1);
 	} else {
-		assert(r0 != _R0);
+		reg = jit_get_reg(jit_class_gpr);
 
-		movi(_R0, i1);
-		CMPEQ(_R0, r0);
+		movi(rn(reg), i1);
+		CMPEQ(r0, rn(reg));
+
+		jit_unget_reg(reg);
 	}
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2712,15 +3870,19 @@ static jit_word_t _beqi(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 static jit_word_t _bmsi(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 			jit_word_t i1, jit_bool_t set, jit_bool_t p)
 {
+	jit_uint32_t reg;
 	jit_word_t w;
-
-	assert(r0 != _R0);
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	movi(_R0, i1);
-	TST(_R0, r0);
-	w = _jit->pc.w;
+	reg = jit_get_reg(jit_class_gpr);
+
+	movi(rn(reg), i1);
+	TST(rn(reg), r0);
+
+	jit_unget_reg(reg);
+
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2735,7 +3897,7 @@ static jit_word_t _boaddr(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 
 	ADDV(r0, r1);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2751,7 +3913,7 @@ static jit_word_t _boaddr_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	CLRT();
 	ADDC(r0, r1);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2760,14 +3922,17 @@ static jit_word_t _boaddr_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 static jit_word_t _boaddi(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 			  jit_word_t i1, jit_bool_t set, jit_bool_t p)
 {
+	jit_uint32_t reg;
 	jit_word_t w;
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	assert(r0 != _R0);
+	reg = jit_get_reg(jit_class_gpr);
 
-	movi(_R0, i1);
-	w = _boaddr(_jit, i0, r0, _R0, set, p);
+	movi(rn(reg), i1);
+	w = _boaddr(_jit, i0, r0, rn(reg), set, p);
+
+	jit_unget_reg(reg);
 
 	return (w);
 }
@@ -2775,14 +3940,17 @@ static jit_word_t _boaddi(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 static jit_word_t _boaddi_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 			    jit_word_t i1, jit_bool_t set, jit_bool_t p)
 {
+	jit_uint32_t reg;
 	jit_word_t w;
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	assert(r0 != _R0);
+	reg = jit_get_reg(jit_class_gpr);
 
-	movi(_R0, i1);
-	w = _boaddr_u(_jit, i0, r0, _R0, set, p);
+	movi(rn(reg), i1);
+	w = _boaddr_u(_jit, i0, r0, rn(reg), set, p);
+
+	jit_unget_reg(reg);
 
 	return (w);
 }
@@ -2799,7 +3967,7 @@ static jit_word_t _bosubr(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	NEG(_R0, r1);
 	ADDV(r0, _R0);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2815,7 +3983,7 @@ static jit_word_t _bosubr_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 	CLRT();
 	SUBC(r0, r1);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -2824,12 +3992,15 @@ static jit_word_t _bosubr_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 static jit_word_t _bosubi(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 			  jit_word_t i1, jit_bool_t set, jit_bool_t p)
 {
+	jit_uint32_t reg;
 	jit_word_t w;
 
-	assert(r0 != _R0);
+	reg = jit_get_reg(jit_class_gpr);
 
-	movi(_R0, i1);
-	w = _bosubr(_jit, i0, r0, _R0, set, p);
+	movi(rn(reg), i1);
+	w = _bosubr(_jit, i0, r0, rn(reg), set, p);
+
+	jit_unget_reg(reg);
 
 	return (w);
 }
@@ -2837,12 +4008,15 @@ static jit_word_t _bosubi(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 static jit_word_t _bosubi_u(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 			    jit_word_t i1, jit_bool_t set, jit_bool_t p)
 {
+	jit_uint32_t reg;
 	jit_word_t w;
 
-	assert(r0 != _R0);
+	reg = jit_get_reg(jit_class_gpr);
 
-	movi(_R0, i1);
-	w = _bosubr_u(_jit, i0, r0, _R0, set, p);
+	movi(rn(reg), i1);
+	w = _bosubr_u(_jit, i0, r0, rn(reg), set, p);
+
+	jit_unget_reg(reg);
 
 	return (w);
 }
@@ -2864,10 +4038,10 @@ _jmpi(jit_state_t *_jit, jit_word_t i0, jit_bool_t force)
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	disp = (i0 - w >> 1) - 2;
 
-	if (force || (disp >= -2048 && disp <= 2046)) {
+	if ((force && !_jitc->far) || (!force && disp >= -2048 && disp <= 2046)) {
 		BRA(disp);
 		NOP();
 	} else if (0) {
@@ -2911,7 +4085,7 @@ _calli(jit_state_t *_jit, jit_word_t i0)
 
 	reset_fpu(_jit, 0);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	disp = (i0 - w >> 1) - 2;
 
 	if (disp >= -2048 && disp <= 2046) {
@@ -2928,9 +4102,15 @@ _calli(jit_state_t *_jit, jit_word_t i0)
 static jit_word_t
 _movi_p(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 {
-	jit_word_t w = _jit->pc.w;
+	jit_word_t w;
 
+    _jitc->idirect++;
+    flush(1);
+
+    w = _jit->pc.w + _jitc->ioff * 2;
 	load_const(1, r0, 0);
+
+    _jitc->idirect--;
 
 	return (w);
 }
@@ -2943,10 +4123,15 @@ _jmpi_p(jit_state_t *_jit, jit_word_t i0)
 
     set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
+    _jitc->idirect++;
+    flush(1);
+
     reg = jit_get_reg(jit_class_gpr);
     w = movi_p(rn(reg), i0);
     jmpr(rn(reg));
     jit_unget_reg(reg);
+
+    _jitc->idirect--;
 
     return (w);
 }
@@ -2959,12 +4144,16 @@ _calli_p(jit_state_t *_jit, jit_word_t i0)
 
     reset_fpu(_jit, 0);
 
+    _jitc->idirect++;
+    flush(1);
+
     reg = jit_get_reg(jit_class_gpr);
     w = movi_p(rn(reg), i0);
     JSR(rn(reg));
     NOP();
     jit_unget_reg(reg);
 
+    _jitc->idirect--;
     reset_fpu(_jit, 1);
 
     return (w);
@@ -3030,12 +4219,17 @@ _vaarg(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1)
     /* Check that we didn't reach the end gpr pointer. */
     CMPHS(rn(rg0), rn(rg1));
 
+    _jitc->idirect++;
+    flush(1);
+
     ge_code = _jit->pc.w;
     BF(0);
 
     /* If we did, load the stack pointer instead. */
     movi(_R0, offsetof(jit_va_list_t, over));
     ldxr(rn(rg0), r1, _R0);
+
+    _jitc->idirect--;
 
     patch_at(ge_code, _jit->pc.w);
 
@@ -3058,6 +4252,17 @@ _patch_abs(jit_state_t *_jit, jit_word_t instr, jit_word_t label)
 	ptr[2].ni.i = (label >> 16) & 0xff;
 	ptr[4].ni.i = (label >> 8) & 0xff;
 	ptr[6].ni.i = (label >> 0) & 0xff;
+}
+
+static void
+_patch_const(jit_state_t *_jit, jit_word_t addr, jit_word_t target)
+{
+	jit_instr_t *ptr = (jit_instr_t *)addr;
+	jit_int32_t disp;
+
+	disp = ((target - addr) >> 2) - 1 + !!(addr & 0x3);
+	assert(!(disp > 0xff));
+	ptr->op = (ptr->op & 0xff00) | disp;
 }
 
 static void
@@ -3102,16 +4307,11 @@ _patch_at(jit_state_t *_jit, jit_word_t instr, jit_word_t label)
 		}
 		break;
 	case 0xd:
-		if (ptr->op & 0xff) {
-			/* TODO: Fix the mess. patch_at() gets called with 'instr' pointing
-			 * to the mov.l opcode and 'label' being the value that should be
-			 * loaded into the register. So we read the address at which the mov.l
-			 * points to, and write the label there. */
-			*(jit_uint32_t *)((instr & ~0x3) + 4 + (ptr->op & 0xff) * 4) = label;
-		} else {
-			disp = ((label - instr) >> 2) - 1 + !!(instr & 0x3);
-			ptr->op = (ptr->op & 0xff00) | disp;
-		}
+		/* patch_at() gets called with 'instr' pointing to the mov.l opcode and
+		 * 'label' being the value that should be loaded into the register.
+		 * So we read the address at which the mov.l points to, and write the
+		 * label there. */
+		*(jit_uint32_t *)((instr & ~0x3) + 4 + (ptr->op & 0xff) * 4) = label;
 		break;
 	default:
 		assert("unhandled branch opcode");

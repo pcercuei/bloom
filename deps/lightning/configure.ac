@@ -83,6 +83,15 @@ if test "x$DISASSEMBLER" != "xno"; then
 		 [HAVE_IBERTY="no"])
     AC_CHECK_LIB(bfd, bfd_init, ,
 		 [HAVE_BFD="no"])
+    if test "x$HAVE_BFD" = "xno"; then
+	AC_CHECK_LIB(zstd, ZSTD_decompress, ,
+		     [HAVE_ZSTD="no"])
+	if test "x$HAVE_ZSTD" != "xno"; then
+	    AC_MSG_NOTICE([Rechecking bfd with -lzstd])
+	    $as_unset ac_cv_lib_bfd_bfd_init
+	    AC_CHECK_LIB(bfd, bfd_init, [HAVE_BFD="yes"])
+	fi
+    fi
     AC_CHECK_LIB(z, compressBound, ,
 		 [HAVE_Z="no"])
     AC_CHECK_LIB(opcodes, init_disassemble_info, ,

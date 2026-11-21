@@ -818,6 +818,10 @@ static void _ler_f(jit_state_t *_jit, jit_int16_t r0, jit_int16_t r1,
 
 	MOVI(_R0, 0);
 	FCMPEQ(r1, r1);
+
+	_jitc->idirect++;
+	flush(1);
+
 	BF(5);
 	FCMPEQ(r2, r2);
 	BF(3);
@@ -846,6 +850,8 @@ static void _ler_f(jit_state_t *_jit, jit_int16_t r0, jit_int16_t r1,
 	BF(-18 - is_double);
 
 	movr(r0, _R0);
+
+	_jitc->idirect--;
 
 	jit_unget_reg(reg);
 }
@@ -1607,14 +1613,22 @@ static void _ldr_d(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1)
 
 static void _ldi_f(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 {
-	movi(_R0, i0);
-	ldr_f(r0, _R0);
+	jit_uint16_t reg = jit_get_reg(jit_class_gpr);
+
+	movi(rn(reg), i0);
+	ldr_f(r0, rn(reg));
+
+	jit_unget_reg(reg);
 }
 
 static void _ldi_d(jit_state_t *_jit, jit_uint16_t r0, jit_word_t i0)
 {
-	movi(_R0, i0);
-	ldr_d(r0, _R0);
+	jit_uint16_t reg = jit_get_reg(jit_class_gpr);
+
+	movi(rn(reg), i0);
+	ldr_d(r0, rn(reg));
+
+	jit_unget_reg(reg);
 }
 
 static void _ldxr_f(jit_state_t *_jit, jit_uint16_t r0,
@@ -1662,18 +1676,28 @@ static void _str_d(jit_state_t *_jit, jit_uint16_t r0, jit_uint16_t r1)
 
 static void _sti_f(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0)
 {
-	movi(_R0, i0);
-	STF(_R0, r0);
+	jit_uint16_t reg = jit_get_reg(jit_class_gpr);
+
+	movi(rn(reg), i0);
+	STF(rn(reg), r0);
+
+	jit_unget_reg(reg);
 }
 
 static void _sti_d(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0)
 {
+	jit_uint16_t reg;
+
 	if (SH_SINGLE_ONLY) {
 		sti_f(i0, r0);
 	} else {
-		movi(_R0, i0 + 8);
-		STFS(_R0, r0);
-		STFS(_R0, r0 + 1);
+		reg = jit_get_reg(jit_class_gpr);
+
+		movi(rn(reg), i0 + 8);
+		STFS(rn(reg), r0);
+		STFS(rn(reg), r0 + 1);
+
+		jit_unget_reg(reg);
 	}
 }
 
@@ -1723,7 +1747,7 @@ static jit_word_t _beqr_f(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -1745,7 +1769,7 @@ static jit_word_t _beqi_f(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -1767,7 +1791,7 @@ static jit_word_t _beqi_d(jit_state_t *_jit, jit_word_t i0, jit_uint16_t r0,
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -1785,7 +1809,7 @@ static jit_word_t _bgtr_f(jit_state_t *_jit, jit_word_t i0, jit_int16_t r0,
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -1875,7 +1899,7 @@ static jit_word_t _bler_f(jit_state_t *_jit, jit_word_t i0, jit_int16_t r0,
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, set, p);
 
 	return (w);
@@ -1959,7 +1983,7 @@ static jit_word_t _buneqr_f(jit_state_t *_jit, jit_word_t i0, jit_int16_t r0,
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, 0, p);
 
 	return (w);
@@ -1975,7 +1999,7 @@ static jit_word_t _bltgtr_f(jit_state_t *_jit, jit_word_t i0, jit_int16_t r0,
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, 0, p);
 
 	return (w);
@@ -1992,7 +2016,7 @@ static jit_word_t _bordr_f(jit_state_t *_jit, jit_word_t i0, jit_int16_t r0,
 
 	set_fmode(_jit, SH_DEFAULT_FPU_MODE);
 
-	w = _jit->pc.w;
+	w = _jit->pc.w + _jitc->ioff * 2;
 	emit_branch_opcode(_jit, i0, w, !set, p);
 
 	return (w);
@@ -2328,8 +2352,12 @@ static void _movr_f_w(jit_state_t *_jit, jit_uint16_t r0, jit_int16_t r1)
 
 static void _movi_w_f(jit_state_t *_jit, jit_int16_t r0, jit_word_t i0)
 {
-	movi(_R0, i0);
-	movr_w_f(r0, _R0);
+	jit_uint16_t reg = jit_get_reg(jit_class_gpr);
+
+	movi(rn(reg), i0);
+	movr_w_f(r0, rn(reg));
+
+	jit_unget_reg(reg);
 }
 
 static void _movr_ww_d(jit_state_t *_jit, jit_uint16_t r0, jit_int16_t r1, jit_int16_t r2)
@@ -2372,12 +2400,17 @@ _vaarg_d(jit_state_t *_jit, jit_int32_t r0, jit_int32_t r1)
     /* Check that we didn't reach the end gpr pointer. */
     CMPHS(rn(rg0), rn(rg1));
 
+    _jitc->idirect++;
+    flush(1);
+
     ge_code = _jit->pc.w;
     BF(0);
 
     /* If we did, load the stack pointer instead. */
     movi(_R0, offsetof(jit_va_list_t, over));
     ldxr(rn(rg0), r1, _R0);
+
+    _jitc->idirect--;
 
     patch_at(ge_code, _jit->pc.w);
 

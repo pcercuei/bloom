@@ -585,12 +585,12 @@ These allow access to integers of size 3, in 32-bit, and extra sizes
 5, 6 and 7 in 64-bit.
 For floating point values only support for size 4 and 8 is provided.
 @example
-unldr       O1 = *(signed O3 byte integer)* = O2
-unldi       O1 = *(signed O3 byte integer)* = O2
-unldr_u     O1 = *(unsigned O3 byte integer)* = O2
-unldi_u     O1 = *(unsigned O3 byte integer)* = O2
-unldr_x     O1 = *(O3 byte float)* = O2
-unldi_x     O1 = *(O3 byte float)* = O2
+unldr       O1 = *(signed O3 byte integer)*O2
+unldi       O1 = *(signed O3 byte integer)*O2
+unldr_u     O1 = *(unsigned O3 byte integer)*O2
+unldi_u     O1 = *(unsigned O3 byte integer)*O2
+unldr_x     O1 = *(O3 byte float)*O2
+unldi_x     O1 = *(O3 byte float)*O2
 unstr       *(O3 byte integer)O1 = O2
 unsti       *(O3 byte integer)O1 = O2
 unstr_x     *(O3 byte float)O1 = O2
