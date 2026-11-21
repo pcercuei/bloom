@@ -2001,17 +2001,17 @@ static void pvr_start_scene(pvr_list_t list)
 __pvr
 static void poly_enqueue(pvr_list_t list, const struct poly *poly)
 {
-	if (!WITH_HYBRID_RENDERING || likely(list == PVR_LIST_PT_POLY)) {
+	if (!WITH_HYBRID_RENDERING || likely(list == PVR_LIST_OP_POLY)) {
 		if (unlikely(pvr.new_frame))
 			pvr_start_scene(list);
 
 		poly_draw_now(poly);
 	} else if (unlikely(pvr.polybuf_cnt_start == pvr.polybuf_cnt_end)) {
 		printf("Poly buffer overflow\n");
-	} else if (list == PVR_LIST_OP_POLY) {
-		poly_copy(&polybuf[--pvr.polybuf_cnt_end], poly);
-	} else {
+	} else if (list == PVR_LIST_PT_POLY) {
 		poly_copy(&polybuf[pvr.polybuf_cnt_start++], poly);
+	} else {
+		poly_copy(&polybuf[--pvr.polybuf_cnt_end], poly);
 	}
 }
 
@@ -3292,12 +3292,14 @@ void hw_render_stop(void)
 	if (unlikely(pvr.new_frame)) {
 		pvr_start_scene(PVR_LIST_TR_POLY);
 	} else if (WITH_HYBRID_RENDERING) {
+		pvr_render_outlines();
+
 		pvr_list_finish();
 		pvr_set_list(PVR_LIST_TR_POLY);
 	}
 
-	if (WITH_HYBRID_RENDERING && likely(pvr.polybuf_cnt_start))
-		polybuf_render_from_start();
+	if (WITH_HYBRID_RENDERING && likely(pvr.polybuf_cnt_end < __array_size(polybuf)))
+		polybuf_render_from_end();
 
 	if (!WITH_24BPP) {
 		overpaint = pvr.start_x == pvr.view_x
@@ -3328,14 +3330,12 @@ void hw_render_stop(void)
 	if (pvr.has_bg)
 		pvr_load_bg();
 
-	pvr_set_list(PVR_LIST_OP_POLY);
-	pvr_reset_tile_clip();
-
-	if (WITH_HYBRID_RENDERING && likely(pvr.polybuf_cnt_end < __array_size(polybuf)))
-		polybuf_render_from_end();
-	pvr_render_outlines();
-
-	pvr_list_finish();
+	if (WITH_HYBRID_RENDERING && likely(pvr.polybuf_cnt_start)) {
+		pvr_set_list(PVR_LIST_PT_POLY);
+		pvr_reset_tile_clip();
+		polybuf_render_from_start();
+		pvr_list_finish();
+	}
 
 	if (WITH_CLIPPING && pvr.nb_clips)
 		pvr_render_tr_modifier_volumes();
