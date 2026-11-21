@@ -1511,12 +1511,11 @@ __noinline
 static void poly_draw_check_mask(pvr_poly_hdr_t *hdr,
 				 const struct vertex_coords *coords,
 				 uint16_t voffset, const uint32_t *colors,
-				 unsigned int nb, uint16_t zoffset,
+				 unsigned int nb, float z,
 				 uint16_t flags)
 {
 	uint32_t colors_alt[4];
 	unsigned int i;
-	float z;
 
 	/* We need to render the source texture's pixels conditionally, depending on
 	 * both the source alpha and the destination alpha (which encodes for the
@@ -1531,7 +1530,6 @@ static void poly_draw_check_mask(pvr_poly_hdr_t *hdr,
 	hdr->m2.blend_src = PVR_BLEND_INVDESTCOLOR;
 	hdr->m2.blend_dst = PVR_BLEND_ZERO;
 	hdr->m0.txr_en = hdr->m1.txr_en = false;
-	z = get_zvalue(zoffset);
 	draw_prim(hdr, coords, voffset, colors_alt,
 		  nb, z, 0, flags & ~POLY_TEXTURED);
 
@@ -1543,7 +1541,6 @@ static void poly_draw_check_mask(pvr_poly_hdr_t *hdr,
 	hdr->m0.txr_en = hdr->m1.txr_en = true;
 	hdr->m2.blend_dst_acc2 = true;
 	hdr->m0.oargb_en = true;
-	z = get_zvalue(zoffset + 1);
 	draw_prim(hdr, coords, voffset, colors_alt,
 		  nb, z, 0xffffff, flags);
 
@@ -1555,7 +1552,6 @@ static void poly_draw_check_mask(pvr_poly_hdr_t *hdr,
 	hdr->m2.blend_dst_acc2 = true;
 	hdr->m0.oargb_en = false;
 	hdr->m2.alpha = true;
-	z = get_zvalue(zoffset + 2);
 	draw_prim(hdr, coords, voffset, colors_alt,
 		  nb, z, 0, flags & ~POLY_TEXTURED);
 
@@ -1566,7 +1562,6 @@ static void poly_draw_check_mask(pvr_poly_hdr_t *hdr,
 	hdr->m2.blend_src_acc2 = true;
 	hdr->m2.blend_dst_acc2 = false;
 	hdr->m2.alpha = false;
-	z = get_zvalue(zoffset + 3);
 	draw_prim(hdr, coords, voffset, colors_alt,
 		  nb, z, 0, flags & ~POLY_TEXTURED);
 
@@ -1576,7 +1571,6 @@ static void poly_draw_check_mask(pvr_poly_hdr_t *hdr,
 	hdr->m0.txr_en = hdr->m1.txr_en = false;
 	hdr->m2.blend_src_acc2 = false;
 	hdr->m2.blend_dst_acc2 = false;
-	z = get_zvalue(zoffset + 4);
 	draw_prim(hdr, coords, voffset, colors_alt,
 		  nb, z, 0, flags & ~POLY_TEXTURED);
 
@@ -1586,7 +1580,6 @@ static void poly_draw_check_mask(pvr_poly_hdr_t *hdr,
 	hdr->m2.blend_src = PVR_BLEND_DESTALPHA;
 	hdr->m2.blend_dst = PVR_BLEND_ONE;
 	hdr->m0.txr_en = hdr->m1.txr_en = true;
-	z = get_zvalue(zoffset + 5);
 	draw_prim(hdr, coords, voffset, colors, nb, z, 0, flags);
 }
 
@@ -1602,8 +1595,8 @@ static void poly_draw_now(const struct poly *poly)
 	bool bright = poly->flags & POLY_BRIGHT;
 	bool set_mask = poly->flags & POLY_SET_MASK;
 	bool check_mask = poly->flags & POLY_CHECK_MASK;
-	uint16_t voffset = 0, zoffset = poly->zoffset;
 	pvr_poly_hdr_t hdr, *poly_hdr;
+	uint16_t voffset = 0;
 	pvr_ptr_t tex = NULL;
 	float z;
 
@@ -1630,7 +1623,7 @@ static void poly_draw_now(const struct poly *poly)
 
 	__builtin_prefetch(poly_hdr);
 
-	z = get_zvalue(zoffset);
+	z = get_zvalue(poly->zoffset);
 
 	if (likely(poly->blending_mode == BLENDING_MODE_NONE
 		   && pvr.old_blending_is_none
@@ -1690,7 +1683,7 @@ static void poly_draw_now(const struct poly *poly)
 		} else if (unlikely(check_mask)) {
 			if (textured) {
 				poly_draw_check_mask(&hdr, coords, voffset, colors,
-						     nb, zoffset, flags);
+						     nb, z, flags);
 				break;
 			} else {
 				hdr.m2.blend_src = PVR_BLEND_DESTALPHA;
@@ -1765,8 +1758,6 @@ static void poly_draw_now(const struct poly *poly)
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
 
 		if (bright) {
-			z = get_zvalue(zoffset + 1);
-
 			/* Make the source texture twice as bright by adding it
 			 * again. */
 			draw_prim(NULL, coords, voffset, colors, nb, z, 0, flags);
@@ -1802,13 +1793,10 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_src = PVR_BLEND_ONE;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 		hdr.m0.txr_en = hdr.m1.txr_en = textured;
-		z = get_zvalue(zoffset + 1);
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
 
 		if (bright) {
-			z = get_zvalue(zoffset + 2);
-
 			/* Make the source texture twice as bright by adding it
 			 * again */
 			draw_prim(NULL, coords, voffset, colors, nb, z, 0, flags);
@@ -1818,7 +1806,6 @@ static void poly_draw_now(const struct poly *poly)
 		hdr.m2.blend_src = PVR_BLEND_INVDESTCOLOR;
 		hdr.m2.blend_dst = PVR_BLEND_ZERO;
 		hdr.m0.txr_en = hdr.m1.txr_en = false;
-		z = get_zvalue(zoffset + 3);
 
 		draw_prim(&hdr, coords, voffset, colors_alt,
 			  nb, z, 0, flags & ~POLY_TEXTURED);
@@ -1861,7 +1848,6 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_dst = PVR_BLEND_INVSRCALPHA;
 			hdr.m2.blend_dst_acc2 = false;
 			hdr.m2.shading = PVR_TXRENV_REPLACE;
-			z = get_zvalue(zoffset + 1);
 
 			draw_prim(&hdr, coords, voffset, colors_alt,
 				  nb, z, 0, flags);
@@ -1887,7 +1873,6 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_src = PVR_BLEND_DESTCOLOR;
 			hdr.m2.blend_dst = PVR_BLEND_INVDESTALPHA;
 
-			z = get_zvalue(zoffset + 2);
 			draw_prim(&hdr, coords, voffset, colors_alt,
 				  nb, z, 0, flags);
 		}
@@ -1911,7 +1896,6 @@ static void poly_draw_now(const struct poly *poly)
 			hdr.m2.blend_src = PVR_BLEND_ONE;
 		hdr.m2.blend_dst = PVR_BLEND_ONE;
 		hdr.m0.txr_en = hdr.m1.txr_en = textured;
-		z = get_zvalue(zoffset + 3);
 
 		draw_prim(&hdr, coords, voffset, colors, nb, z, 0, flags);
 		break;
@@ -2304,8 +2288,9 @@ static void process_poly(struct poly *poly, bool scissor)
 		check_mask = false;
 	}
 
+	poly->zoffset = pvr.zoffset++;
+
 	if (likely(poly->blending_mode == BLENDING_MODE_NONE)) {
-		poly->zoffset = pvr.zoffset++;
 		flags = poly->flags;
 
 		if (!WITH_BILINEAR && WITH_HYBRID_RENDERING && noclip && !check_mask) {
@@ -2318,10 +2303,8 @@ static void process_poly(struct poly *poly, bool scissor)
 			poly->flags &= ~POLY_BRIGHT;
 		}
 
-		if (unlikely(check_mask)) {
-			pvr.zoffset += 5;
+		if (unlikely(check_mask))
 			poly->flags |= POLY_CHECK_MASK;
-		}
 
 		poly_enqueue(list, poly);
 
@@ -2348,11 +2331,6 @@ static void process_poly(struct poly *poly, bool scissor)
 			poly_enqueue(PVR_LIST_TR_POLY, poly);
 		}
 	} else {
-		/* For blended polys, incease the Z offset by 4, since we will
-		 * render up to 4 polygons */
-		poly->zoffset = pvr.zoffset;
-		pvr.zoffset += 4;
-
 		if (unlikely(check_mask))
 			poly->flags |= POLY_CHECK_MASK;
 
