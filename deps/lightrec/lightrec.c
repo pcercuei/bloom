@@ -27,7 +27,10 @@
 #endif
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
+
+static size_t dcache_size = 32768;
 
 static struct block * lightrec_precompile_block(struct lightrec_state *state,
 						u32 pc);
@@ -456,18 +459,18 @@ static u32 lightrec_mfc2(struct lightrec_state *state, u8 reg)
 	case 9:
 	case 10:
 	case 11:
-		return (s32)(s16) load_u16(&state->regs.cp2d[reg]);
+		return (s32)(s16) load_u16(&state->regs.cp2.cp2d[reg]);
 	case 7:
 	case 16:
 	case 17:
 	case 18:
 	case 19:
-		return load_u16(&state->regs.cp2d[reg]);
+		return load_u16(&state->regs.cp2.cp2d[reg]);
 	case 28:
 	case 29:
-		gteir1 = (s16) load_u16(&state->regs.cp2d[9]);
-		gteir2 = (s16) load_u16(&state->regs.cp2d[10]);
-		gteir3 = (s16) load_u16(&state->regs.cp2d[11]);
+		gteir1 = (s16) load_u16(&state->regs.cp2.cp2d[9]);
+		gteir2 = (s16) load_u16(&state->regs.cp2.cp2d[10]);
+		gteir3 = (s16) load_u16(&state->regs.cp2.cp2d[11]);
 
 		return clamp_s32(gteir1 >> 7, 0, 0x1f) << 0 |
 			clamp_s32(gteir2 >> 7, 0, 0x1f) << 5 |
@@ -476,7 +479,7 @@ static u32 lightrec_mfc2(struct lightrec_state *state, u8 reg)
 		reg = 14;
 		fallthrough;
 	default:
-		return state->regs.cp2d[reg];
+		return state->regs.cp2.cp2d[reg];
 	}
 }
 
@@ -492,7 +495,7 @@ u32 lightrec_mfc(struct lightrec_state *state, union code op)
 	} else if (op.r.rs == OP_CP2_BASIC_MFC2)
 		val = lightrec_mfc2(state, op.r.rd);
 	else {
-		val = state->regs.cp2c[op.r.rd];
+		val = state->regs.cp2.cp2c[op.r.rd];
 
 		switch (op.r.rd) {
 		case 4:
@@ -589,22 +592,22 @@ static void lightrec_mtc2(struct lightrec_state *state, u8 reg, u32 data)
 {
 	switch (reg) {
 	case 15:
-		state->regs.cp2d[12] = state->regs.cp2d[13];
-		state->regs.cp2d[13] = state->regs.cp2d[14];
-		state->regs.cp2d[14] = data;
+		state->regs.cp2.cp2d[12] = state->regs.cp2.cp2d[13];
+		state->regs.cp2.cp2d[13] = state->regs.cp2.cp2d[14];
+		state->regs.cp2.cp2d[14] = data;
 		break;
 	case 28:
-		state->regs.cp2d[9] = (data << 7) & 0xf80;
-		state->regs.cp2d[10] = (data << 2) & 0xf80;
-		state->regs.cp2d[11] = (data >> 3) & 0xf80;
+		state->regs.cp2.cp2d[9] = (data << 7) & 0xf80;
+		state->regs.cp2.cp2d[10] = (data << 2) & 0xf80;
+		state->regs.cp2.cp2d[11] = (data >> 3) & 0xf80;
 		break;
 	case 31:
 		return;
 	case 30:
-		state->regs.cp2d[31] = count_leading_bits((s32) data);
+		state->regs.cp2.cp2d[31] = count_leading_bits((s32) data);
 		fallthrough;
 	default:
-		state->regs.cp2d[reg] = data;
+		state->regs.cp2.cp2d[reg] = data;
 		break;
 	}
 }
@@ -619,13 +622,13 @@ static void lightrec_ctc2(struct lightrec_state *state, u8 reg, u32 data)
 	case 27:
 	case 29:
 	case 30:
-		store_u16(&state->regs.cp2c[reg], data);
+		store_u16(&state->regs.cp2.cp2c[reg], data);
 		break;
 	case 31:
 		data = (data & 0x7ffff000) | !!(data & 0x7f87e000) << 31;
 		fallthrough;
 	default:
-		state->regs.cp2c[reg] = data;
+		state->regs.cp2.cp2c[reg] = data;
 		break;
 	}
 }
@@ -678,12 +681,15 @@ void lightrec_rfe(struct lightrec_state *state)
 
 void lightrec_cp(struct lightrec_state *state, union code op)
 {
+	lightrec_gte_handler_t hdl;
+
 	if (op.i.op == OP_CP0) {
 		pr_err("Invalid CP opcode to coprocessor #0\n");
-		return;
-	}
+	} else {
+		hdl = (*state->ops.cop2_hdl)(op.opcode, false);
 
-	(*state->ops.cop2_op)(state, op.opcode);
+		(*hdl)(&state->regs.cp2, op.opcode);
+	}
 }
 
 static void lightrec_cp_cb(struct lightrec_state *state, u32 arg)
@@ -1041,6 +1047,10 @@ static struct block * generate_dispatcher(struct lightrec_state *state)
 	/* Force all callee-saved registers to be pushed on the stack */
 	for (i = 0; i < NUM_REGS; i++)
 		jit_movr(JIT_V(i + FIRST_REG), JIT_V(i + FIRST_REG));
+
+#if OPT_SH4_USE_GBR
+	jit_movr(_GBR, LIGHTREC_REG_STATE);
+#endif
 
 	to_loop = jit_jmpi();
 
@@ -1865,6 +1875,42 @@ void lightrec_free_cstate(struct lightrec_cstate *cstate)
 	lightrec_free(cstate->state, MEM_FOR_LIGHTREC, sizeof(*cstate), cstate);
 }
 
+static void lightrec_free_state(struct lightrec_state *state)
+{
+	void *ptr;
+
+	ptr = (void *)((uintptr_t)state - 0x400);
+	free(ptr);
+}
+
+static struct lightrec_state *lightrec_alloc_state(bool lut_32bit)
+{
+	struct lightrec_state *state;
+	size_t struct_size, lut_size, alloc_size;
+	void *ptr;
+
+#ifdef _SC_LEVEL1_DCACHE_SIZE
+	dcache_size = sysconf(_SC_LEVEL1_DCACHE_SIZE);
+#endif
+
+
+	struct_size = sizeof(*state) + 0x400;
+	lut_size = (lut_32bit ? 4 : sizeof(void *)) * CODE_LUT_SIZE;
+	alloc_size = (struct_size + lut_size + dcache_size - 1) & ~(dcache_size - 1);
+
+	ptr = aligned_alloc(dcache_size, alloc_size);
+	if (!ptr)
+		return NULL;
+
+	memset(ptr, 0, struct_size + lut_size);
+
+	state = (void *)((uintptr_t)ptr + 0x400);
+
+	state->with_32bit_lut = lut_32bit;
+
+	return state;
+}
+
 struct lightrec_state * lightrec_init(char *argv0,
 				      const struct lightrec_mem_map *maps,
 				      size_t nb,
@@ -1876,10 +1922,9 @@ struct lightrec_state * lightrec_init(char *argv0,
 	uintptr_t addr;
 	void *tlsf = NULL;
 	bool with_32bit_lut = false;
-	size_t lut_size;
 
 	/* Sanity-check ops */
-	if (!ops || !ops->cop2_op || !ops->enable_ram) {
+	if (!ops || !ops->cop2_hdl || !ops->enable_ram) {
 		pr_err("Missing callbacks in lightrec_ops structure\n");
 		return NULL;
 	}
@@ -1904,21 +1949,13 @@ struct lightrec_state * lightrec_init(char *argv0,
 		}
 	}
 
-	if (with_32bit_lut)
-		lut_size = CODE_LUT_SIZE * 4;
-	else
-		lut_size = CODE_LUT_SIZE * sizeof(void *);
-
 	init_jit_with_debug(argv0, stdout);
 
-	state = calloc(1, sizeof(*state) + lut_size);
+	state = lightrec_alloc_state(with_32bit_lut);
 	if (!state)
 		goto err_finish_jit;
 
-	lightrec_register(MEM_FOR_LIGHTREC, sizeof(*state) + lut_size);
-
 	state->tlsf = tlsf;
-	state->with_32bit_lut = with_32bit_lut;
 	state->in_delay_slot_n = 0xff;
 	state->cycles_per_op = 2;
 
@@ -1998,9 +2035,7 @@ err_free_recompiler:
 err_free_block_cache:
 	lightrec_free_block_cache(state->block_cache);
 err_free_state:
-	lightrec_unregister(MEM_FOR_LIGHTREC, sizeof(*state) +
-			    lut_elm_size(state) * CODE_LUT_SIZE);
-	free(state);
+	lightrec_free_state(state);
 err_finish_jit:
 	finish_jit();
 	if (ENABLE_CODE_BUFFER && tlsf)
@@ -2028,9 +2063,7 @@ void lightrec_destroy(struct lightrec_state *state)
 	if (ENABLE_CODE_BUFFER && state->tlsf)
 		tlsf_destroy(state->tlsf);
 
-	lightrec_unregister(MEM_FOR_LIGHTREC, sizeof(*state) +
-			    lut_elm_size(state) * CODE_LUT_SIZE);
-	free(state);
+	lightrec_free_state(state);
 }
 
 void lightrec_invalidate(struct lightrec_state *state, u32 addr, u32 len)

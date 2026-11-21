@@ -9,13 +9,8 @@
 #include "lightning-wrapper.h"
 #include "lightrec-config.h"
 
-#if defined(__sh__) && OPT_SH4_USE_GBR
-#  define NUM_REGS JIT_V_NUM
-#  define LIGHTREC_REG_STATE _GBR
-#else
-#  define NUM_REGS (JIT_V_NUM - 1)
-#  define LIGHTREC_REG_STATE (JIT_V(JIT_V_NUM - 1))
-#endif
+#define NUM_REGS (JIT_V_NUM - 1)
+#define LIGHTREC_REG_STATE (JIT_V(JIT_V_NUM - 1))
 
 #if defined(__powerpc__)
 #  define NUM_TEMPS JIT_R_NUM
@@ -77,6 +72,7 @@ void lightrec_free_reg(struct regcache *cache, u8 jit_reg);
 void lightrec_free_regs(struct regcache *cache);
 void lightrec_clean_reg(struct regcache *cache, jit_state_t *_jit, u8 jit_reg);
 void lightrec_clean_regs(struct regcache *cache, jit_state_t *_jit);
+void lightrec_unload_caller_saved_regs(struct regcache *cache, jit_state_t *_jit);
 void lightrec_unload_reg(struct regcache *cache, jit_state_t *_jit, u8 jit_reg);
 void lightrec_storeback_regs(struct regcache *cache, jit_state_t *_jit);
 _Bool lightrec_has_dirty_regs(struct regcache *cache);
