@@ -74,7 +74,8 @@ INLINE int rvb2ram_offs(int curr, int space, int ofs)
 
 ////////////////////////////////////////////////////////////////////////
 
-static void reverb_interpolate(sample_buf *sb, int curr_addr,
+#if 0
+static void reverb_interpolate(sample_buf_rvb *sb, int curr_addr,
   int out0[2], int out1[2])
 {
  int spos = (curr_addr - 3) & 3;
@@ -82,24 +83,25 @@ static void reverb_interpolate(sample_buf *sb, int curr_addr,
  int i;
 
  for (i = 0; i < 2; i++)
-  sb->SB_rvb[i][dpos] = sb->SB_rvb[i][4 | dpos] = out0[i];
+  sb->sample[i][dpos] = sb->sample[i][4 | dpos] = out0[i];
 
  // mednafen uses some 20 coefs here, we just reuse gauss [0] and [128]
  for (i = 0; i < 2; i++)
  {
   const int *s;
-  s = &sb->SB_rvb[i][spos];
+  s = &sb->sample[i][spos];
   out0[i] = (s[0] * 0x12c7 + s[1] * 0x59b3 + s[2] * 0x1307) >> 15;
   out1[i] = (s[0] * 0x019c + s[1] * 0x3def + s[2] * 0x3e4c + s[3] * 0x01a8) >> 15;
  }
 }
+#endif
 
 static void MixREVERB(int *SSumLR, int *RVB, int ns_to, int curr_addr,
   int do_filter)
 {
  unsigned short *spuMem = spu.spuMem;
  const REVERBInfo *rvb = spu.rvb;
- sample_buf *sb = &spu.sb[MAXCHAN];
+ //sample_buf_rvb *sb = &spu.sb_rvb;
  int space = 0x40000 - rvb->StartAddr;
  int mlsame_m2o = rvb->mLSAME + space - 1;
  int mrsame_m2o = rvb->mRSAME + space - 1;
@@ -113,8 +115,9 @@ static void MixREVERB(int *SSumLR, int *RVB, int ns_to, int curr_addr,
  int vIIR = rvb->vIIR;
  int ns;
 
-#if P_HAVE_PTHREAD || defined(WANT_THREAD_CODE)
- sb = &spu.sb_thread[MAXCHAN];
+#if defined(USE_ASYNC_SPU) || defined(WANT_THREAD_CODE)
+ // this is reusing sb_thread[] due to complications with spu_c64x
+ //sb = (sample_buf_rvb *)&spu.sb_thread[MAXCHAN];
 #endif
  if (mlsame_m2o >= space) mlsame_m2o -= space;
  if (mrsame_m2o >= space) mrsame_m2o -= space;
@@ -169,8 +172,8 @@ static void MixREVERB(int *SSumLR, int *RVB, int ns_to, int curr_addr,
 
    out0[0] = out1[0] = (Lout >> (15-1)) * rvb->VolLeft  >> 15;
    out0[1] = out1[1] = (Rout >> (15-1)) * rvb->VolRight >> 15;
-   if (do_filter)
-    reverb_interpolate(sb, curr_addr, out0, out1);
+   //if (do_filter)
+   // reverb_interpolate(sb, curr_addr, out0, out1);
 
    SSumLR[ns++] += out0[0];
    SSumLR[ns++] += out0[1];
@@ -187,15 +190,51 @@ static void MixREVERB_off(int *SSumLR, int ns_to, int curr_addr)
  const REVERBInfo *rvb = spu.rvb;
  unsigned short *spuMem = spu.spuMem;
  int space = 0x40000 - rvb->StartAddr;
+ int vAPF1 = rvb->vAPF1 >> 1, vAPF2 = rvb->vAPF2 >> 1;
  int Lout, Rout, ns;
 
- for (ns = 0; ns < ns_to * 2; )
+ if (vAPF1 || vAPF2)
+ {
+  for (ns = 0; ns < ns_to * 2; )
+  {
+   int lapf1 = g_buffer(rvb->mLAPF1_dAPF1);
+   int rapf1 = g_buffer(rvb->mRAPF1_dAPF1);
+   int lapf2 = g_buffer(rvb->mLAPF2_dAPF2);
+   int rapf2 = g_buffer(rvb->mRAPF2_dAPF2);
+   preload(SSumLR + ns + 64*2/4 - 4);
+
+   Lout = Rout = 0; // but should be COMB?
+
+   Lout -= vAPF1 * lapf1; Lout >>= (15-1);
+   Rout -= vAPF1 * rapf1; Rout >>= (15-1);
+   Lout = Lout * vAPF1 + (lapf1 << (15-1));
+   Rout = Rout * vAPF1 + (rapf1 << (15-1));
+
+   Lout -= vAPF2 * lapf2; Lout >>= (15-1);
+   Rout -= vAPF2 * rapf2; Rout >>= (15-1);
+   Lout = Lout * vAPF2 + (lapf2 << (15-1));
+   Rout = Rout * vAPF2 + (rapf2 << (15-1));
+
+   Lout = (Lout >> (15-1)) * rvb->VolLeft  >> 15;
+   Rout = (Rout >> (15-1)) * rvb->VolRight >> 15;
+
+   SSumLR[ns++] += Lout;
+   SSumLR[ns++] += Rout;
+   SSumLR[ns++] += Lout;
+   SSumLR[ns++] += Rout;
+
+   curr_addr++;
+   if (curr_addr >= 0x40000) curr_addr = rvb->StartAddr;
+  }
+ }
+ else
+ {
+  for (ns = 0; ns < ns_to * 2; )
   {
    preload(SSumLR + ns + 64*2/4 - 4);
 
-   // todo: is this missing COMB and APF1?
    Lout = g_buffer(rvb->mLAPF2_dAPF2);
-   Rout = g_buffer(rvb->mLAPF2_dAPF2);
+   Rout = g_buffer(rvb->mRAPF2_dAPF2);
 
    Lout = (Lout * rvb->VolLeft)  >> 15;
    Rout = (Rout * rvb->VolRight) >> 15;
@@ -208,6 +247,7 @@ static void MixREVERB_off(int *SSumLR, int ns_to, int curr_addr)
    curr_addr++;
    if (curr_addr >= 0x40000) curr_addr = rvb->StartAddr;
   }
+ }
 }
 
 static void REVERBPrep(void)

@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <assert.h>
+#include "../../include/compiler_features.h"
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 #ifndef min
@@ -22,15 +23,11 @@
 extern const unsigned char cmd_lengths[256];
 #define command_lengths cmd_lengths
 
-static unsigned int *ex_regs;
 static int initialized;
 
 #define PCSX
-#define SET_Ex(r, v) \
-  ex_regs[r] = v
 
-static __attribute__((noinline)) void
-sync_enhancement_buffers(int x, int y, int w, int h);
+static noinline void sync_enhancement_buffers(int x, int y, int w, int h);
 
 #include "../gpulib/gpu.h"
 #include "psx_gpu/psx_gpu.c"
@@ -38,16 +35,16 @@ sync_enhancement_buffers(int x, int y, int w, int h);
 
 static psx_gpu_struct egpu __attribute__((aligned(256)));
 
-int do_cmd_list(uint32_t *list, int count,
+int renderer_do_cmd_list(uint32_t *list, int count, uint32_t *ex_regs,
  int *cycles_sum, int *cycles_last, int *last_cmd)
 {
   int ret;
 
   if (gpu.state.enhancement_active)
-    ret = gpu_parse_enhanced(&egpu, list, count * 4,
+    ret = gpu_parse_enhanced(&egpu, list, count * 4, ex_regs,
             cycles_sum, cycles_last, (u32 *)last_cmd);
   else
-    ret = gpu_parse(&egpu, list, count * 4,
+    ret = gpu_parse(&egpu, list, count * 4, ex_regs,
             cycles_sum, cycles_last, (u32 *)last_cmd);
 
   ex_regs[1] &= ~0x1ff;
@@ -79,7 +76,7 @@ static void map_enhancement_buffer(void)
   // dithering phase, lines).
   egpu.enhancement_buf_ptr = gpu.mmap(ENHANCEMENT_BUF_SIZE);
   if (egpu.enhancement_buf_ptr == NULL || egpu.enhancement_buf_ptr == (void *)(intptr_t)-1) {
-    fprintf(stderr, "failed to map enhancement buffer\n");
+    SysPrintf("failed to map enhancement buffer\n");
     egpu.enhancement_buf_ptr = NULL;
     gpu.get_enhancement_bufer = NULL;
   }
@@ -99,7 +96,6 @@ int renderer_init(void)
   if (gpu.mmap != NULL && egpu.enhancement_buf_ptr == NULL)
     map_enhancement_buffer();
 
-  ex_regs = gpu.ex_regs;
   return 0;
 }
 
@@ -114,8 +110,7 @@ void renderer_finish(void)
   initialized = 0;
 }
 
-static __attribute__((noinline)) void
-sync_enhancement_buffers(int x, int y, int w, int h)
+static noinline void sync_enhancement_buffers(int x, int y, int w, int h)
 {
   int i, right = x + w, bottom = y + h;
   const u16 *src = gpu.vram;
@@ -151,7 +146,7 @@ void renderer_sync_ecmds(uint32_t *ecmds)
 {
   s32 dummy0 = 0;
   u32 dummy1 = 0;
-  gpu_parse(&egpu, ecmds + 1, 6 * 4, &dummy0, &dummy0, &dummy1);
+  gpu_parse(&egpu, ecmds + 1, 6 * 4, ecmds, &dummy0, &dummy0, &dummy1);
 }
 
 void renderer_update_caches(int x, int y, int w, int h, int state_changed)
@@ -187,20 +182,16 @@ void renderer_set_interlace(int enable, int is_odd)
     egpu.render_mode |= RENDER_INTERLACE_ODD;
 }
 
-void renderer_notify_res_change(void)
+void renderer_notify_screen_change(const struct psx_gpu_screen *screen)
 {
-  renderer_notify_scanout_change(gpu.screen.src_x, gpu.screen.src_y);
-}
-
-void renderer_notify_scanout_change(int x, int y)
-{
-  int vres = gpu.screen.vres;
+  int x = screen->src_x, y = screen->src_y;
+  int vres = screen->vres;
   if (!gpu.state.enhancement_active || !egpu.enhancement_buf_ptr)
     return;
 
-  if (gpu.screen.y < 0)
-    vres -= gpu.screen.y;
-  update_enhancement_buf_scanouts(&egpu, x, y, gpu.screen.hres, vres);
+  if (screen->y < 0)
+    vres -= screen->y;
+  update_enhancement_buf_scanouts(&egpu, x, y, screen->hres, vres);
 }
 
 #include "../../frontend/plugin_lib.h"
@@ -236,14 +227,6 @@ void renderer_set_config(const struct rearmed_cbs *cbs)
     if (gpu.mmap != NULL && egpu.enhancement_buf_ptr == NULL)
       map_enhancement_buffer();
   }
-}
-
-void renderer_sync(void)
-{
-}
-
-void renderer_notify_update_lace(int updated)
-{
 }
 
 // vim:ts=2:sw=2:expandtab

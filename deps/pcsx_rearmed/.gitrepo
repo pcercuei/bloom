@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/notaz/pcsx_rearmed
 	branch = master
-	commit = 3b48e2876ab1ca6300acad223606eeb59f670d8f
-	parent = 49a340c47c705f69c23b4302d907ae0600977b42
+	commit = 7838055e892061f3f5775ff9f6bb3d3d9c7fe742
+	parent = e7e3b6a38c8955f895a89fdc45eb2ec3f22f2fb0
 	method = merge
 	cmdver = 0.4.9
