@@ -1089,10 +1089,10 @@ static void pvr_add_clip(uint16_t zoffset)
 	if (unlikely(pvr.nb_clips == ARRAY_SIZE(pvr.clips))) {
 		printf("Too many clip areas\n");
 	} else {
-		x1 = pvr.draw_x1 * screen_fw;
-		y1 = pvr.draw_y1 * screen_fh;
-		x2 = pvr.draw_x2 * screen_fw;
-		y2 = pvr.draw_y2 * screen_fh;
+		x1 = (pvr.draw_x1 + gpu.screen.x) * screen_fw;
+		y1 = (pvr.draw_y1 + gpu.screen.y) * screen_fh;
+		x2 = (pvr.draw_x2 + gpu.screen.x) * screen_fw;
+		y2 = (pvr.draw_y2 + gpu.screen.y) * screen_fh;
 
 		if (x2 < x1)
 			x2 = x1;
