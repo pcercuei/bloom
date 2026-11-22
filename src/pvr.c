@@ -59,7 +59,7 @@
 #define COORDS_U_OFFSET (1.0f / 2048.0f)
 #define COORDS_V_OFFSET (1.0f / 32768.0f)
 
-#define __pvr __attribute__((section(".sub0")))
+#define __pvr __attribute__((optimize(2),section(".sub0")))
 
 typedef struct pvr_vertex_part2 {
 	float u1;
