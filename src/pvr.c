@@ -2137,7 +2137,7 @@ static void process_poly_multipage(struct poly *poly)
 	process_poly(&poly2, true);
 }
 
-static bool poly_should_clip(const struct poly *poly)
+static inline bool poly_should_clip(const struct poly *poly)
 {
 	unsigned int i;
 
@@ -2157,15 +2157,16 @@ static bool poly_should_clip(const struct poly *poly)
 __pvr __attribute__((optimize(2)))
 static void process_poly(struct poly *poly, bool scissor)
 {
+	bool check_mask, set_mask, noclip;
 	struct texture_page *page;
 	unsigned int i, offt;
 	uint16_t umin, umax;
 	uint8_t codebook;
-	bool check_mask, set_mask;
 	pvr_list_t list;
 
 	/* If the clip area matches the screen area, we don't need to clip */
-	if (WITH_CLIPPING && !pvr.clip_test)
+	noclip = !poly_should_clip(poly);
+	if (noclip)
 		poly->flags |= POLY_NOCLIP;
 
 	if (poly->flags & POLY_TEXTURED) {
@@ -2226,12 +2227,12 @@ static void process_poly(struct poly *poly, bool scissor)
 		} else if (WITH_BILINEAR) {
 			poly_enqueue(PVR_LIST_TR_POLY, poly);
 
-			if (WITH_HYBRID_RENDERING && !poly_should_clip(poly)) {
+			if (WITH_HYBRID_RENDERING && noclip) {
 				poly->zoffset = pvr.zoffset++;
 				poly_enqueue(PVR_LIST_PT_POLY, poly);
 			}
 		} else {
-			if (WITH_HYBRID_RENDERING && !poly_should_clip(poly))
+			if (WITH_HYBRID_RENDERING && noclip)
 				list = PVR_LIST_PT_POLY;
 			else
 				list = PVR_LIST_TR_POLY;
