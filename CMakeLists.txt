@@ -264,6 +264,7 @@ if (SPU_PLUGIN STREQUAL Null)
 		${PCSX_REAL_DIR}/plugins/dfsound/out.c
 		${PCSX_REAL_DIR}/plugins/dfsound/nullsnd.c
 	)
+	target_link_libraries(spu PUBLIC libpcsxcore)
 elseif(SPU_PLUGIN STREQUAL AICA)
 	add_library(spu STATIC src/aica.c)
 endif()
